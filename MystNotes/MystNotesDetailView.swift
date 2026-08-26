@@ -74,20 +74,43 @@ struct NotebookDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let page = currentPage {
-                canvasSection(for: page)
-                if showingPageStrip {
-                    pageStrip
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                if let page = currentPage {
+                    canvasSection(for: page)
+                    if showingPageStrip && !isPresenting {
+                        pageStrip
+                    }
+                } else {
+                    ProgressView("Loading…")
                 }
-            } else {
-                ProgressView("Loading…")
+            }
+
+            // Presentation mode is a chrome toggle on this SAME view, not a
+            // separate modal — a fullScreenCover would mount a brand-new
+            // PencilCanvasView backed by the same PKCanvasView instance,
+            // which re-parents that UIView into the modal's hierarchy and
+            // never returns it on dismiss (the pen/canvas going blank after
+            // exiting presentation mode). Toggling visibility in place keeps
+            // canvasView/toolPicker mounted exactly once, always.
+            if isPresenting {
+                Button {
+                    isPresenting = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                }
             }
         }
         .navigationTitle(notebook.title)
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(isPresenting ? .hidden : .visible, for: .navigationBar)
+        .statusBarHidden(isPresenting)
         #endif
+        .ignoresSafeArea(.all, edges: isPresenting ? .all : [])
         .onAppear(perform: openFirstPage)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
@@ -197,7 +220,7 @@ struct NotebookDetailView: View {
                 Button("Save") {
                     saveCurrentPage()
                 }
-            } // <-- This is the missing closing brace for ToolbarItemGroup
+            }
 #else
             // Simplified menu for macOS native placeholder
             ToolbarItem(placement: .automatic) {
@@ -225,17 +248,6 @@ struct NotebookDetailView: View {
             }
         }
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
-        .fullScreenCover(isPresented: $isPresenting) {
-            if let page = currentPage {
-                PresentationView(
-                    page: page,
-                    canvasView: $canvasView,
-                    toolPicker: toolPicker,
-                    onDrawingChanged: scheduleAutosave,
-                    onDismiss: { isPresenting = false }
-                )
-            }
-        }
         #endif
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .alert(
@@ -681,12 +693,17 @@ struct NotebookDetailView: View {
 
     private func refreshUndoRedoState() {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        canUndo = canvasView.undoManager?.canUndo ?? false
-        canRedo = canvasView.undoManager?.canRedo ?? false
+        let newCanUndo = canvasView.undoManager?.canUndo ?? false
+        let newCanRedo = canvasView.undoManager?.canRedo ?? false
 #else
-        canUndo = false
-        canRedo = false
+        let newCanUndo = false
+        let newCanRedo = false
 #endif
+        // Avoid writing @State (and triggering a re-render) when nothing
+        // actually changed — this runs on every single stroke update while
+        // the user is actively drawing.
+        if canUndo != newCanUndo { canUndo = newCanUndo }
+        if canRedo != newCanRedo { canRedo = newCanRedo }
     }
 
     private func saveMetadata(_ errorMessage: String) {

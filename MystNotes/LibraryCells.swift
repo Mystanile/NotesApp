@@ -58,6 +58,24 @@ struct NotebookCoverView: View {
     }
 }
 
+// MARK: - Recent notebook cell (smaller cover, used in the horizontal "Recent" strip)
+
+struct RecentNotebookCellView: View {
+    let notebook: Notebook
+
+    var body: some View {
+        VStack(spacing: 6) {
+            NotebookCoverView(notebook: notebook)
+                .frame(width: 100)
+            Text(notebook.title)
+                .font(.caption)
+                .lineLimit(1)
+                .foregroundStyle(.primary)
+                .frame(width: 100)
+        }
+    }
+}
+
 // MARK: - Notebook cell (cover + title + page count, used in the library grid)
 
 struct NotebookCellView: View {

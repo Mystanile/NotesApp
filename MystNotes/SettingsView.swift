@@ -8,6 +8,10 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Keys.inkWidth) private var inkWidth: Double = 4
     @AppStorage(AppSettings.Keys.template) private var defaultTemplate = "blank"
     @AppStorage(AppSettings.Keys.appearance) private var appearance = "system"
+    @AppStorage(AppSettings.Keys.signedInDisplayName) private var signedInDisplayName = ""
+    @AppStorage(AppSettings.Keys.isSignedIn) private var isSignedIn = false
+    @AppStorage(AppSettings.Keys.isGuestMode) private var isGuestMode = false
+    @AppStorage(AppSettings.Keys.syncEnabled) private var syncEnabled = true
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -63,14 +67,32 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Sync via iCloud", isOn: $syncEnabled)
                 LabeledContent("iCloud Drive", value: AppSettings.isCloudAvailable ? "Signed in" : "Not available")
                 LabeledContent("Storage", value: AppSettings.isUsingCloudStorage ? "iCloud Drive" : "On this Mac")
             } header: {
                 Text("Sync")
             } footer: {
-                Text(AppSettings.isUsingCloudStorage
-                     ? "Drawings and imports sync to iCloud Drive."
-                     : "Drawings and imports are stored on this device only. File sync is deferred until iCloud storage is freed — see the app's CloudKit capabilities.")
+                Text(syncFooterText)
+            }
+
+            Section {
+                if isSignedIn {
+                    if !signedInDisplayName.isEmpty {
+                        LabeledContent("Signed in as", value: signedInDisplayName)
+                    }
+                    Button("Sign Out", role: .destructive) {
+                        AppSettings.signOut()
+                    }
+                } else if isGuestMode {
+                    Text("Using Mystnotes without an account.")
+                        .foregroundStyle(.secondary)
+                    Button("Sign In with Apple") {
+                        AppSettings.exitGuestMode()
+                    }
+                }
+            } header: {
+                Text("Account")
             }
 
             Section("About") {
@@ -78,6 +100,20 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+    }
+
+    /// SwiftData's CloudKit sync is fixed for the app's whole process
+    /// lifetime once the ModelContainer is built, so flipping this toggle
+    /// doesn't take effect until Mystnotes is relaunched — worth saying
+    /// plainly rather than implying it's instant.
+    private var syncFooterText: String {
+        if !syncEnabled {
+            return "Sync is off — notebooks, drawings, and imports stay on this device only. Turning this back on takes effect the next time you open Mystnotes."
+        } else if AppSettings.isUsingCloudStorage {
+            return "Drawings and imports sync to iCloud Drive."
+        } else {
+            return "Drawings and imports are stored on this device only for now. File sync is deferred until iCloud storage is freed — see the app's CloudKit capabilities."
+        }
     }
 
     /// `@AppStorage` can't hold a SwiftUI `Color`, so bridge through the hex
