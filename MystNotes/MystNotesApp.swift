@@ -14,6 +14,7 @@ struct NotebookApp: App {
             object: nil,
             queue: .main
         ) { _ in
+            FileStore.invalidateCachedBaseDirectory()
             FileStore.migrateLegacyFilesIfNeeded()
         }
     }
@@ -29,10 +30,14 @@ struct NotebookApp: App {
             Sticker.self
         ])
 
+        // Read once, at container-build time — SwiftData can't swap a
+        // ModelConfiguration on an already-running container, so a sync
+        // preference change (login screen or Settings) only takes effect
+        // the next time the app launches.
         let modelConfiguration = ModelConfiguration(
             schema: schema,
             isStoredInMemoryOnly: false,
-            cloudKitDatabase: .automatic   // syncs via the iCloud/CloudKit capability set in Signing & Capabilities
+            cloudKitDatabase: AppSettings.syncEnabled ? .automatic : .none
         )
 
         do {

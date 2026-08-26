@@ -15,8 +15,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E883240A303B3CCB00ACC8F5"
-               BuildableName = "Notebook Test.app"
-               BlueprintName = "MystNotes"
+               BuildableName = "Mystnotes.app"
+               BlueprintName = "Mystnotes"
                ReferencedContainer = "container:MystNotes.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -45,8 +45,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E883240A303B3CCB00ACC8F5"
-            BuildableName = "Notebook Test.app"
-            BlueprintName = "MystNotes"
+            BuildableName = "Mystnotes.app"
+            BlueprintName = "Mystnotes"
             ReferencedContainer = "container:MystNotes.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,8 +62,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E883240A303B3CCB00ACC8F5"
-            BuildableName = "Notebook Test.app"
-            BlueprintName = "MystNotes"
+            BuildableName = "Mystnotes.app"
+            BlueprintName = "Mystnotes"
             ReferencedContainer = "container:MystNotes.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

@@ -30,7 +30,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
 
         canvasView.drawingPolicy = .anyInput
         canvasView.backgroundColor = .white
-        canvasView.tool = PKInkingTool(.pen, color: .black, width: 4)
+        canvasView.tool = AppSettings.initialTool()   // default tool/color/width from Settings
         canvasView.delegate = context.coordinator
         canvasView.frame = CGRect(x: 0, y: 0, width: Self.boardSize, height: Self.boardSize)
 

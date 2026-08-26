@@ -40,6 +40,16 @@ struct LibraryView: View {
         allNotebooks.filter { $0.folder?.id == parentFolder?.id }
     }
 
+    /// The most recently touched notebooks across the whole library
+    /// (regardless of which folder they live in) — shown as a strip at the
+    /// top of the root library so it doesn't open on a blank page.
+    private var recentNotebooks: [Notebook] {
+        allNotebooks
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(8)
+            .map { $0 }
+    }
+
     /// Search is a global feature: only active at the root of the library, once
     /// the user has typed a non-empty query. Nested folder levels stay as plain
     /// browsing.
@@ -60,11 +70,44 @@ struct LibraryView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        .task(id: parentFolder?.id) {
+            seedTutorialNotebookIfNeeded()
+        }
+    }
+
+    /// Creates the "Welcome to Mystnotes" notebook once, the first time the
+    /// root library is opened with nothing in it yet. Gated on a persistent
+    /// flag rather than "is the library empty right now" so deleting that
+    /// notebook later doesn't bring it back.
+    private func seedTutorialNotebookIfNeeded() {
+        guard parentFolder == nil,
+              allNotebooks.isEmpty,
+              !AppSettings.hasSeededTutorialNotebook else { return }
+        AppSettings.hasSeededTutorialNotebook = true
+        TutorialNotebookFactory.makeWelcomeNotebook(in: modelContext)
+        save()
     }
 
     private var libraryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if parentFolder == nil && !recentNotebooks.isEmpty {
+                    sectionHeader("Recent")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 16) {
+                            ForEach(recentNotebooks, id: \.id) { notebook in
+                                NavigationLink(value: notebook) {
+                                    RecentNotebookCellView(notebook: notebook)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu { notebookMenu(for: notebook) }
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 if !folders.isEmpty {
                     sectionHeader("Folders")
                     LazyVGrid(columns: gridColumns, spacing: 16) {

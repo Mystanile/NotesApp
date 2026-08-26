@@ -11,11 +11,41 @@ import Foundation
 /// it falls back to the local sandbox; `migrateLegacyFilesIfNeeded()` catches
 /// up any files written before iCloud was in play.
 enum FileStore {
+    /// `url(forUbiquityContainerIdentifier:)` is documented to be slow (it can
+    /// touch disk/do container setup work), so its result is cached rather
+    /// than re-resolved on every call — this is invoked on essentially every
+    /// autosave tick, page load, and thumbnail render, so re-resolving it
+    /// every time was a steady source of main-thread stutter. The cache is
+    /// invalidated on `NSUbiquityIdentityDidChange` (see `MystnotesApp`),
+    /// the only time the answer can actually change.
+    private static var cachedBaseDirectory: URL?
+
     /// The container's Documents directory — the folder iCloud Drive exposes.
     /// `forUbiquityContainerIdentifier:` returns nil until the container has
     /// actually mounted (asynchronously after launch, and only while the user
     /// is signed into iCloud), so callers must tolerate a local fallback.
     static func baseDirectory() -> URL {
+        // Unlike SwiftData's CloudKit setting (fixed for the process's
+        // lifetime once the ModelContainer is built), file storage checks
+        // this on every call — so choosing "don't sync" is honored for
+        // drawings/imports immediately, no relaunch needed.
+        guard AppSettings.syncEnabled else {
+            return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        }
+        if let cached = cachedBaseDirectory { return cached }
+        let resolved = resolveBaseDirectory()
+        cachedBaseDirectory = resolved
+        return resolved
+    }
+
+    /// Drops the cached directory so the next `baseDirectory()` call
+    /// re-resolves it. Call this when the iCloud identity changes, since
+    /// that's the only thing that can change the answer.
+    static func invalidateCachedBaseDirectory() {
+        cachedBaseDirectory = nil
+    }
+
+    private static func resolveBaseDirectory() -> URL {
         if let container = FileManager.default
             .url(forUbiquityContainerIdentifier: nil)?
             .appendingPathComponent("Documents", isDirectory: true) {
@@ -38,6 +68,7 @@ enum FileStore {
     /// notebooks' drawings/imports follow them to other devices. Idempotent —
     /// safe to call on every launch.
     static func migrateLegacyFilesIfNeeded() {
+        guard AppSettings.syncEnabled else { return }
         let local = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let cloud = baseDirectory()
         guard local != cloud else { return }
