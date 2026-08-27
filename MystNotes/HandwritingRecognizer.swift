@@ -38,7 +38,21 @@ enum HandwritingRecognizer {
         let image = drawing.image(from: bounds, scale: 2)
         guard let cgImage = image.cgImage else { return nil }
 
-        return await Task.detached(priority: .background) { () -> String? in
+        return await ocrText(from: cgImage)
+#else
+        return nil
+#endif
+    }
+
+#if canImport(UIKit)
+    /// The actual Vision pass, factored out so any rendered-to-image source
+    /// can reuse it - not just a `PKDrawing`. Excalidraw pages have no
+    /// PKDrawing to decode, but `ExcalidrawController.snapshotThumbnail()`
+    /// renders the same webview content to a `UIImage`, which this runs OCR
+    /// over exactly the same way, so freehand ink drawn in Excalidraw is
+    /// just as searchable as freehand ink drawn in PencilKit.
+    static func ocrText(from cgImage: CGImage) async -> String? {
+        await Task.detached(priority: .background) { () -> String? in
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -56,10 +70,8 @@ enum HandwritingRecognizer {
             guard !lines.isEmpty else { return nil }
             return lines.joined(separator: " ")
         }.value
-#else
-        return nil
-#endif
     }
+#endif
 
     /// Re-recognizes a page's handwriting only if its drawing changed since the
     /// last OCR, then persists the cache. Safe to call from a background task.

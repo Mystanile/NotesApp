@@ -316,7 +316,7 @@ struct LibraryView: View {
         let trimmed = newNotebookTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmed.isEmpty ? "Untitled Notebook" : trimmed
         let notebook = Notebook(title: title, folder: parentFolder)
-        let firstPage = Page(index: 0, type: "paged", template: AppSettings.defaultTemplate, notebook: notebook)
+        let firstPage = Page(index: 0, type: "excalidraw", template: AppSettings.defaultTemplate, notebook: notebook)
         notebook.pages = [firstPage]
         modelContext.insert(notebook)
         modelContext.insert(firstPage)
