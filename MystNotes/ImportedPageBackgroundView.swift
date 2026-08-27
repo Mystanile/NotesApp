@@ -28,16 +28,29 @@ struct ImportedPageBackgroundView: View {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
+    /// The artwork's placed rect, or the whole page when it has never been
+    /// adjusted (every import before it was adjustable behaved this way).
+    private func artworkFrame(in size: CGSize) -> CGRect {
+        guard let doc = importedDocument,
+              let x = doc.frameX, let y = doc.frameY,
+              let w = doc.frameWidth, let h = doc.frameHeight else {
+            return CGRect(origin: .zero, size: size)
+        }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
+            let frame = artworkFrame(in: geometry.size)
+            ZStack(alignment: .topLeading) {
                 Color.white
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                 if let image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: frame.minY)
                 }
         #else
                 // On macOS without UIKit, show a placeholder or implement alternative

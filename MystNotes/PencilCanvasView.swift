@@ -15,6 +15,11 @@ import AppKit
 struct PencilCanvasView: UIViewRepresentable {
     @Binding var canvasView: PKCanvasView
     var onDrawingChanged: () -> Void = {}
+    /// Long-press anywhere on the canvas - used to re-open the adjust
+    /// handles for an imported image on this page. Added as a UIKit
+    /// recognizer with cancelsTouchesInView = false so it observes touches
+    /// without stealing them from PencilKit; drawing is unaffected.
+    var onLongPress: () -> Void = {}
 
     func makeUIView(context: Context) -> PKCanvasView {
         canvasView.drawingPolicy = .anyInput   // allow Pencil, finger, and (on Catalyst) mouse/trackpad
@@ -31,6 +36,8 @@ struct PencilCanvasView: UIViewRepresentable {
         // the canvas to light so PencilKit stops "fixing" ink that was never
         // actually invisible.
         canvasView.overrideUserInterfaceStyle = .light
+
+        context.coordinator.attachLongPress(to: canvasView)
 
         // becomeFirstResponder() can silently fail if called before the view
         // is actually attached to a window (i.e. right at construction time
@@ -51,14 +58,37 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDrawingChanged: onDrawingChanged)
+        Coordinator(onDrawingChanged: onDrawingChanged, onLongPress: onLongPress)
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         let onDrawingChanged: () -> Void
+        let onLongPress: () -> Void
 
-        init(onDrawingChanged: @escaping () -> Void) {
+        init(onDrawingChanged: @escaping () -> Void, onLongPress: @escaping () -> Void) {
             self.onDrawingChanged = onDrawingChanged
+            self.onLongPress = onLongPress
+        }
+
+        func attachLongPress(to view: UIView) {
+            let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+            recognizer.minimumPressDuration = 0.6
+            // Observe only - PencilKit keeps receiving the touches, so a
+            // press that turns into a stroke still draws normally.
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.delegate = self
+            view.addGestureRecognizer(recognizer)
+        }
+
+        @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            onLongPress()
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
