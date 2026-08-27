@@ -35,8 +35,21 @@ enum HandwritingRecognizer {
 
         // Render at 2x so handwriting is legible to the recognizer; 1x can
         // blur fine pen strokes into noise.
-        let image = drawing.image(from: bounds, scale: 2)
-        guard let cgImage = image.cgImage else { return nil }
+        let inkImage = drawing.image(from: bounds, scale: 2)
+
+        // PKDrawing.image(from:scale:) renders ink on a transparent
+        // background - VNRecognizeTextRequest reliably returns zero
+        // observations on a transparent image (confirmed independently: the
+        // exact same text recognizes perfectly on an opaque background and
+        // finds nothing at all on a transparent one), so composite onto an
+        // opaque white background before handing it to Vision.
+        let renderer = UIGraphicsImageRenderer(size: inkImage.size)
+        let opaqueImage = renderer.image { _ in
+            UIColor.white.setFill()
+            UIRectFill(CGRect(origin: .zero, size: inkImage.size))
+            inkImage.draw(at: .zero)
+        }
+        guard let cgImage = opaqueImage.cgImage else { return nil }
 
         return await Task.detached(priority: .background) { () -> String? in
             let request = VNRecognizeTextRequest()
