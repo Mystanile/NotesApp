@@ -15,6 +15,7 @@ struct LibraryView: View {
     @Query(sort: \Folder.name) private var allFolders: [Folder]
     @Query(sort: \Notebook.title) private var allNotebooks: [Notebook]
     @Query private var allLinks: [Link]
+    @Query private var allImportedDocuments: [ImportedDocument]
 
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
@@ -29,6 +30,14 @@ struct LibraryView: View {
 
     @State private var searchText = ""
     @State private var showingSettings = false
+    @State private var pdfExportURL: PDFExport?
+    @State private var exportMessage: String?
+
+    /// Identifiable wrapper so a finished PDF can drive a `.sheet(item:)`.
+    private struct PDFExport: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
 
     private let gridColumns = [GridItem(.adaptive(minimum: 140), spacing: 16)]
 
@@ -70,10 +79,45 @@ struct LibraryView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .sheet(item: $pdfExportURL) { export in
+            ShareSheet(items: [export.url])
+        }
+        .alert("Export", isPresented: Binding(
+            get: { exportMessage != nil },
+            set: { if !$0 { exportMessage = nil } }
+        )) {
+            Button("OK") { exportMessage = nil }
+        } message: {
+            Text(exportMessage ?? "")
+        }
+        #endif
         .task(id: parentFolder?.id) {
             seedTutorialNotebookIfNeeded()
         }
     }
+
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    /// Flattens every page of a notebook into one PDF and hands it to the
+    /// share sheet. Reuses the same renderer the in-notebook export uses, so
+    /// both produce identical pages.
+    private func exportNotebookAsPDF(_ notebook: Notebook) {
+        let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
+        guard !pages.isEmpty else {
+            exportMessage = "That notebook has no pages to export."
+            return
+        }
+        let entries = pages.map { page in
+            (page: page, document: allImportedDocuments.first { $0.page?.id == page.id })
+        }
+        let data = PageRenderer.pdfData(for: entries)
+        do {
+            pdfExportURL = PDFExport(url: try PageRenderer.writeTemporaryPDF(data, named: notebook.title))
+        } catch {
+            exportMessage = "Couldn't create the PDF: \(error.localizedDescription)"
+        }
+    }
+    #endif
 
     /// Creates the "Welcome to Mystnotes" notebook once, the first time the
     /// root library is opened with nothing in it yet. Gated on a persistent
@@ -279,6 +323,13 @@ struct LibraryView: View {
         } label: {
             Label("Rename", systemImage: "pencil")
         }
+        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        Button {
+            exportNotebookAsPDF(notebook)
+        } label: {
+            Label("Export as PDF", systemImage: "arrow.up.doc")
+        }
+        #endif
         Menu {
             ForEach(coverStyleOptions, id: \.name) { option in
                 Button(option.label) {

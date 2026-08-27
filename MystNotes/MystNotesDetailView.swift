@@ -78,6 +78,14 @@ struct NotebookDetailView: View {
     @State private var pageToDelete: Page?
     @State private var showingSaveConfirmation = false
     @State private var saveConfirmationTask: Task<Void, Never>?
+    @State private var pdfExportURL: PDFExport?
+    @State private var exportMessage: String?
+
+    /// Identifiable wrapper so a finished PDF can drive a `.sheet(item:)`.
+    private struct PDFExport: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
 
     @Query private var allLinks: [Link]
     @Query private var allImportedDocuments: [ImportedDocument]
@@ -182,6 +190,11 @@ struct NotebookDetailView: View {
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
+            // Dismiss before loading the image data. Leaving the picker
+            // presented across the async load is what made it briefly snap
+            // back to full screen before closing - it was still the active
+            // presentation while the view rebuilt around the new selection.
+            showingImagePicker = false
             Task { await importImage(from: newItem) }
         }
         #endif
@@ -252,9 +265,20 @@ struct NotebookDetailView: View {
                     Image(systemName: "plus")
                 }
 
-                Button("Save") {
-                    saveCurrentPage()
-                    showSaveConfirmation()
+                Menu {
+                    Button("Save Now") {
+                        saveCurrentPage()
+                        showSaveConfirmation()
+                    }
+                    Section("Export This Page") {
+                        Button("Save to Photos") { exportPageToPhotos() }
+                        Button("Export as PDF") { exportPageAsPDF() }
+                    }
+                    Section("Export Notebook") {
+                        Button("Export All Pages as PDF") { exportNotebookAsPDF() }
+                    }
+                } label: {
+                    Text("Save")
                 }
             }
 #else
@@ -284,6 +308,17 @@ struct NotebookDetailView: View {
             }
         }
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
+        .sheet(item: $pdfExportURL) { export in
+            ShareSheet(items: [export.url])
+        }
+        .alert("Export", isPresented: Binding(
+            get: { exportMessage != nil },
+            set: { if !$0 { exportMessage = nil } }
+        )) {
+            Button("OK") { exportMessage = nil }
+        } message: {
+            Text(exportMessage ?? "")
+        }
         #endif
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .alert(
@@ -498,6 +533,52 @@ struct NotebookDetailView: View {
     }
 
     // MARK: - Document import
+
+    // MARK: - Export
+
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    private func document(for page: Page) -> ImportedDocument? {
+        allImportedDocuments.first { $0.page?.id == page.id }
+    }
+
+    private func exportPageToPhotos() {
+        guard let page = currentPage else { return }
+        // Flush pending ink first so the export matches what's on screen.
+        saveCurrentPage()
+        let image = PageRenderer.image(for: page, importedDocument: document(for: page))
+        Task {
+            do {
+                try await PageRenderer.saveToPhotos(image)
+                exportMessage = "Saved this page to your photo library."
+            } catch {
+                exportMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func exportPageAsPDF() {
+        guard let page = currentPage else { return }
+        saveCurrentPage()
+        let data = PageRenderer.pdfData(for: [(page: page, document: document(for: page))])
+        presentPDF(data, named: "\(notebook.title) - Page \(currentPageIndex + 1)")
+    }
+
+    private func exportNotebookAsPDF() {
+        saveCurrentPage()
+        let entries = sortedPages.map { (page: $0, document: document(for: $0)) }
+        guard !entries.isEmpty else { return }
+        let data = PageRenderer.pdfData(for: entries)
+        presentPDF(data, named: notebook.title)
+    }
+
+    private func presentPDF(_ data: Data, named name: String) {
+        do {
+            pdfExportURL = PDFExport(url: try PageRenderer.writeTemporaryPDF(data, named: name))
+        } catch {
+            exportMessage = "Couldn't create the PDF: \(error.localizedDescription)"
+        }
+    }
+    #endif
 
     /// Opens the move/resize handles for whatever was imported onto this
     /// page. Triggered by the canvas long-press, and automatically right
