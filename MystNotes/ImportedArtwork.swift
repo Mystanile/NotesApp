@@ -57,6 +57,54 @@ enum ImportedArtwork {
         )
     }
 
+    /// Applies a non-destructive crop and rotation to freshly loaded
+    /// artwork. Both are baked into the returned image so every consumer
+    /// (canvas, thumbnail, export) gets the same picture without each
+    /// having to reimplement the transform.
+    static func transformed(
+        _ image: UIImage,
+        cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?,
+        rotationDegrees: Double?
+    ) -> UIImage {
+        var result = image
+
+        if let cropX, let cropY, let cropWidth, let cropHeight,
+           cropWidth > 0, cropHeight > 0,
+           // Ignore nonsense values rather than produce an empty image.
+           cropX >= 0, cropY >= 0, cropX + cropWidth <= 1.0001, cropY + cropHeight <= 1.0001,
+           let cgImage = result.cgImage {
+            let pixel = CGRect(
+                x: cropX * Double(cgImage.width),
+                y: cropY * Double(cgImage.height),
+                width: cropWidth * Double(cgImage.width),
+                height: cropHeight * Double(cgImage.height)
+            ).integral
+            if let cropped = cgImage.cropping(to: pixel) {
+                result = UIImage(cgImage: cropped, scale: result.scale, orientation: result.imageOrientation)
+            }
+        }
+
+        let degrees = ((rotationDegrees ?? 0).truncatingRemainder(dividingBy: 360) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        guard degrees != 0 else { return result }
+
+        // Quarter turns swap width and height.
+        let swapsAxes = degrees == 90 || degrees == 270
+        let outputSize = swapsAxes
+            ? CGSize(width: result.size.height, height: result.size.width)
+            : result.size
+        let renderer = UIGraphicsImageRenderer(size: outputSize)
+        return renderer.image { context in
+            let cg = context.cgContext
+            cg.translateBy(x: outputSize.width / 2, y: outputSize.height / 2)
+            cg.rotate(by: CGFloat(degrees) * .pi / 180)
+            result.draw(in: CGRect(
+                x: -result.size.width / 2, y: -result.size.height / 2,
+                width: result.size.width, height: result.size.height
+            ))
+        }
+    }
+
     /// Loads the artwork as an image, rasterizing a PDF page if needed.
     /// `targetSize` only guides PDF rasterization quality; photos come back
     /// at their natural size.
@@ -68,6 +116,22 @@ enum ImportedArtwork {
             return page.thumbnail(of: targetSize, for: .mediaBox)
         }
         return UIImage(contentsOfFile: url.path)
+    }
+
+    /// Loads a page's artwork with its crop and rotation already applied -
+    /// the single entry point the canvas, thumbnails and exports all use.
+    static func displayImage(fileRef: String, document: ImportedDocument?, targetSize: CGSize) -> UIImage? {
+        guard let raw = rasterized(
+            fileRef: fileRef,
+            pdfPageIndex: document?.pdfPageIndex ?? 0,
+            targetSize: targetSize
+        ) else { return nil }
+        return transformed(
+            raw,
+            cropX: document?.cropX, cropY: document?.cropY,
+            cropWidth: document?.cropWidth, cropHeight: document?.cropHeight,
+            rotationDegrees: document?.rotationDegrees
+        )
     }
 
     /// The artwork's natural pixel/point size, straight off disk - used to
