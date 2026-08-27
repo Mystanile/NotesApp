@@ -125,10 +125,13 @@ final class ImportedDocument {
     // Always 0 for images (a single "page").
     var pdfPageIndex: Int = 0
 
-    // Where the imported artwork sits on the page, in page coordinates.
-    // All-nil means "fill the page", which is how every import behaved
-    // before it was adjustable - so existing records keep rendering
-    // exactly as they did.
+    // Where the imported artwork sits on the page, as *fractions* of the
+    // page's width/height (0...1) rather than absolute points. Fractions
+    // are resolution-independent, so the same placement renders correctly
+    // on any canvas size and in the page thumbnails, which have no idea
+    // what size canvas the artwork was originally placed against.
+    // All-nil means "unplaced": aspect-fit centered, matching how every
+    // import behaved before placement was adjustable.
     var frameX: Double?
     var frameY: Double?
     var frameWidth: Double?

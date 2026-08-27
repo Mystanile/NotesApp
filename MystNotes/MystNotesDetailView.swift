@@ -321,7 +321,7 @@ struct NotebookDetailView: View {
             } else {
                 ZStack {
                     if page.backgroundRef != nil {
-                        ImportedPageBackgroundView(page: page)
+                        ImportedPageBackgroundView(page: page, liveFrame: adjustingImageFrame)
                     } else {
                         PageBackgroundView(template: page.template)
                     }
@@ -507,9 +507,11 @@ struct NotebookDetailView: View {
     private func beginAdjustingImage(on page: Page) {
         guard adjustingImageFrame == nil, page.backgroundRef != nil else { return }
         let doc = allImportedDocuments.first { $0.page?.id == page.id }
-        if let x = doc?.frameX, let y = doc?.frameY,
-           let w = doc?.frameWidth, let h = doc?.frameHeight {
-            adjustingImageFrame = CGRect(x: x, y: y, width: w, height: h)
+        if let placed = ImportedArtwork.placedRect(
+            x: doc?.frameX, y: doc?.frameY, width: doc?.frameWidth, height: doc?.frameHeight,
+            in: canvasView.bounds.size
+        ) {
+            adjustingImageFrame = placed
         } else if let ref = page.backgroundRef {
             // Never adjusted: start from the artwork's actual aspect-fit
             // rect, which is exactly where it's already being rendered - so
@@ -530,11 +532,14 @@ struct NotebookDetailView: View {
             updateCanvasInteractionEnabled()
         }
         guard let frame = adjustingImageFrame,
-              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
-        doc.frameX = frame.origin.x
-        doc.frameY = frame.origin.y
-        doc.frameWidth = frame.width
-        doc.frameHeight = frame.height
+              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }),
+              // Stored as fractions of the page so the placement survives a
+              // different canvas size and can be reproduced in thumbnails.
+              let fractions = ImportedArtwork.fractions(of: frame, in: canvasView.bounds.size) else { return }
+        doc.frameX = fractions.x
+        doc.frameY = fractions.y
+        doc.frameWidth = fractions.width
+        doc.frameHeight = fractions.height
         notebook.modifiedAt = Date()
         saveMetadata("Failed to save image placement")
     }
