@@ -316,9 +316,12 @@ struct NotebookDetailView: View {
                     if toolState.activeKind == .fill {
                         Color.clear
                             .contentShape(Rectangle())
-                            .onTapGesture { location in
-                                performFill(at: location)
-                            }
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onEnded { value in
+                                        performFill(at: value.location)
+                                    }
+                            )
                     }
 #endif
                 }

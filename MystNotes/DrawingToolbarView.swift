@@ -193,7 +193,7 @@ struct DrawingToolbarView: View {
             }
         case .fill:
             VStack(alignment: .leading, spacing: 16) {
-                Text("Tap an enclosed area to fill it, like the bucket tool in Paint.")
+                Text("Tap an enclosed area to fill it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 colorRow(selection: $toolState.fillColor)
