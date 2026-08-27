@@ -10,13 +10,14 @@ import PDFKit
 import PhotosUI
 
 /// The actual notebook-editing experience: one page's canvas at a time,
-/// a page-thumbnail strip for navigation, undo/redo, the shape tool,
-/// draggable text/sticker/link elements, PDF/image import, and a
-/// distraction-free presentation mode. Elements/shapes/imports only apply
-/// to regular paged pages — whiteboard pages keep plain PencilKit drawing
-/// (their scroll/zoom coordinate space needs extra math to position
-/// overlays correctly, a reasonable follow-up rather than folding into
-/// this already-large set of phases).
+/// a page-thumbnail strip for navigation, a custom drawing toolbar
+/// (undo/redo, pen/highlighter/eraser/lasso, the shape tool), draggable
+/// text/sticker/link elements, PDF/image import, and a distraction-free
+/// presentation mode. Elements/shapes/imports only apply to regular paged
+/// pages — whiteboard pages keep plain PencilKit drawing (their scroll/zoom
+/// coordinate space needs extra math to position overlays correctly, a
+/// reasonable follow-up rather than folding into this already-large set of
+/// phases).
 struct NotebookDetailView: View {
     @Bindable var notebook: Notebook
 
@@ -34,11 +35,17 @@ struct NotebookDetailView: View {
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     @State private var canvasView = PKCanvasView()
-    @State private var toolPicker = PKToolPicker()
+    // Seeded from the same Settings-configurable defaults PencilKit's own
+    // tool used to start from (AppSettings.initialTool()); this is now the
+    // single source of truth for canvasView.tool, replacing PKToolPicker.
+    @State private var toolState = DrawingToolState(
+        penInkType: AppSettings.inkType(for: AppSettings.defaultToolType),
+        penColor: Color(hex: AppSettings.defaultInkColorHex),
+        penWidth: AppSettings.defaultInkWidth
+    )
 #else
     // Placeholder for macOS native - PencilKit not available
     @State private var canvasView: Any?
-    @State private var toolPicker: Any?
 #endif
 
     @State private var currentPageIndex: Int = 0
@@ -78,6 +85,23 @@ struct NotebookDetailView: View {
             VStack(spacing: 0) {
                 if let page = currentPage {
                     canvasSection(for: page)
+                        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+                        .overlay(alignment: .top) {
+                            if !isPresenting {
+                                DrawingToolbarView(
+                                    toolState: $toolState,
+                                    canUndo: canUndo,
+                                    canRedo: canRedo,
+                                    isShapeModeArmed: isShapeModeArmed,
+                                    isShapeToolAvailable: page.type != "whiteboard",
+                                    onUndo: { canvasView.undoManager?.undo() },
+                                    onRedo: { canvasView.undoManager?.redo() },
+                                    onToggleShapeMode: toggleShapeMode
+                                )
+                                .padding(.top, 8)
+                            }
+                        }
+                        #endif
                     if showingPageStrip && !isPresenting {
                         pageStrip
                     }
@@ -92,7 +116,7 @@ struct NotebookDetailView: View {
             // which re-parents that UIView into the modal's hierarchy and
             // never returns it on dismiss (the pen/canvas going blank after
             // exiting presentation mode). Toggling visibility in place keeps
-            // canvasView/toolPicker mounted exactly once, always.
+            // canvasView mounted exactly once, always.
             if isPresenting {
                 Button {
                     isPresenting = false
@@ -111,7 +135,13 @@ struct NotebookDetailView: View {
         .statusBarHidden(isPresenting)
         #endif
         .ignoresSafeArea(.all, edges: isPresenting ? .all : [])
-        .onAppear(perform: openFirstPage)
+        .onAppear {
+            openFirstPage()
+            applyToolState()
+        }
+        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .onChange(of: toolState) { _, _ in applyToolState() }
+        #endif
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 saveCurrentPage()
@@ -125,45 +155,6 @@ struct NotebookDetailView: View {
         #endif
         .toolbar {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            ToolbarItemGroup(placement: .navigationBarLeading) {
-                Button {
-                    canvasView.undoManager?.undo()
-                } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                }
-                .disabled(!canUndo)
-
-                Button {
-                    canvasView.undoManager?.redo()
-                } label: {
-                    Image(systemName: "arrow.uturn.forward")
-                }
-                .disabled(!canRedo)
-            }
-#else
-            // For macOS native, we use automatic placement for toolbar items
-            ToolbarItem(placement: .automatic) {
-                Button {
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-                    canvasView.undoManager?.undo()
-#endif
-                } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                }
-                .disabled(!canUndo)
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-                    canvasView.undoManager?.redo()
-#endif
-                } label: {
-                    Image(systemName: "arrow.uturn.forward")
-                }
-                .disabled(!canRedo)
-            }
-#endif
-
             ToolbarItem(placement: .principal) {
                 if !sortedPages.isEmpty {
                     Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
@@ -172,7 +163,6 @@ struct NotebookDetailView: View {
                 }
             }
 
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
                     isPresenting = true
@@ -185,14 +175,6 @@ struct NotebookDetailView: View {
                 } label: {
                     Image(systemName: "rectangle.grid.1x2")
                 }
-
-                Button {
-                    toggleShapeMode()
-                } label: {
-                    Image(systemName: "square.on.circle")
-                }
-                .foregroundStyle(isShapeModeArmed ? Color.accentColor : Color.primary)
-                .disabled(currentPage?.type == "whiteboard")
 
                 Menu {
                     Section("New Page") {
@@ -274,7 +256,6 @@ struct NotebookDetailView: View {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
                 WhiteboardCanvasView(
                     canvasView: $canvasView,
-                    toolPicker: toolPicker,
                     onDrawingChanged: scheduleAutosave
                 )
 #else
@@ -293,7 +274,6 @@ struct NotebookDetailView: View {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
                     PencilCanvasView(
                         canvasView: $canvasView,
-                        toolPicker: toolPicker,
                         onDrawingChanged: scheduleAutosave
                     )
 #else
@@ -517,30 +497,28 @@ struct NotebookDetailView: View {
             return
         }
 
-        await MainActor.run {
-            saveCurrentPage()
+        saveCurrentPage()
 
-            let newIndex = sortedPages.count
-            let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
-            page.backgroundRef = storedFilename
-            modelContext.insert(page)
+        let newIndex = sortedPages.count
+        let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
+        page.backgroundRef = storedFilename
+        modelContext.insert(page)
 
-            let importedDoc = ImportedDocument(sourceType: "image", fileRef: storedFilename, pdfPageIndex: 0, page: page)
-            modelContext.insert(importedDoc)
+        let importedDoc = ImportedDocument(sourceType: "image", fileRef: storedFilename, pdfPageIndex: 0, page: page)
+        modelContext.insert(importedDoc)
 
-            if notebook.pages == nil {
-                notebook.pages = [page]
-            } else {
-                notebook.pages?.append(page)
-            }
-            notebook.modifiedAt = Date()
-            saveMetadata("Failed to save imported image page")
-
-            currentPageIndex = newIndex
-            canvasView.drawing = PKDrawing()
-            refreshUndoRedoState()
-            selectedPhotoItem = nil
+        if notebook.pages == nil {
+            notebook.pages = [page]
+        } else {
+            notebook.pages?.append(page)
         }
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to save imported image page")
+
+        currentPageIndex = newIndex
+        canvasView.drawing = PKDrawing()
+        refreshUndoRedoState()
+        selectedPhotoItem = nil
     }
     #else
     // Dummy implementation for macOS native
@@ -592,6 +570,14 @@ struct NotebookDetailView: View {
         linkNeedingDestination = link
     }
 
+    // MARK: - Drawing tool
+
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    private func applyToolState() {
+        canvasView.tool = toolState.pkTool
+    }
+    #endif
+
     // MARK: - Shape tool
 
     private func toggleShapeMode() {
@@ -607,16 +593,9 @@ struct NotebookDetailView: View {
             isShapeModeArmed = false
             canvasView.isUserInteractionEnabled = true
         }
-        if let inkingTool = canvasView.tool as? PKInkingTool {
-            let ink = PKInk(.pen, color: inkingTool.color)
-            guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }
-            canvasView.drawing = PKDrawing(strokes: canvasView.drawing.strokes + [stroke])
-        } else {
-            // Fallback to black if tool is not an inking tool
-            let ink = PKInk(.pen, color: .black)
-            guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }
-            canvasView.drawing = PKDrawing(strokes: canvasView.drawing.strokes + [stroke])
-        }
+        let ink = PKInk(.pen, color: UIColor(toolState.penColor))
+        guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }
+        canvasView.drawing = PKDrawing(strokes: canvasView.drawing.strokes + [stroke])
         scheduleAutosave()
     }
     #else

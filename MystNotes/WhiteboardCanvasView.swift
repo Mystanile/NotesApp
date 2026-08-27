@@ -16,7 +16,6 @@ import AppKit
 // iPad or Mac Catalyst - UIKit available
 struct WhiteboardCanvasView: UIViewRepresentable {
     @Binding var canvasView: PKCanvasView
-    var toolPicker: PKToolPicker
     var onDrawingChanged: () -> Void = {}
 
     static let boardSize: CGFloat = 3000
@@ -30,15 +29,13 @@ struct WhiteboardCanvasView: UIViewRepresentable {
 
         canvasView.drawingPolicy = .anyInput
         canvasView.backgroundColor = .white
-        canvasView.tool = AppSettings.initialTool()   // default tool/color/width from Settings
+        canvasView.tool = AppSettings.initialTool()   // starting tool/color/width; DrawingToolbarView takes over from here
         canvasView.delegate = context.coordinator
         canvasView.frame = CGRect(x: 0, y: 0, width: Self.boardSize, height: Self.boardSize)
 
         scrollView.contentSize = canvasView.frame.size
         scrollView.addSubview(canvasView)
 
-        toolPicker.setVisible(true, forFirstResponder: canvasView)
-        toolPicker.addObserver(canvasView)
         canvasView.becomeFirstResponder()
 
         return scrollView
