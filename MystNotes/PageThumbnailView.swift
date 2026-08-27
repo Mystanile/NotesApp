@@ -56,6 +56,20 @@ struct PageThumbnailView: View {
             return
         }
         let directory = FileStore.baseDirectory()
+
+        // Excalidraw pages have no PKDrawing to render - saveCurrentPage()
+        // writes a companion PNG snapshot ("<uuid>.excalidraw.png") next to
+        // the scene JSON ("<uuid>.excalidraw.json") specifically for this.
+        if page.type == "excalidraw" {
+            let pngURL = directory.appendingPathComponent(ref.replacingOccurrences(of: ".json", with: ".png"))
+        #if canImport(UIKit)
+            thumbnail = UIImage(contentsOfFile: pngURL.path)
+        #else
+            thumbnail = nil
+        #endif
+            return
+        }
+
         let url = directory.appendingPathComponent(ref)
         guard let data = try? Data(contentsOf: url), let drawing = try? PKDrawing(data: data) else {
         #if canImport(UIKit)

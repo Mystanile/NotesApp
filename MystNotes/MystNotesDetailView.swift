@@ -35,16 +35,22 @@ struct NotebookDetailView: View {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     @State private var canvasView = PKCanvasView()
     @State private var toolPicker = PKToolPicker()
+    @State private var excalidrawController = ExcalidrawController()
 #else
     // Placeholder for macOS native - PencilKit not available
     @State private var canvasView: Any?
     @State private var toolPicker: Any?
+    @State private var excalidrawController: Any?
 #endif
 
     @State private var currentPageIndex: Int = 0
     @State private var canUndo = false
     @State private var canRedo = false
     @State private var autosaveTask: Task<Void, Never>?
+    // Serializes save/load across page switches so an in-flight Excalidraw
+    // JS export (async, unlike PencilKit's instant in-memory read) can never
+    // race a subsequent loadScene into the same shared WKWebView.
+    @State private var canvasTransitionTask: Task<Void, Never>?
     @State private var drawingNeedsOCR = false
     @State private var showingPageStrip = true
 
@@ -114,7 +120,25 @@ struct NotebookDetailView: View {
         .onAppear(perform: openFirstPage)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
-                saveCurrentPage()
+                // Once saveCurrentPage() awaits an Excalidraw JS round-trip,
+                // iOS can suspend mid-await before it finishes; a background
+                // task buys the extra time to finish the export+write first.
+                // (PencilKit's save is pure synchronous disk I/O and never
+                // needed this.)
+                #if targetEnvironment(macCatalyst) || canImport(UIKit)
+                var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+                backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "SaveCurrentPage") {
+                    UIApplication.shared.endBackgroundTask(backgroundTaskID)
+                }
+                runCanvasTransition {
+                    await saveCurrentPage()
+                    if backgroundTaskID != .invalid {
+                        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+                    }
+                }
+                #else
+                runCanvasTransition { await saveCurrentPage() }
+                #endif
             }
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -126,19 +150,22 @@ struct NotebookDetailView: View {
         .toolbar {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
             ToolbarItemGroup(placement: .navigationBarLeading) {
+                // Excalidraw has its own in-canvas undo stack (Cmd/Ctrl+Z)
+                // this toolbar button doesn't reach - disable rather than
+                // bridge into the webview's JS undo stack (v1 limitation).
                 Button {
                     canvasView.undoManager?.undo()
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
-                .disabled(!canUndo)
+                .disabled(!canUndo || currentPage?.type == "excalidraw")
 
                 Button {
                     canvasView.undoManager?.redo()
                 } label: {
                     Image(systemName: "arrow.uturn.forward")
                 }
-                .disabled(!canRedo)
+                .disabled(!canRedo || currentPage?.type == "excalidraw")
             }
 #else
             // For macOS native, we use automatic placement for toolbar items
@@ -192,17 +219,18 @@ struct NotebookDetailView: View {
                     Image(systemName: "square.on.circle")
                 }
                 .foregroundStyle(isShapeModeArmed ? Color.accentColor : Color.primary)
-                .disabled(currentPage?.type == "whiteboard")
+                .disabled(currentPage?.type == "whiteboard" || currentPage?.type == "excalidraw")
 
                 Menu {
                     Section("New Page") {
+                        Button("Excalidraw Board") { addPage(type: "excalidraw", template: "blank") }
                         Button("Blank") { addPage(type: "paged", template: "blank") }
                         Button("Lined") { addPage(type: "paged", template: "lined") }
                         Button("Grid") { addPage(type: "paged", template: "grid") }
                         Button("Dotted") { addPage(type: "paged", template: "dotted") }
                         Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
                     }
-                    if currentPage?.type != "whiteboard" {
+                    if currentPage?.type != "whiteboard" && currentPage?.type != "excalidraw" {
                         Section("Add to Page") {
                             Button("Text Box") { addTextBlock() }
                             Button("Sticker") { showingStickerPicker = true }
@@ -218,7 +246,7 @@ struct NotebookDetailView: View {
                 }
 
                 Button("Save") {
-                    saveCurrentPage()
+                    runCanvasTransition { await saveCurrentPage() }
                 }
             }
 #else
@@ -239,7 +267,7 @@ struct NotebookDetailView: View {
         .sheet(item: $linkNeedingDestination) { link in
             LinkDestinationPickerView(pages: sortedPages) { destinationID in
                 link.destinationPageID = destinationID
-                saveCurrentPage()
+                runCanvasTransition { await saveCurrentPage() }
             }
         }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
@@ -280,6 +308,22 @@ struct NotebookDetailView: View {
 #else
                 // Placeholder for macOS native
                 Text("Whiteboard view not available on native macOS")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.gray.opacity(0.2))
+#endif
+            } else if page.type == "excalidraw" {
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+                // Self-contained, like the whiteboard branch: Excalidraw
+                // manages its own canvas/elements/shape-tools inside the
+                // webview, so none of PageBackgroundView/
+                // PageElementsOverlayView/ShapeDrawingOverlay apply here.
+                ExcalidrawCanvasView(
+                    controller: excalidrawController,
+                    onSceneChanged: scheduleAutosave
+                )
+#else
+                // Placeholder for macOS native
+                Text("Excalidraw view not available on native macOS")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.gray.opacity(0.2))
 #endif
@@ -358,16 +402,18 @@ struct NotebookDetailView: View {
         } else {
             currentPageIndex = 0
         }
-        loadCurrentPageDrawing()
+        runCanvasTransition { await loadCurrentPageDrawing() }
     }
 
     // MARK: - Page navigation
 
     private func jumpToPage(at index: Int) {
         guard index != currentPageIndex, sortedPages.indices.contains(index) else { return }
-        saveCurrentPage()
-        currentPageIndex = index
-        loadCurrentPageDrawing()
+        runCanvasTransition {
+            await saveCurrentPage()
+            currentPageIndex = index
+            await loadCurrentPageDrawing()
+        }
     }
 
     private func jumpToPage(withID id: UUID) {
@@ -376,30 +422,38 @@ struct NotebookDetailView: View {
     }
 
     private func addPage(type: String, template: String) {
-        saveCurrentPage()
+        runCanvasTransition {
+            await saveCurrentPage()
 
-        let newIndex = sortedPages.count
-        let page = Page(index: newIndex, type: type, template: template, notebook: notebook)
-        modelContext.insert(page)
+            let newIndex = sortedPages.count
+            let page = Page(index: newIndex, type: type, template: template, notebook: notebook)
+            modelContext.insert(page)
 
-        if notebook.pages == nil {
-            notebook.pages = [page]
-        } else {
-            notebook.pages?.append(page)
-        }
-        notebook.modifiedAt = Date()
+            if notebook.pages == nil {
+                notebook.pages = [page]
+            } else {
+                notebook.pages?.append(page)
+            }
+            notebook.modifiedAt = Date()
 
-        do {
-            try modelContext.save()
-        } catch {
-            print("Failed to save new page: \(error)")
-        }
+            do {
+                try modelContext.save()
+            } catch {
+                print("Failed to save new page: \(error)")
+            }
 
-        currentPageIndex = newIndex
+            currentPageIndex = newIndex
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        canvasView.drawing = PKDrawing()
+            // A brand-new page has nothing saved yet, so skip the disk
+            // round-trip both engines' load paths would otherwise do.
+            if type == "excalidraw" {
+                await excalidrawController.loadScene(ExcalidrawController.emptyScene)
+            } else {
+                canvasView.drawing = PKDrawing()
+            }
 #endif
-        refreshUndoRedoState()
+            refreshUndoRedoState()
+        }
     }
 
     /// Removes a page and everything tied to it: the saved drawing file on
@@ -435,7 +489,7 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to delete page")
 
         currentPageIndex = min(deletedIndex, max(remaining.count - 1, 0))
-        loadCurrentPageDrawing()
+        runCanvasTransition { await loadCurrentPageDrawing() }
     }
 
     // MARK: - Document import
@@ -464,38 +518,40 @@ struct NotebookDetailView: View {
             return
         }
 
-        saveCurrentPage()
+        runCanvasTransition {
+            await saveCurrentPage()
 
-        var newIndex = sortedPages.count
-        for pdfPageIndex in 0..<document.pageCount {
-            let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
-            page.backgroundRef = storedFilename
-            modelContext.insert(page)
+            var newIndex = sortedPages.count
+            for pdfPageIndex in 0..<document.pageCount {
+                let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
+                page.backgroundRef = storedFilename
+                modelContext.insert(page)
 
-            let importedDoc = ImportedDocument(
-                sourceType: "pdf",
-                fileRef: storedFilename,
-                pdfPageIndex: pdfPageIndex,
-                page: page
-            )
-            modelContext.insert(importedDoc)
+                let importedDoc = ImportedDocument(
+                    sourceType: "pdf",
+                    fileRef: storedFilename,
+                    pdfPageIndex: pdfPageIndex,
+                    page: page
+                )
+                modelContext.insert(importedDoc)
 
-            if notebook.pages == nil {
-                notebook.pages = [page]
-            } else {
-                notebook.pages?.append(page)
+                if notebook.pages == nil {
+                    notebook.pages = [page]
+                } else {
+                    notebook.pages?.append(page)
+                }
+                newIndex += 1
             }
-            newIndex += 1
-        }
 
-        notebook.modifiedAt = Date()
-        saveMetadata("Failed to save imported PDF pages")
+            notebook.modifiedAt = Date()
+            saveMetadata("Failed to save imported PDF pages")
 
-        currentPageIndex = sortedPages.count - document.pageCount
+            currentPageIndex = sortedPages.count - document.pageCount
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        canvasView.drawing = PKDrawing()
+            canvasView.drawing = PKDrawing()
 #endif
-        refreshUndoRedoState()
+            refreshUndoRedoState()
+        }
     }
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -517,8 +573,8 @@ struct NotebookDetailView: View {
             return
         }
 
-        await MainActor.run {
-            saveCurrentPage()
+        runCanvasTransition {
+            await saveCurrentPage()
 
             let newIndex = sortedPages.count
             let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
@@ -633,13 +689,44 @@ struct NotebookDetailView: View {
         return directory.appendingPathComponent("\(page.id.uuidString).drawing")
     }
 
-    private func loadCurrentPageDrawing() {
+    private func excalidrawSceneURL(for page: Page) -> URL {
+        FileStore.baseDirectory().appendingPathComponent("\(page.id.uuidString).excalidraw.json")
+    }
+
+    private func excalidrawThumbnailURL(for page: Page) -> URL {
+        FileStore.baseDirectory().appendingPathComponent("\(page.id.uuidString).excalidraw.png")
+    }
+
+    /// Serializes every save/load through one chain so an in-flight
+    /// Excalidraw JS export (async, unlike PencilKit's instant in-memory
+    /// read) can never race a subsequent loadScene into the same shared
+    /// WKWebView - each new operation waits for the previous one to finish.
+    private func runCanvasTransition(_ operation: @escaping () async -> Void) {
+        let previous = canvasTransitionTask
+        canvasTransitionTask = Task {
+            await previous?.value
+            await operation()
+        }
+    }
+
+    private func loadCurrentPageDrawing() async {
         guard let page = currentPage else {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
             canvasView.drawing = PKDrawing()
 #endif
             return
         }
+
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        if page.type == "excalidraw" {
+            let url = excalidrawSceneURL(for: page)
+            let json = (try? String(contentsOf: url, encoding: .utf8)) ?? ExcalidrawController.emptyScene
+            await excalidrawController.loadScene(json)
+            refreshUndoRedoState()
+            return
+        }
+#endif
+
         let url = drawingURL(for: page)
         if let data = try? Data(contentsOf: url) {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -657,8 +744,47 @@ struct NotebookDetailView: View {
         refreshUndoRedoState()
     }
 
-    private func saveCurrentPage() {
+    private func saveCurrentPage() async {
         guard let page = currentPage else { return }
+
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        if page.type == "excalidraw" {
+            guard let json = await excalidrawController.exportSceneJSON() else { return }
+            let url = excalidrawSceneURL(for: page)
+            do {
+                try json.write(to: url, atomically: true, encoding: .utf8)
+                page.drawingFileRef = url.lastPathComponent
+
+                // Excalidraw's own text elements give exact strings for
+                // free, but a page can just as easily be freehand ink drawn
+                // with its pen tool - that's only searchable by OCR'ing the
+                // rendered canvas, same as PencilKit pages are.
+                let typedText = await excalidrawController.exportPlainText()
+                var searchableParts = [String]()
+                if let typedText, !typedText.isEmpty {
+                    searchableParts.append(typedText)
+                }
+
+                let thumbnail = await excalidrawController.snapshotThumbnail()
+                if let thumbnail, let pngData = thumbnail.pngData() {
+                    try? pngData.write(to: excalidrawThumbnailURL(for: page))
+                }
+                if let cgImage = thumbnail?.cgImage,
+                   let inkText = await HandwritingRecognizer.ocrText(from: cgImage) {
+                    searchableParts.append(inkText)
+                }
+
+                page.recognizedTextCache = searchableParts.isEmpty ? nil : searchableParts.joined(separator: "\n")
+
+                notebook.modifiedAt = Date()
+                try modelContext.save()
+            } catch {
+                print("Failed to save Excalidraw scene: \(error)")
+            }
+            return
+        }
+#endif
+
         let url = drawingURL(for: page)
         do {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -681,12 +807,16 @@ struct NotebookDetailView: View {
         autosaveTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
-            saveCurrentPage()
-            // Re-recognize handwriting in the background (skips if the file
-            // hasn't changed since the last pass) so search stays up to date.
-            if drawingNeedsOCR, let pageToIndex {
-                drawingNeedsOCR = false
-                await HandwritingRecognizer.refreshOCR(for: pageToIndex, modelContext: modelContext)
+            runCanvasTransition {
+                await saveCurrentPage()
+                // Re-recognize handwriting in the background (skips if the
+                // file hasn't changed since the last pass) so search stays
+                // up to date. Excalidraw pages populate recognizedTextCache
+                // directly above instead - OCR doesn't apply to them.
+                if drawingNeedsOCR, let pageToIndex, pageToIndex.type != "excalidraw" {
+                    drawingNeedsOCR = false
+                    await HandwritingRecognizer.refreshOCR(for: pageToIndex, modelContext: modelContext)
+                }
             }
         }
     }
