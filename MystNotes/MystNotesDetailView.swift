@@ -59,6 +59,12 @@ struct NotebookDetailView: View {
     @State private var showingStickerPicker = false
     @State private var linkNeedingDestination: Link?
 
+    /// Whether an import lands on the page you're looking at or creates new
+    /// page(s) after it. Set by whichever Import menu item was tapped, read
+    /// when the picker comes back.
+    private enum ImportTarget { case newPages, currentPage }
+    @State private var importTarget: ImportTarget = .newPages
+
     @State private var showingPDFImporter = false
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     @State private var showingImagePicker = false
@@ -210,8 +216,26 @@ struct NotebookDetailView: View {
                         }
                     }
                     Section("Import") {
-                        Button("Import PDF") { showingPDFImporter = true }
-                        Button("Import Photo") { showingImagePicker = true }
+                        // Backgrounds only render on paged pages, so
+                        // "onto this page" doesn't apply to a whiteboard.
+                        if currentPage?.type != "whiteboard" {
+                            Button("PDF onto This Page") {
+                                importTarget = .currentPage
+                                showingPDFImporter = true
+                            }
+                            Button("Photo onto This Page") {
+                                importTarget = .currentPage
+                                showingImagePicker = true
+                            }
+                        }
+                        Button("PDF as New Pages") {
+                            importTarget = .newPages
+                            showingPDFImporter = true
+                        }
+                        Button("Photo as New Page") {
+                            importTarget = .newPages
+                            showingImagePicker = true
+                        }
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -451,6 +475,29 @@ struct NotebookDetailView: View {
 
     // MARK: - Document import
 
+    /// Puts an imported file behind an existing page's ink instead of
+    /// creating a new page for it. Any document previously imported onto
+    /// this page is dropped first - a page renders exactly one background,
+    /// and `SearchIndex` resolves one ImportedDocument per page, so leaving
+    /// the old record around would make which one wins arbitrary.
+    private func applyBackground(_ storedFilename: String, sourceType: String, pdfPageIndex: Int, to page: Page) {
+        for doc in allImportedDocuments where doc.page?.id == page.id {
+            modelContext.delete(doc)
+        }
+
+        page.backgroundRef = storedFilename
+        let importedDoc = ImportedDocument(
+            sourceType: sourceType,
+            fileRef: storedFilename,
+            pdfPageIndex: pdfPageIndex,
+            page: page
+        )
+        modelContext.insert(importedDoc)
+
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to import onto the current page")
+    }
+
     private func importPDF(from sourceURL: URL) {
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
@@ -476,6 +523,14 @@ struct NotebookDetailView: View {
         }
 
         saveCurrentPage()
+
+        if importTarget == .currentPage, let page = currentPage {
+            // Only the first PDF page can go onto an existing page; the
+            // rest would need pages of their own, which is what
+            // "as New Pages" is for.
+            applyBackground(storedFilename, sourceType: "pdf", pdfPageIndex: 0, to: page)
+            return
+        }
 
         var newIndex = sortedPages.count
         for pdfPageIndex in 0..<document.pageCount {
@@ -529,6 +584,12 @@ struct NotebookDetailView: View {
         }
 
         saveCurrentPage()
+
+        if importTarget == .currentPage, let page = currentPage {
+            applyBackground(storedFilename, sourceType: "image", pdfPageIndex: 0, to: page)
+            selectedPhotoItem = nil
+            return
+        }
 
         let newIndex = sortedPages.count
         let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
@@ -617,11 +678,14 @@ struct NotebookDetailView: View {
     }
 
     private func performFill(at point: CGPoint) {
-        guard let filled = FillTool.fill(canvasView.drawing, in: canvasView.bounds.size, at: point, color: toolState.fillColor.fixedUIColor) else {
-            return
+        let drawing = canvasView.drawing
+        let size = canvasView.bounds.size
+        let color = toolState.fillColor.fixedUIColor
+        Task {
+            guard let filled = await FillTool.fill(drawing, in: size, at: point, color: color) else { return }
+            canvasView.drawing = filled
+            scheduleAutosave()
         }
-        canvasView.drawing = filled
-        scheduleAutosave()
     }
     #endif
 
