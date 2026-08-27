@@ -43,9 +43,23 @@ enum FileStore {
     /// that's the only thing that can change the answer.
     static func invalidateCachedBaseDirectory() {
         cachedBaseDirectory = nil
+        cachedResolvedDirectory = nil
     }
 
+    /// Memoized separately from `cachedBaseDirectory` because the fallback
+    /// in `url(for:)` needs the resolved iCloud location even when sync is
+    /// switched off. `url(forUbiquityContainerIdentifier:)` blocks, so it
+    /// must not be re-run on every file lookup.
+    private static var cachedResolvedDirectory: URL?
+
     private static func resolveBaseDirectory() -> URL {
+        if let cached = cachedResolvedDirectory { return cached }
+        let resolved = computeBaseDirectory()
+        cachedResolvedDirectory = resolved
+        return resolved
+    }
+
+    private static func computeBaseDirectory() -> URL {
         if let container = FileManager.default
             .url(forUbiquityContainerIdentifier: nil)?
             .appendingPathComponent("Documents", isDirectory: true) {
@@ -59,8 +73,30 @@ enum FileStore {
     }
 
     /// The on-disk URL for a payload file referenced by name.
+    ///
+    /// If the file isn't in the current base directory but does exist in the
+    /// other one, that location is returned instead. Without this, turning
+    /// the iCloud sync toggle off swings `baseDirectory()` over to local
+    /// storage and every drawing and imported image written while sync was
+    /// on becomes invisible - pages render blank, which reads as total data
+    /// loss even though nothing was actually deleted. Falling back also
+    /// means saving an existing file keeps updating it where it already
+    /// lives, rather than silently forking a second copy; genuinely new
+    /// files exist in neither place and so still land in the current base.
     static func url(for filename: String) -> URL {
-        baseDirectory().appendingPathComponent(filename)
+        let primary = baseDirectory().appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: primary.path) { return primary }
+
+        let local = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // resolveBaseDirectory() is memoized, so this doesn't repeat the
+        // blocking iCloud container lookup on every file access.
+        let alternate = (primary.deletingLastPathComponent() == local)
+            ? resolveBaseDirectory().appendingPathComponent(filename)
+            : local.appendingPathComponent(filename)
+        if alternate != primary, FileManager.default.fileExists(atPath: alternate.path) {
+            return alternate
+        }
+        return primary
     }
 
     /// Copies any payload files that were written to the old local Documents

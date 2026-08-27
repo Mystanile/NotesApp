@@ -1043,8 +1043,9 @@ struct NotebookDetailView: View {
     // MARK: - Drawing persistence
 
     private func drawingURL(for page: Page) -> URL {
-        let directory = FileStore.baseDirectory()
-        return directory.appendingPathComponent("\(page.id.uuidString).drawing")
+        // via FileStore.url(for:) so an existing drawing is found even if
+        // the sync toggle has since moved the base directory.
+        FileStore.url(for: "\(page.id.uuidString).drawing")
     }
 
     private func loadCurrentPageDrawing() {
