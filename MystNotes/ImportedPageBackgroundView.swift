@@ -32,6 +32,15 @@ struct ImportedPageBackgroundView: View {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
+    /// Reload when the file, its crop, or its rotation changes - the frame
+    /// isn't included, since resizing doesn't need a re-render.
+    private var imageKey: String {
+        let doc = importedDocument
+        let values: [Double?] = [doc?.rotationDegrees, doc?.cropX, doc?.cropY, doc?.cropWidth, doc?.cropHeight]
+        return ([page.backgroundRef ?? "-"] + values.map { $0.map { String(format: "%.4f", $0) } ?? "-" })
+            .joined(separator: "|")
+    }
+
     /// The artwork's placed rect. This is the image's *actual* on-page rect,
     /// not a box it's letterboxed inside - the image is drawn to exactly
     /// fill it, and resizing preserves aspect ratio, so the selection
@@ -75,7 +84,7 @@ struct ImportedPageBackgroundView: View {
                 }
         #endif
             }
-            .task(id: page.backgroundRef) {
+            .task(id: imageKey) {
                 loadImage(targetSize: geometry.size)
             }
         }
@@ -83,52 +92,23 @@ struct ImportedPageBackgroundView: View {
 
     private func loadImage(targetSize: CGSize) {
         guard let ref = page.backgroundRef else {
-        #if targetEnvironment(macCatalyst) || canImport(UIKit)
             image = nil
-        #else
-            image = nil
-        #endif
             return
         }
-        let directory = FileStore.baseDirectory()
-        let url = directory.appendingPathComponent(ref)
-
-        if ref.lowercased().hasSuffix(".pdf") {
-            guard let document = PDFDocument(url: url) else {
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
-                image = nil
+        let renderSize = (targetSize.width > 0 && targetSize.height > 0)
+            ? targetSize
+            : CGSize(width: 1000, height: 1300)
+        // Crop and rotation are applied here, by the same helper the
+        // thumbnails and exports use.
+        image = ImportedArtwork.displayImage(
+            fileRef: ref,
+            document: importedDocument,
+            targetSize: renderSize
+        )
         #else
-                image = nil
+        // Not available on native macOS (no UIKit image loading).
+        image = nil
         #endif
-                return
-            }
-            let pageIndex = importedDocument?.pdfPageIndex ?? 0
-            guard let pdfPage = document.page(at: pageIndex) else {
-        #if targetEnvironment(macCatalyst) || canImport(UIKit)
-                image = nil
-        #else
-                image = nil
-        #endif
-                return
-            }
-            let renderSize = (targetSize.width > 0 && targetSize.height > 0)
-                ? targetSize
-                : CGSize(width: 1000, height: 1300)
-        #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            image = pdfPage.thumbnail(of: renderSize, for: .mediaBox)
-        #else
-            // On macOS without UIKit, we can't create UIImage from PDF thumbnail
-            // For now, we'll skip image loading or implement an alternative approach
-            image = nil
-        #endif
-        } else {
-        #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            image = UIImage(contentsOfFile: url.path)
-        #else
-            // On macOS without UIKit, we can't load images via UIImage
-            // Implement alternative approach if needed (e.g., using NSImage)
-            image = nil
-        #endif
-        }
     }
 }

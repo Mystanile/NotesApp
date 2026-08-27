@@ -137,6 +137,18 @@ final class ImportedDocument {
     var frameWidth: Double?
     var frameHeight: Double?
 
+    // Clockwise rotation in degrees, in 90-degree steps. nil == 0.
+    var rotationDegrees: Double?
+
+    // Visible region of the *source* artwork, as fractions of its own size
+    // (0...1). All-nil means uncropped. Kept separate from the frame above
+    // so cropping is non-destructive - the imported file is never rewritten
+    // and a crop can always be widened again.
+    var cropX: Double?
+    var cropY: Double?
+    var cropWidth: Double?
+    var cropHeight: Double?
+
     var page: Page?
 
     init(sourceType: String = "pdf", fileRef: String = "", pdfPageIndex: Int = 0, page: Page? = nil) {

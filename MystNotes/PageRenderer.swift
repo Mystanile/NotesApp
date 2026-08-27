@@ -27,9 +27,9 @@ enum PageRenderer {
         format.opaque = true
 
         let backgroundImage = page.backgroundRef.flatMap { ref in
-            ImportedArtwork.rasterized(
+            ImportedArtwork.displayImage(
                 fileRef: ref,
-                pdfPageIndex: importedDocument?.pdfPageIndex ?? 0,
+                document: importedDocument,
                 targetSize: CGSize(width: nominal.width * scale, height: nominal.height * scale)
             )
         }

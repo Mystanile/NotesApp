@@ -118,9 +118,9 @@ struct PageThumbnailView: View {
 
     private func loadBackgroundImage() -> UIImage? {
         guard let ref = page.backgroundRef else { return nil }
-        return ImportedArtwork.rasterized(
+        return ImportedArtwork.displayImage(
             fileRef: ref,
-            pdfPageIndex: importedDocument?.pdfPageIndex ?? 0,
+            document: importedDocument,
             targetSize: Self.nominalPageSize
         )
     }

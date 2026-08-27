@@ -59,6 +59,9 @@ struct NotebookDetailView: View {
     /// Non-nil while the imported artwork on this page is being moved or
     /// resized; holds its live frame in page coordinates.
     @State private var adjustingImageFrame: CGRect?
+    /// Non-nil while cropping that artwork; the crop rect in page
+    /// coordinates, always kept inside `adjustingImageFrame`.
+    @State private var croppingRect: CGRect?
     @State private var showingStickerPicker = false
     @State private var linkNeedingDestination: Link?
 
@@ -394,16 +397,44 @@ struct NotebookDetailView: View {
                                     }
                             )
                     }
-                    if adjustingImageFrame != nil {
+                    if let frame = adjustingImageFrame {
                         GeometryReader { geo in
-                            ImageAdjustOverlay(
-                                frame: Binding(
-                                    get: { adjustingImageFrame ?? CGRect(origin: .zero, size: geo.size) },
-                                    set: { adjustingImageFrame = $0 }
-                                ),
-                                containerSize: geo.size,
-                                onDone: { finishAdjustingImage(on: page) }
-                            )
+                            ZStack(alignment: .topLeading) {
+                                if let crop = croppingRect {
+                                    ImageCropOverlay(
+                                        artworkRect: frame,
+                                        cropRect: Binding(
+                                            get: { crop },
+                                            set: { croppingRect = $0 }
+                                        )
+                                    )
+                                } else {
+                                    ImageAdjustOverlay(
+                                        frame: Binding(
+                                            get: { adjustingImageFrame ?? CGRect(origin: .zero, size: geo.size) },
+                                            set: { adjustingImageFrame = $0 }
+                                        ),
+                                        containerSize: geo.size,
+                                        onDone: { finishAdjustingImage(on: page) }
+                                    )
+                                }
+
+                                ImageAdjustToolbar(
+                                    isCropping: croppingRect != nil,
+                                    onRotate: { rotateImage(on: page) },
+                                    onToggleCrop: { toggleCropMode() },
+                                    onRemove: { removeImage(from: page) },
+                                    onDone: {
+                                        if croppingRect != nil {
+                                            applyCrop(on: page)
+                                        } else {
+                                            finishAdjustingImage(on: page)
+                                        }
+                                    }
+                                )
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 8)
+                            }
                         }
                     }
 #endif
@@ -607,9 +638,82 @@ struct NotebookDetailView: View {
         updateCanvasInteractionEnabled()
     }
 
+    /// Quarter-turn clockwise. The placement frame's aspect is flipped to
+    /// match so the artwork doesn't end up stretched by the rotation.
+    private func rotateImage(on page: Page) {
+        guard let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
+        doc.rotationDegrees = ((doc.rotationDegrees ?? 0) + 90).truncatingRemainder(dividingBy: 360)
+        if let frame = adjustingImageFrame {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let flipped = CGSize(width: frame.height, height: frame.width)
+            adjustingImageFrame = CGRect(
+                x: center.x - flipped.width / 2,
+                y: center.y - flipped.height / 2,
+                width: flipped.width,
+                height: flipped.height
+            )
+        }
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to rotate image")
+    }
+
+    private func toggleCropMode() {
+        if croppingRect != nil {
+            croppingRect = nil                 // cancel, leaving the crop untouched
+        } else if let frame = adjustingImageFrame {
+            croppingRect = frame               // start from the whole artwork
+        }
+    }
+
+    /// Composes the new crop with whatever crop is already applied: the
+    /// on-screen artwork is the *already cropped* image, so the rect the
+    /// user drew is relative to that, not to the original file.
+    private func applyCrop(on page: Page) {
+        defer { croppingRect = nil }
+        guard let frame = adjustingImageFrame,
+              let crop = croppingRect,
+              frame.width > 0, frame.height > 0,
+              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
+
+        let relativeX = (crop.minX - frame.minX) / frame.width
+        let relativeY = (crop.minY - frame.minY) / frame.height
+        let relativeWidth = crop.width / frame.width
+        let relativeHeight = crop.height / frame.height
+
+        let existingX = doc.cropX ?? 0
+        let existingY = doc.cropY ?? 0
+        let existingWidth = doc.cropWidth ?? 1
+        let existingHeight = doc.cropHeight ?? 1
+
+        doc.cropX = existingX + relativeX * existingWidth
+        doc.cropY = existingY + relativeY * existingHeight
+        doc.cropWidth = existingWidth * relativeWidth
+        doc.cropHeight = existingHeight * relativeHeight
+
+        // The visible artwork is now the crop, so shrink the placement frame
+        // to it - otherwise the remaining image would stretch to refill the
+        // old frame.
+        adjustingImageFrame = crop
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to crop image")
+    }
+
+    private func removeImage(from page: Page) {
+        for doc in allImportedDocuments where doc.page?.id == page.id {
+            modelContext.delete(doc)
+        }
+        page.backgroundRef = nil
+        adjustingImageFrame = nil
+        croppingRect = nil
+        updateCanvasInteractionEnabled()
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to remove image")
+    }
+
     private func finishAdjustingImage(on page: Page) {
         defer {
             adjustingImageFrame = nil
+            croppingRect = nil
             updateCanvasInteractionEnabled()
         }
         guard let frame = adjustingImageFrame,
