@@ -43,7 +43,22 @@ struct NotebookApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Don't take the whole app down over sync. Requesting
+            // .automatic CloudKit without the matching entitlement - which
+            // is exactly the state this app is in while it's signed with a
+            // free developer account - can fail here, and crashing on
+            // launch is a far worse outcome than running without sync.
+            print("CloudKit-backed store unavailable (\(error)); falling back to local-only storage.")
+            let localConfiguration = ModelConfiguration(
+                schema: schema,
+                isStoredInMemoryOnly: false,
+                cloudKitDatabase: .none
+            )
+            do {
+                return try ModelContainer(for: schema, configurations: [localConfiguration])
+            } catch {
+                fatalError("Could not create ModelContainer: \(error)")
+            }
         }
     }()
 

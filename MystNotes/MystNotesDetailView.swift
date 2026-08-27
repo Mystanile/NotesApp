@@ -223,7 +223,7 @@ struct NotebookDetailView: View {
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
-                    isPresenting = true
+                    enterPresentationMode()
                 } label: {
                     Image(systemName: "play.rectangle")
                 }
@@ -388,13 +388,13 @@ struct NotebookDetailView: View {
                         onSave: scheduleAutosave,
                         onRequestLinkDestinationChange: { link in linkNeedingDestination = link }
                     )
-                    if isShapeModeArmed {
+                    if isShapeModeArmed && !isPresenting {
                         ShapeDrawingOverlay { points in
                             addRecognizedShape(from: points)
                         }
                     }
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-                    if toolState.activeKind == .fill {
+                    if toolState.activeKind == .fill && !isPresenting {
                         Color.clear
                             .contentShape(Rectangle())
                             .gesture(
@@ -530,6 +530,8 @@ struct NotebookDetailView: View {
         currentPageIndex = newIndex
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         canvasView.drawing = PKDrawing()
+        // Fresh page, fresh history - see loadCurrentPageDrawing.
+        canvasView.undoManager?.removeAllActions()
 #endif
         refreshUndoRedoState()
     }
@@ -824,9 +826,14 @@ struct NotebookDetailView: View {
         notebook.modifiedAt = Date()
         saveMetadata("Failed to save imported PDF pages")
 
-        currentPageIndex = sortedPages.count - document.pageCount
+        // A PDF that reports zero pages would otherwise leave
+        // currentPageIndex one past the end, where currentPage is nil and
+        // the view sits on "Loading..." forever.
+        guard document.pageCount > 0 else { return }
+        currentPageIndex = max(sortedPages.count - document.pageCount, 0)
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         canvasView.drawing = PKDrawing()
+        canvasView.undoManager?.removeAllActions()
 #endif
         refreshUndoRedoState()
     }
@@ -877,6 +884,7 @@ struct NotebookDetailView: View {
 
         currentPageIndex = newIndex
         canvasView.drawing = PKDrawing()
+        canvasView.undoManager?.removeAllActions()
         refreshUndoRedoState()
         selectedPhotoItem = nil
     }
@@ -960,6 +968,22 @@ struct NotebookDetailView: View {
 
     // MARK: - Shape tool
 
+    /// Presentation mode is meant to be a clean, non-interactive view, but
+    /// the shape and fill tools work through transparent gesture-capture
+    /// overlays - left armed, those would sit invisibly over the presented
+    /// page and turn a stray tap into a drawn shape or a filled region.
+    /// Stand them down on the way in.
+    private func enterPresentationMode() {
+        isShapeModeArmed = false
+        adjustingImageFrame = nil
+        croppingRect = nil
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        if toolState.activeKind == .fill { toolState.activeKind = .pen }
+        updateCanvasInteractionEnabled()
+#endif
+        isPresenting = true
+    }
+
     private func toggleShapeMode() {
         isShapeModeArmed.toggle()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1013,6 +1037,14 @@ struct NotebookDetailView: View {
             canvasView.drawing = PKDrawing()
 #endif
         }
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        // One PKCanvasView is shared across every page, with .drawing swapped
+        // in place - so without this its undo stack still holds the previous
+        // page's edits. Undoing after a page switch would restore that page's
+        // ink onto this one, and autosave would then write it to this page's
+        // file. Each page starts with a clean history instead.
+        canvasView.undoManager?.removeAllActions()
+#endif
         refreshUndoRedoState()
     }
 

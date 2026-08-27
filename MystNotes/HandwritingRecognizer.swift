@@ -94,23 +94,27 @@ enum HandwritingRecognizer {
         let url = FileStore.url(for: "\(page.id.uuidString).drawing")
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
-        // Skip if we already indexed a drawing that hasn't changed AND that
-        // pass actually produced text. Requiring a non-nil cache matters for
-        // recovery: every page indexed while the dark-mode render bug was
-        // live got a nil cache plus a fresh ocrUpdatedAt, which the date
-        // check alone would treat as "already done" and skip forever, so
-        // those pages would stay permanently unsearchable. Re-OCRing a
-        // genuinely blank page is cheap - ocrText bails on empty ink bounds
-        // long before the expensive Vision pass.
+        // Skip if we already indexed this drawing and it hasn't changed
+        // since. The nil check is what lets pages recover: everything
+        // indexed while the dark-mode render bug was live got a nil cache
+        // plus a fresh ocrUpdatedAt, and the date check alone would treat
+        // that as "already done" and skip it forever, leaving those pages
+        // permanently unsearchable.
         if let ocrDate = page.ocrUpdatedAt,
-           page.recognizedTextCache?.isEmpty == false,
+           page.recognizedTextCache != nil,
            let modDate = try? url.resourceValues(forKeys: [URLResourceKey.contentModificationDateKey]).contentModificationDate,
            modDate <= ocrDate {
             return
         }
 
+        // Empty string, not nil, when recognition legitimately finds
+        // nothing: nil means "never successfully indexed" and triggers a
+        // retry, so storing nil for a pure drawing would re-run the
+        // expensive Vision pass on it every single time search is opened.
+        // Pages left nil by the dark-mode render bug still get their one
+        // retry, then settle. SearchIndex already ignores empty text.
         let text = await ocrText(forDrawingFile: url)
-        page.recognizedTextCache = text
+        page.recognizedTextCache = text ?? ""
         page.ocrUpdatedAt = Date()
         do {
             try modelContext.save()

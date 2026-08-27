@@ -80,7 +80,13 @@ private struct TextBlockView: View {
         .background(.white.opacity(0.85))
         .cornerRadius(6)
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.gray.opacity(0.3)))
-        .position(x: block.frameX + block.frameWidth / 2, y: block.frameY + block.frameHeight / 2)
+        // .offset in the parent's topLeading ZStack, NOT .position: this
+        // view's height is intrinsic (it grows as you type), while
+        // block.frameHeight is a stored constant. Centring on that stale
+        // height made the block drift away from where it was placed, and
+        // the drift changed with every line of text. frameX/frameY are
+        // top-left coordinates, which is exactly what offset applies here.
+        .offset(x: block.frameX, y: block.frameY)
         .gesture(dragGesture)
         .onChange(of: block.content) { _, _ in onSave() }
         .contextMenu {
@@ -130,7 +136,7 @@ private struct StickerElementView: View {
             .scaledToFit()
             .foregroundStyle(.yellow)
             .frame(width: sticker.frameWidth, height: sticker.frameHeight)
-            .position(x: sticker.frameX + sticker.frameWidth / 2, y: sticker.frameY + sticker.frameHeight / 2)
+            .offset(x: sticker.frameX, y: sticker.frameY)
             .gesture(dragGesture)
             .contextMenu {
                 Button(role: .destructive) {
@@ -177,7 +183,7 @@ private struct LinkAnchorView: View {
             .foregroundStyle(.blue)
             .background(Circle().fill(.white))
             .frame(width: link.anchorWidth, height: link.anchorHeight)
-            .position(x: link.anchorX + link.anchorWidth / 2, y: link.anchorY + link.anchorHeight / 2)
+            .offset(x: link.anchorX, y: link.anchorY)
             .onTapGesture {
                 onNavigate(link.destinationPageID)
             }
