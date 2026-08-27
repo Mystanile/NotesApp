@@ -67,6 +67,8 @@ struct NotebookDetailView: View {
 
     @State private var isPresenting = false
     @State private var pageToDelete: Page?
+    @State private var showingSaveConfirmation = false
+    @State private var saveConfirmationTask: Task<Void, Never>?
 
     @Query private var allLinks: [Link]
     @Query private var allImportedDocuments: [ImportedDocument]
@@ -99,6 +101,18 @@ struct NotebookDetailView: View {
                                     onToggleShapeMode: toggleShapeMode
                                 )
                                 .padding(.top, 8)
+                            }
+                        }
+                        .overlay(alignment: .bottom) {
+                            if showingSaveConfirmation {
+                                Label("Saved", systemImage: "checkmark.circle.fill")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                                    .padding(.bottom, 12)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
                         #endif
@@ -201,6 +215,7 @@ struct NotebookDetailView: View {
 
                 Button("Save") {
                     saveCurrentPage()
+                    showSaveConfirmation()
                 }
             }
 #else
@@ -690,6 +705,19 @@ struct NotebookDetailView: View {
             try modelContext.save()
         } catch {
             print("\(errorMessage): \(error)")
+        }
+    }
+
+    /// Brief "Saved" confirmation so the toolbar Save button gives visible
+    /// feedback instead of appearing to do nothing (autosave already covers
+    /// the common case, but a manual save should still confirm it happened).
+    private func showSaveConfirmation() {
+        saveConfirmationTask?.cancel()
+        withAnimation { showingSaveConfirmation = true }
+        saveConfirmationTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation { showingSaveConfirmation = false }
         }
     }
 }
