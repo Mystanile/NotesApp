@@ -28,15 +28,20 @@ struct ImportedPageBackgroundView: View {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
-    /// The artwork's placed rect, or the whole page when it has never been
-    /// adjusted (every import before it was adjustable behaved this way).
+    /// The artwork's placed rect. This is the image's *actual* on-page rect,
+    /// not a box it's letterboxed inside - the image is drawn to exactly
+    /// fill it, and resizing preserves aspect ratio, so the selection
+    /// handles can hug the artwork the way Google Docs/Freeform do.
     private func artworkFrame(in size: CGSize) -> CGRect {
-        guard let doc = importedDocument,
-              let x = doc.frameX, let y = doc.frameY,
-              let w = doc.frameWidth, let h = doc.frameHeight else {
-            return CGRect(origin: .zero, size: size)
+        if let doc = importedDocument,
+           let x = doc.frameX, let y = doc.frameY,
+           let w = doc.frameWidth, let h = doc.frameHeight {
+            return CGRect(x: x, y: y, width: w, height: h)
         }
-        return CGRect(x: x, y: y, width: w, height: h)
+        // Never adjusted: aspect-fit centered on the page, which is exactly
+        // what the old .scaledToFit() rendering produced - so existing
+        // imports keep looking identical, just with an explicit frame.
+        return ImportedArtwork.fittedRect(for: image, in: size)
     }
 
     var body: some View {
@@ -46,9 +51,12 @@ struct ImportedPageBackgroundView: View {
                 Color.white
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                 if let image {
+                    // Fills the frame exactly (no .scaledToFit letterboxing
+                    // inside it) - the frame IS the image's rect, and
+                    // resizing keeps its aspect ratio, so this never
+                    // distorts.
                     Image(uiImage: image)
                         .resizable()
-                        .scaledToFit()
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                 }

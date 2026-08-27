@@ -510,10 +510,16 @@ struct NotebookDetailView: View {
         if let x = doc?.frameX, let y = doc?.frameY,
            let w = doc?.frameWidth, let h = doc?.frameHeight {
             adjustingImageFrame = CGRect(x: x, y: y, width: w, height: h)
-        } else {
-            // Never adjusted: start from the full-page placement it's
-            // currently rendering at, so nothing visibly jumps.
-            adjustingImageFrame = CGRect(origin: .zero, size: canvasView.bounds.size)
+        } else if let ref = page.backgroundRef {
+            // Never adjusted: start from the artwork's actual aspect-fit
+            // rect, which is exactly where it's already being rendered - so
+            // nothing jumps, and the handles hug the image rather than
+            // boxing the whole page.
+            adjustingImageFrame = ImportedArtwork.fittedRect(
+                fileRef: ref,
+                pdfPageIndex: doc?.pdfPageIndex ?? 0,
+                in: canvasView.bounds.size
+            )
         }
         updateCanvasInteractionEnabled()
     }
