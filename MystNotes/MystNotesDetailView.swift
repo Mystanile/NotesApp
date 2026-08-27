@@ -614,7 +614,7 @@ struct NotebookDetailView: View {
     }
 
     private func performFill(at point: CGPoint) {
-        guard let filled = FillTool.fill(canvasView.drawing, in: canvasView.bounds.size, at: point, color: UIColor(toolState.fillColor)) else {
+        guard let filled = FillTool.fill(canvasView.drawing, in: canvasView.bounds.size, at: point, color: toolState.fillColor.fixedUIColor) else {
             return
         }
         canvasView.drawing = filled
@@ -637,7 +637,7 @@ struct NotebookDetailView: View {
             isShapeModeArmed = false
             updateCanvasInteractionEnabled()
         }
-        let ink = PKInk(.pen, color: UIColor(toolState.penColor))
+        let ink = PKInk(.pen, color: toolState.penColor.fixedUIColor)
         guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }
         canvasView.drawing = PKDrawing(strokes: canvasView.drawing.strokes + [stroke])
         scheduleAutosave()

@@ -28,11 +28,11 @@ struct DrawingToolState: Equatable {
     var pkTool: PKTool {
         switch activeKind {
         case .pen:
-            return PKInkingTool(penInkType, color: UIColor(penColor), width: penWidth)
+            return PKInkingTool(penInkType, color: penColor.fixedUIColor, width: penWidth)
         case .highlighter:
             // PencilKit has no dedicated highlighter ink type - a wide,
             // translucent marker is the standard way apps fake one.
-            return PKInkingTool(.marker, color: UIColor(highlighterColor).withAlphaComponent(0.4), width: highlighterWidth)
+            return PKInkingTool(.marker, color: highlighterColor.fixedUIColor.withAlphaComponent(0.4), width: highlighterWidth)
         case .eraser:
             return PKEraserTool(eraserType, width: eraserWidth)
         case .fill:

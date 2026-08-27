@@ -126,7 +126,11 @@ enum AppSettings {
     /// Falls back to a black pen at 4pt.
 #if canImport(UIKit)
     static func initialTool() -> PKInkingTool {
-        let color = UIColor(Color(hex: defaultInkColorHex))
+        // .fixedUIColor, not UIColor(_:) - see its doc comment. A plain
+        // UIColor(Color(hex:)) bridges to a *dynamic* color that silently
+        // re-resolves against dark mode, which is exactly how a "black"
+        // pen ended up drawing white ink.
+        let color = Color(hex: defaultInkColorHex).fixedUIColor
         return PKInkingTool(inkType(for: defaultToolType), color: color, width: defaultInkWidth)
     }
 
