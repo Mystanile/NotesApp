@@ -548,12 +548,24 @@ struct NotebookDetailView: View {
         for link in allLinks where link.sourcePageID == page.id || link.destinationPageID == page.id {
             modelContext.delete(link)
         }
+        // Work out which imported files this page is the last user of
+        // BEFORE deleting its records - a multi-page PDF import shares one
+        // file across many pages, so it can only be removed once none of
+        // them reference it any more. Skipping this leaked every imported
+        // photo permanently.
+        let refsHere = Set(allImportedDocuments.filter { $0.page?.id == page.id }.map(\.fileRef))
+        let refsElsewhere = Set(allImportedDocuments.filter { $0.page?.id != page.id }.map(\.fileRef))
+        let orphanedRefs = refsHere.subtracting(refsElsewhere).filter { !$0.isEmpty }
+
         for doc in allImportedDocuments where doc.page?.id == page.id {
             modelContext.delete(doc)
         }
 
         let url = drawingURL(for: page)
         try? FileManager.default.removeItem(at: url)
+        for ref in orphanedRefs {
+            try? FileManager.default.removeItem(at: FileStore.url(for: ref))
+        }
 
         let deletedIndex = sortedPages.firstIndex(where: { $0.id == page.id }) ?? 0
 
@@ -567,6 +579,13 @@ struct NotebookDetailView: View {
 
         notebook.modifiedAt = Date()
         saveMetadata("Failed to delete page")
+
+        // Any placement UI was aimed at the page that just went away.
+        adjustingImageFrame = nil
+        croppingRect = nil
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        updateCanvasInteractionEnabled()
+#endif
 
         currentPageIndex = min(deletedIndex, max(remaining.count - 1, 0))
         loadCurrentPageDrawing()
@@ -652,6 +671,18 @@ struct NotebookDetailView: View {
     private func rotateImage(on page: Page) {
         guard let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
         doc.rotationDegrees = ((doc.rotationDegrees ?? 0) + 90).truncatingRemainder(dividingBy: 360)
+
+        // The crop is stored in rotated-display space (that's the space its
+        // handles were drawn in), so it has to turn with the picture -
+        // otherwise rotating a cropped image would suddenly show a
+        // different part of it.
+        if let x = doc.cropX, let y = doc.cropY, let w = doc.cropWidth, let h = doc.cropHeight {
+            let rotated = ImportedArtwork.rotatingCropClockwise(x: x, y: y, width: w, height: h)
+            doc.cropX = rotated.x
+            doc.cropY = rotated.y
+            doc.cropWidth = rotated.width
+            doc.cropHeight = rotated.height
+        }
         if let frame = adjustingImageFrame {
             let center = CGPoint(x: frame.midX, y: frame.midY)
             let flipped = CGSize(width: frame.height, height: frame.width)

@@ -61,29 +61,46 @@ enum ImportedArtwork {
     /// artwork. Both are baked into the returned image so every consumer
     /// (canvas, thumbnail, export) gets the same picture without each
     /// having to reimplement the transform.
+    ///
+    /// Order matters: rotation is applied FIRST, then the crop. The crop is
+    /// recorded from handles drawn over the artwork as displayed - which is
+    /// already rotated - so it's expressed in rotated space. Cropping before
+    /// rotating would apply those fractions to the unrotated original and
+    /// cut out the wrong region entirely.
     static func transformed(
         _ image: UIImage,
         cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?,
         rotationDegrees: Double?
     ) -> UIImage {
-        var result = image
+        let result = rotate(image, degrees: rotationDegrees)
 
-        if let cropX, let cropY, let cropWidth, let cropHeight,
-           cropWidth > 0, cropHeight > 0,
-           // Ignore nonsense values rather than produce an empty image.
-           cropX >= 0, cropY >= 0, cropX + cropWidth <= 1.0001, cropY + cropHeight <= 1.0001,
-           let cgImage = result.cgImage {
-            let pixel = CGRect(
-                x: cropX * Double(cgImage.width),
-                y: cropY * Double(cgImage.height),
-                width: cropWidth * Double(cgImage.width),
-                height: cropHeight * Double(cgImage.height)
-            ).integral
-            if let cropped = cgImage.cropping(to: pixel) {
-                result = UIImage(cgImage: cropped, scale: result.scale, orientation: result.imageOrientation)
-            }
-        }
+        guard let cropX, let cropY, let cropWidth, let cropHeight,
+              cropWidth > 0, cropHeight > 0,
+              // Ignore nonsense values rather than produce an empty image.
+              cropX >= 0, cropY >= 0, cropX + cropWidth <= 1.0001, cropY + cropHeight <= 1.0001,
+              let cgImage = result.cgImage else { return result }
 
+        let pixel = CGRect(
+            x: cropX * Double(cgImage.width),
+            y: cropY * Double(cgImage.height),
+            width: cropWidth * Double(cgImage.width),
+            height: cropHeight * Double(cgImage.height)
+        ).integral
+        guard let cropped = cgImage.cropping(to: pixel) else { return result }
+        return UIImage(cgImage: cropped, scale: result.scale, orientation: result.imageOrientation)
+    }
+
+    /// Rotates a crop rect (fractions, rotated-display space) to stay over
+    /// the same part of the picture after another quarter turn clockwise.
+    /// A point (x, y) maps to (1 - y, x), so the rect's new origin comes
+    /// from its old bottom-left corner and its dimensions swap.
+    static func rotatingCropClockwise(x: Double, y: Double, width: Double, height: Double)
+        -> (x: Double, y: Double, width: Double, height: Double) {
+        (x: 1 - y - height, y: x, width: height, height: width)
+    }
+
+    private static func rotate(_ image: UIImage, degrees rotationDegrees: Double?) -> UIImage {
+        let result = image
         let degrees = ((rotationDegrees ?? 0).truncatingRemainder(dividingBy: 360) + 360)
             .truncatingRemainder(dividingBy: 360)
         guard degrees != 0 else { return result }

@@ -402,7 +402,9 @@ struct LibraryView: View {
     }
 
     private func deleteFolder(_ folder: Folder) {
-        cleanUpLinks(forPageIDs: allPageIDs(in: folder))
+        let pageIDs = allPageIDs(in: folder)
+        cleanUpLinks(forPageIDs: pageIDs)
+        deleteStoredFiles(forPageIDs: pageIDs)
         modelContext.delete(folder) // cascade delete rule removes subfolders/notebooks too
         save()
     }
@@ -410,8 +412,34 @@ struct LibraryView: View {
     private func deleteNotebook(_ notebook: Notebook) {
         let pageIDs = Set((notebook.pages ?? []).map { $0.id })
         cleanUpLinks(forPageIDs: pageIDs)
+        deleteStoredFiles(forPageIDs: pageIDs)
         modelContext.delete(notebook) // cascade delete rule removes pages too
         save()
+    }
+
+    /// Removes the on-disk payloads for pages that are about to be deleted.
+    /// The SwiftData cascade only takes the records; the drawing files and
+    /// imported photos/PDFs live outside the database and would otherwise
+    /// stay on disk (and in iCloud) forever - a whole notebook's worth at a
+    /// time.
+    private func deleteStoredFiles(forPageIDs pageIDs: Set<UUID>) {
+        guard !pageIDs.isEmpty else { return }
+        let fileManager = FileManager.default
+
+        for id in pageIDs {
+            try? fileManager.removeItem(at: FileStore.url(for: "\(id.uuidString).drawing"))
+        }
+
+        // A multi-page PDF import shares one file across its pages, so only
+        // drop imported files that nothing outside this deletion still uses.
+        func belongsToDeletedPage(_ doc: ImportedDocument) -> Bool {
+            doc.page.map { pageIDs.contains($0.id) } ?? false
+        }
+        let refsInside = Set(allImportedDocuments.filter(belongsToDeletedPage).map(\.fileRef))
+        let refsOutside = Set(allImportedDocuments.filter { !belongsToDeletedPage($0) }.map(\.fileRef))
+        for ref in refsInside.subtracting(refsOutside) where !ref.isEmpty {
+            try? fileManager.removeItem(at: FileStore.url(for: ref))
+        }
     }
 
     /// Link stores its source/destination as raw UUIDs rather than a real
