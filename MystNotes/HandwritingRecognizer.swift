@@ -35,7 +35,20 @@ enum HandwritingRecognizer {
 
         // Render at 2x so handwriting is legible to the recognizer; 1x can
         // blur fine pen strokes into noise.
-        let inkImage = drawing.image(from: bounds, scale: 2)
+        //
+        // Forcing the light trait collection is essential, not cosmetic:
+        // PKDrawing.image() renders through PencilKit's dark-mode ink
+        // inversion (it assumes a dark canvas and flips black ink to white).
+        // Rendered in dark mode, black handwriting comes out WHITE - and the
+        // white background composited below then makes it invisible, so
+        // Vision finds nothing and the page silently becomes unsearchable.
+        // That's why pages written in dark mode never showed up in search
+        // while older, light-mode-indexed ones still did.
+        var renderedInk: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            renderedInk = drawing.image(from: bounds, scale: 2)
+        }
+        guard let inkImage = renderedInk else { return nil }
 
         // PKDrawing.image(from:scale:) renders ink on a transparent
         // background - VNRecognizeTextRequest reliably returns zero
@@ -81,8 +94,16 @@ enum HandwritingRecognizer {
         let url = FileStore.url(for: "\(page.id.uuidString).drawing")
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
-        // Skip if we already indexed a drawing that hasn't changed.
+        // Skip if we already indexed a drawing that hasn't changed AND that
+        // pass actually produced text. Requiring a non-nil cache matters for
+        // recovery: every page indexed while the dark-mode render bug was
+        // live got a nil cache plus a fresh ocrUpdatedAt, which the date
+        // check alone would treat as "already done" and skip forever, so
+        // those pages would stay permanently unsearchable. Re-OCRing a
+        // genuinely blank page is cheap - ocrText bails on empty ink bounds
+        // long before the expensive Vision pass.
         if let ocrDate = page.ocrUpdatedAt,
+           page.recognizedTextCache?.isEmpty == false,
            let modDate = try? url.resourceValues(forKeys: [URLResourceKey.contentModificationDateKey]).contentModificationDate,
            modDate <= ocrDate {
             return
