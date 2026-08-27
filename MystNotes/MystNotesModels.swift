@@ -125,6 +125,15 @@ final class ImportedDocument {
     // Always 0 for images (a single "page").
     var pdfPageIndex: Int = 0
 
+    // Where the imported artwork sits on the page, in page coordinates.
+    // All-nil means "fill the page", which is how every import behaved
+    // before it was adjustable - so existing records keep rendering
+    // exactly as they did.
+    var frameX: Double?
+    var frameY: Double?
+    var frameWidth: Double?
+    var frameHeight: Double?
+
     var page: Page?
 
     init(sourceType: String = "pdf", fileRef: String = "", pdfPageIndex: Int = 0, page: Page? = nil) {
