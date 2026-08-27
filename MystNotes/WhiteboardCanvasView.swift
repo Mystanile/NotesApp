@@ -31,6 +31,12 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         canvasView.backgroundColor = .white
         canvasView.tool = AppSettings.initialTool()   // starting tool/color/width; DrawingToolbarView takes over from here
         canvasView.delegate = context.coordinator
+
+        // See PencilCanvasView.makeUIView - PencilKit auto-inverts ink
+        // colors in dark mode (assumes a black canvas, swaps black strokes
+        // to white), which is wrong here since the board is always a fixed
+        // white background regardless of system appearance.
+        canvasView.overrideUserInterfaceStyle = .light
         canvasView.frame = CGRect(x: 0, y: 0, width: Self.boardSize, height: Self.boardSize)
 
         scrollView.contentSize = canvasView.frame.size

@@ -22,6 +22,16 @@ struct PencilCanvasView: UIViewRepresentable {
         canvasView.tool = AppSettings.initialTool()   // starting tool/color/width; DrawingToolbarView takes over from here
         canvasView.delegate = context.coordinator
 
+        // PencilKit deliberately auto-inverts ink colors in dark mode - it
+        // assumes a black canvas and swaps black strokes to white (and vice
+        // versa) so they stay visible, regardless of what UIColor a tool was
+        // built with. The page itself is always a light paper background
+        // here (PageBackgroundView/ImportedPageBackgroundView don't invert
+        // for dark mode), so that assumption is wrong for this app - pin
+        // the canvas to light so PencilKit stops "fixing" ink that was never
+        // actually invisible.
+        canvasView.overrideUserInterfaceStyle = .light
+
         // becomeFirstResponder() can silently fail if called before the view
         // is actually attached to a window (i.e. right at construction time
         // here) - Pencil/touch input then doesn't reliably start working
