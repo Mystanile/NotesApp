@@ -56,6 +56,9 @@ struct NotebookDetailView: View {
     @State private var showingPageStrip = true
 
     @State private var isShapeModeArmed = false
+    /// Non-nil while the imported artwork on this page is being moved or
+    /// resized; holds its live frame in page coordinates.
+    @State private var adjustingImageFrame: CGRect?
     @State private var showingStickerPicker = false
     @State private var linkNeedingDestination: Link?
 
@@ -96,17 +99,25 @@ struct NotebookDetailView: View {
                         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                         .overlay(alignment: .top) {
                             if !isPresenting {
-                                DrawingToolbarView(
-                                    toolState: $toolState,
-                                    canUndo: canUndo,
-                                    canRedo: canRedo,
-                                    isShapeModeArmed: isShapeModeArmed,
-                                    isShapeToolAvailable: page.type != "whiteboard",
-                                    isFillToolAvailable: page.type != "whiteboard",
-                                    onUndo: { canvasView.undoManager?.undo() },
-                                    onRedo: { canvasView.undoManager?.redo() },
-                                    onToggleShapeMode: toggleShapeMode
-                                )
+                                // GeometryReader gives the bar the canvas
+                                // area to clamp its dragging within, which
+                                // is also what keeps it from sliding down
+                                // underneath the page-thumbnail strip.
+                                GeometryReader { geo in
+                                    DrawingToolbarView(
+                                        toolState: $toolState,
+                                        canUndo: canUndo,
+                                        canRedo: canRedo,
+                                        isShapeModeArmed: isShapeModeArmed,
+                                        isShapeToolAvailable: page.type != "whiteboard",
+                                        isFillToolAvailable: page.type != "whiteboard",
+                                        containerSize: geo.size,
+                                        onUndo: { canvasView.undoManager?.undo() },
+                                        onRedo: { canvasView.undoManager?.redo() },
+                                        onToggleShapeMode: toggleShapeMode
+                                    )
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                }
                                 .padding(.top, 8)
                             }
                         }
@@ -317,7 +328,8 @@ struct NotebookDetailView: View {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
                     PencilCanvasView(
                         canvasView: $canvasView,
-                        onDrawingChanged: scheduleAutosave
+                        onDrawingChanged: scheduleAutosave,
+                        onLongPress: { beginAdjustingImage(on: page) }
                     )
 #else
                     // Placeholder for macOS native
@@ -346,6 +358,18 @@ struct NotebookDetailView: View {
                                         performFill(at: value.location)
                                     }
                             )
+                    }
+                    if adjustingImageFrame != nil {
+                        GeometryReader { geo in
+                            ImageAdjustOverlay(
+                                frame: Binding(
+                                    get: { adjustingImageFrame ?? CGRect(origin: .zero, size: geo.size) },
+                                    set: { adjustingImageFrame = $0 }
+                                ),
+                                containerSize: geo.size,
+                                onDone: { finishAdjustingImage(on: page) }
+                            )
+                        }
                     }
 #endif
                 }
@@ -475,6 +499,45 @@ struct NotebookDetailView: View {
 
     // MARK: - Document import
 
+    /// Opens the move/resize handles for whatever was imported onto this
+    /// page. Triggered by the canvas long-press, and automatically right
+    /// after importing onto an existing page so it can be placed straight
+    /// away rather than always landing full-bleed.
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    private func beginAdjustingImage(on page: Page) {
+        guard adjustingImageFrame == nil, page.backgroundRef != nil else { return }
+        let doc = allImportedDocuments.first { $0.page?.id == page.id }
+        if let x = doc?.frameX, let y = doc?.frameY,
+           let w = doc?.frameWidth, let h = doc?.frameHeight {
+            adjustingImageFrame = CGRect(x: x, y: y, width: w, height: h)
+        } else {
+            // Never adjusted: start from the full-page placement it's
+            // currently rendering at, so nothing visibly jumps.
+            adjustingImageFrame = CGRect(origin: .zero, size: canvasView.bounds.size)
+        }
+        updateCanvasInteractionEnabled()
+    }
+
+    private func finishAdjustingImage(on page: Page) {
+        defer {
+            adjustingImageFrame = nil
+            updateCanvasInteractionEnabled()
+        }
+        guard let frame = adjustingImageFrame,
+              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
+        doc.frameX = frame.origin.x
+        doc.frameY = frame.origin.y
+        doc.frameWidth = frame.width
+        doc.frameHeight = frame.height
+        notebook.modifiedAt = Date()
+        saveMetadata("Failed to save image placement")
+    }
+    #else
+    // Not available on native macOS (no PencilKit canvas to place against).
+    private func beginAdjustingImage(on page: Page) {}
+    private func finishAdjustingImage(on page: Page) {}
+    #endif
+
     /// Puts an imported file behind an existing page's ink instead of
     /// creating a new page for it. Any document previously imported onto
     /// this page is dropped first - a page renders exactly one background,
@@ -529,6 +592,7 @@ struct NotebookDetailView: View {
             // rest would need pages of their own, which is what
             // "as New Pages" is for.
             applyBackground(storedFilename, sourceType: "pdf", pdfPageIndex: 0, to: page)
+            beginAdjustingImage(on: page)
             return
         }
 
@@ -587,6 +651,7 @@ struct NotebookDetailView: View {
 
         if importTarget == .currentPage, let page = currentPage {
             applyBackground(storedFilename, sourceType: "image", pdfPageIndex: 0, to: page)
+            beginAdjustingImage(on: page)
             selectedPhotoItem = nil
             return
         }
@@ -674,7 +739,8 @@ struct NotebookDetailView: View {
     /// (see canvasSection's fill-tap overlay / ShapeDrawingOverlay) while
     /// either the shape tool is armed or Fill is the active tool.
     private func updateCanvasInteractionEnabled() {
-        canvasView.isUserInteractionEnabled = !isShapeModeArmed && toolState.activeKind != .fill
+        canvasView.isUserInteractionEnabled =
+            !isShapeModeArmed && toolState.activeKind != .fill && adjustingImageFrame == nil
     }
 
     private func performFill(at point: CGPoint) {
