@@ -60,6 +60,8 @@ struct DrawingToolbarView: View {
     var isShapeModeArmed: Bool
     var isShapeToolAvailable: Bool
     var isFillToolAvailable: Bool
+    /// The area the bar is allowed to be dragged around inside.
+    var containerSize: CGSize
     var onUndo: () -> Void
     var onRedo: () -> Void
     var onToggleShapeMode: () -> Void
@@ -71,7 +73,8 @@ struct DrawingToolbarView: View {
     // next time a page opens) rather than persisted - repositioning is a
     // "get it out of my way right now" action, not a settings-level choice.
     @State private var position: CGSize = .zero
-    @GestureState private var activeDrag: CGSize = .zero
+    @State private var dragStart: CGSize?
+    @State private var barSize: CGSize = .zero
 
     private let presetColors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
 
@@ -83,12 +86,21 @@ struct DrawingToolbarView: View {
                 .frame(width: 20, height: 34)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture()
-                        .updating($activeDrag) { value, state, _ in state = value.translation }
-                        .onEnded { value in
-                            position.width += value.translation.width
-                            position.height += value.translation.height
+                    // .global is essential: a DragGesture in the default
+                    // (local) space measures translation against the bar's
+                    // own frame, which this gesture is simultaneously
+                    // moving - that feedback loop is what made dragging
+                    // jitter and lag behind the finger.
+                    DragGesture(coordinateSpace: .global)
+                        .onChanged { value in
+                            let start = dragStart ?? position
+                            if dragStart == nil { dragStart = position }
+                            position = clampedPosition(CGSize(
+                                width: start.width + value.translation.width,
+                                height: start.height + value.translation.height
+                            ))
                         }
+                        .onEnded { _ in dragStart = nil }
                 )
 
             Divider().frame(height: 24)
@@ -116,8 +128,30 @@ struct DrawingToolbarView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial, in: Capsule())
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { barSize = geo.size }
+                    .onChange(of: geo.size) { _, new in barSize = new }
+            }
+        )
         .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-        .offset(x: position.width + activeDrag.width, y: position.height + activeDrag.height)
+        .offset(x: position.width, y: position.height)
+    }
+
+    /// Keeps the bar fully inside the area it was given, so it can't be
+    /// dragged off-screen or down underneath the page-thumbnail strip.
+    private func clampedPosition(_ proposed: CGSize) -> CGSize {
+        guard containerSize.width > 0, barSize.width > 0 else { return proposed }
+        // It starts horizontally centered, so x is free to travel half the
+        // leftover width in either direction.
+        let maxX = max((containerSize.width - barSize.width) / 2, 0)
+        // ...and vertically it starts at the top, so it can only travel down.
+        let maxY = max(containerSize.height - barSize.height, 0)
+        return CGSize(
+            width: min(max(proposed.width, -maxX), maxX),
+            height: min(max(proposed.height, 0), maxY)
+        )
     }
 
     @ViewBuilder
