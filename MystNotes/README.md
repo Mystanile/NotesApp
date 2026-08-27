@@ -6,11 +6,12 @@ This is a native note-taking app for iPad and Mac, which is a personal GoodNotes
 
 ### Drawing & writing
 - Full PencilKit canvas — works with Apple Pencil, finger, and (on Mac) mouse/trackpad
-- Five ink tools: pen, pencil, marker, fountain pen, monoline
-- Customizable ink color and width (1–20 pt)
-- Standard tool picker: lasso select, eraser, highlighter, and shape tools
+- Custom floating drawing toolbar (GoodNotes/Notability-style — not Apple's system tool picker): pen, highlighter, eraser, lasso select, and the shape tool, each remembering its own color/width independently
+- Five pen ink types: pen, pencil, marker, fountain pen, monoline, with a continuous width slider (not fixed presets)
+- Dedicated highlighter tool (translucent ink), with its own color/width
+- Eraser with precise (vector) or area (bitmap) modes
 - Shape tool with automatic stroke smoothing (recognized shapes)
-- Undo / redo, and autosave after every stroke
+- Undo / redo, autosave after every stroke, and a manual Save action that shows a brief confirmation
 - Large-canvas whiteboard page type for freeform sketching
 
 ### Notebooks & pages
@@ -53,10 +54,11 @@ This is a native note-taking app for iPad and Mac, which is a personal GoodNotes
 - PencilKit for the drawing engine (palm rejection, pressure/tilt, undo/redo)
 - Vision framework for on-device handwriting recognition (private — no data leaves the device)
 - PDFKit for document import
-- CloudKit for syncing notebook records between your devices
+- CloudKit for syncing notebook records between your devices (requires a paid Apple Developer Program account — Apple doesn't allow free/personal-team accounts to register the iCloud/CloudKit capability at all. Currently disabled in `Mystnotes.entitlements` for that reason; the original entitlements are kept in `Mystnotes.entitlements.paid-account-backup` to restore once enrolled)
 - Mac Catalyst so the iPad app runs on the Mac
 
-##Architecture notes
+## Architecture notes
 
 - Drawings and imported files are stored as files on disk (a lightweight store with iCloud Documents + local fallback), while SwiftData models hold metadata and file references — keeps the database light and sync predictable.
-- All text (typed + recognized handwriting + PDF) is indexed for fast search.
+- All text (typed + recognized handwriting + PDF) is indexed for fast search. Handwriting OCR renders each page's ink onto an opaque background before running Vision's text recognizer — it reliably returns nothing on a transparent one.
+- The drawing toolbar (`DrawingToolbarView`) drives `PKCanvasView.tool` directly instead of showing Apple's `PKToolPicker`, so Pencil input still goes straight through PencilKit's own low-latency path — only the tool-selection UI is custom.
