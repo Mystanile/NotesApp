@@ -57,6 +57,7 @@ struct OnboardingView: View {
                 .tabViewStyle(.page(indexDisplayMode: .always))
                 .indexViewStyle(.page(backgroundDisplayMode: .always))
                 #endif
+                .animation(.easeInOut, value: currentIndex)
 
                 HStack {
                     Spacer()
