@@ -109,7 +109,14 @@ struct NotebookDetailView: View {
                     canvasSection(for: page)
                         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                         .overlay(alignment: .top) {
-                            if !isPresenting {
+                            // Hidden while placing an image: this is an
+                            // overlay, so it draws ON TOP of the canvas
+                            // content - including the image toolbar, which
+                            // occupies the same top-center spot and was
+                            // completely covered by it. Drawing is disabled
+                            // during adjust anyway, so there's nothing to
+                            // lose by standing it down.
+                            if !isPresenting && adjustingImageFrame == nil {
                                 // GeometryReader gives the bar the canvas
                                 // area to clamp its dragging within, which
                                 // is also what keeps it from sliding down
