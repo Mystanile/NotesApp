@@ -6,24 +6,21 @@ import PencilKit
 import AppKit
 #endif
 
-/// Wraps PKCanvasView for use in SwiftUI, with the system tool picker
-/// (pen/color/thickness selection) attached automatically, and a delegate
-/// callback that fires on every stroke change (used for debounced autosave
-/// and undo/redo button state in the parent view).
+/// Wraps PKCanvasView for use in SwiftUI. Tool selection is driven entirely
+/// by `NotebookDetailView`'s `DrawingToolState`/`DrawingToolbarView` (our
+/// own custom UI) rather than Apple's system `PKToolPicker` - this view
+/// never shows one. A delegate callback fires on every stroke change (used
+/// for debounced autosave and undo/redo button state in the parent view).
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 struct PencilCanvasView: UIViewRepresentable {
     @Binding var canvasView: PKCanvasView
-    var toolPicker: PKToolPicker
     var onDrawingChanged: () -> Void = {}
 
     func makeUIView(context: Context) -> PKCanvasView {
         canvasView.drawingPolicy = .anyInput   // allow Pencil, finger, and (on Catalyst) mouse/trackpad
         canvasView.backgroundColor = .clear
-        canvasView.tool = AppSettings.initialTool()   // default tool/color/width from Settings
+        canvasView.tool = AppSettings.initialTool()   // starting tool/color/width; DrawingToolbarView takes over from here
         canvasView.delegate = context.coordinator
-
-        toolPicker.setVisible(true, forFirstResponder: canvasView)
-        toolPicker.addObserver(canvasView)
         canvasView.becomeFirstResponder()
 
         return canvasView
