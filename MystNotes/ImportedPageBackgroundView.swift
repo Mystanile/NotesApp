@@ -16,6 +16,10 @@ import PDFKit
 /// combine with the PencilKit annotation layer sitting on top of it.
 struct ImportedPageBackgroundView: View {
     let page: Page
+    /// While the adjust handles are up, the in-progress rect (in page
+    /// points) so the artwork moves and resizes live under the handles
+    /// instead of only jumping once the placement is committed.
+    var liveFrame: CGRect? = nil
 
     @Query private var allImportedDocuments: [ImportedDocument]
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -33,10 +37,12 @@ struct ImportedPageBackgroundView: View {
     /// fill it, and resizing preserves aspect ratio, so the selection
     /// handles can hug the artwork the way Google Docs/Freeform do.
     private func artworkFrame(in size: CGSize) -> CGRect {
+        if let liveFrame { return liveFrame }
         if let doc = importedDocument,
-           let x = doc.frameX, let y = doc.frameY,
-           let w = doc.frameWidth, let h = doc.frameHeight {
-            return CGRect(x: x, y: y, width: w, height: h)
+           let placed = ImportedArtwork.placedRect(
+               x: doc.frameX, y: doc.frameY, width: doc.frameWidth, height: doc.frameHeight, in: size
+           ) {
+            return placed
         }
         // Never adjusted: aspect-fit centered on the page, which is exactly
         // what the old .scaledToFit() rendering produced - so existing

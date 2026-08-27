@@ -9,6 +9,36 @@ import PDFKit
 /// image sits - which is what lets the selection handles hug the artwork
 /// itself rather than some larger box around it.
 enum ImportedArtwork {
+    /// The artwork's rect in `container`'s coordinates, from the fractional
+    /// frame stored on the document - or nil when it has never been placed.
+    ///
+    /// Frames whose fractions fall outside a sane range are treated as
+    /// unplaced: an earlier build of this branch stored absolute points in
+    /// these same fields, and interpreting those as fractions would blow the
+    /// artwork up to hundreds of times the page size.
+    static func placedRect(x: Double?, y: Double?, width: Double?, height: Double?, in container: CGSize) -> CGRect? {
+        guard let x, let y, let width, let height,
+              width > 0, height > 0,
+              abs(x) <= 2, abs(y) <= 2, width <= 2, height <= 2 else { return nil }
+        return CGRect(
+            x: x * container.width,
+            y: y * container.height,
+            width: width * container.width,
+            height: height * container.height
+        )
+    }
+
+    /// Inverse of `placedRect` - points back to storable fractions.
+    static func fractions(of rect: CGRect, in container: CGSize) -> (x: Double, y: Double, width: Double, height: Double)? {
+        guard container.width > 0, container.height > 0 else { return nil }
+        return (
+            x: rect.origin.x / container.width,
+            y: rect.origin.y / container.height,
+            width: rect.width / container.width,
+            height: rect.height / container.height
+        )
+    }
+
     /// Aspect-fit `image` centered inside `container`. Matches what
     /// `.scaledToFit()` in a full-page frame used to produce, so artwork
     /// imported before placement was adjustable renders unchanged.
@@ -25,6 +55,19 @@ enum ImportedArtwork {
             width: size.width,
             height: size.height
         )
+    }
+
+    /// Loads the artwork as an image, rasterizing a PDF page if needed.
+    /// `targetSize` only guides PDF rasterization quality; photos come back
+    /// at their natural size.
+    static func rasterized(fileRef: String, pdfPageIndex: Int, targetSize: CGSize) -> UIImage? {
+        let url = FileStore.url(for: fileRef)
+        if fileRef.lowercased().hasSuffix(".pdf") {
+            guard let document = PDFDocument(url: url),
+                  let page = document.page(at: pdfPageIndex) else { return nil }
+            return page.thumbnail(of: targetSize, for: .mediaBox)
+        }
+        return UIImage(contentsOfFile: url.path)
     }
 
     /// The artwork's natural pixel/point size, straight off disk - used to

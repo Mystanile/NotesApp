@@ -54,7 +54,15 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func updateUIView(_ uiView: PKCanvasView, context: Context) {
         // canvasView.drawing is swapped directly by the parent view when
-        // switching pages, so there's nothing to sync here.
+        // switching pages, so there's nothing to sync there - but the
+        // coordinator's callbacks DO need refreshing. makeCoordinator() runs
+        // only once, so without this the long-press keeps calling the very
+        // first closure it was given, which captured whichever page was open
+        // at the time; adjusting an image on any page opened later then
+        // silently did nothing.
+        context.coordinator.onDrawingChanged = onDrawingChanged
+        context.coordinator.onLongPress = onLongPress
+        context.coordinator.attachLongPress(to: uiView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -62,15 +70,22 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
-        let onDrawingChanged: () -> Void
-        let onLongPress: () -> Void
+        var onDrawingChanged: () -> Void
+        var onLongPress: () -> Void
+        private weak var longPressRecognizer: UILongPressGestureRecognizer?
 
         init(onDrawingChanged: @escaping () -> Void, onLongPress: @escaping () -> Void) {
             self.onDrawingChanged = onDrawingChanged
             self.onLongPress = onLongPress
         }
 
+        /// Idempotent: the same shared PKCanvasView gets re-attached every
+        /// time this representable is rebuilt, so re-adding blindly would
+        /// stack duplicate recognizers and fire the callback repeatedly.
         func attachLongPress(to view: UIView) {
+            if let existing = longPressRecognizer, existing.view === view { return }
+            if let existing = longPressRecognizer { existing.view?.removeGestureRecognizer(existing) }
+
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
             recognizer.minimumPressDuration = 0.6
             // Observe only - PencilKit keeps receiving the touches, so a
@@ -80,6 +95,7 @@ struct PencilCanvasView: UIViewRepresentable {
             recognizer.delaysTouchesEnded = false
             recognizer.delegate = self
             view.addGestureRecognizer(recognizer)
+            longPressRecognizer = recognizer
         }
 
         @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
