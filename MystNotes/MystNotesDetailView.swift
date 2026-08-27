@@ -96,6 +96,7 @@ struct NotebookDetailView: View {
                                     canRedo: canRedo,
                                     isShapeModeArmed: isShapeModeArmed,
                                     isShapeToolAvailable: page.type != "whiteboard",
+                                    isFillToolAvailable: page.type != "whiteboard",
                                     onUndo: { canvasView.undoManager?.undo() },
                                     onRedo: { canvasView.undoManager?.redo() },
                                     onToggleShapeMode: toggleShapeMode
@@ -172,8 +173,11 @@ struct NotebookDetailView: View {
             ToolbarItem(placement: .principal) {
                 if !sortedPages.isEmpty {
                     Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule())
                 }
             }
 
@@ -308,6 +312,15 @@ struct NotebookDetailView: View {
                             addRecognizedShape(from: points)
                         }
                     }
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+                    if toolState.activeKind == .fill {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                performFill(at: location)
+                            }
+                    }
+#endif
                 }
             }
         }
@@ -590,6 +603,22 @@ struct NotebookDetailView: View {
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private func applyToolState() {
         canvasView.tool = toolState.pkTool
+        updateCanvasInteractionEnabled()
+    }
+
+    /// The canvas needs real touches routed to a capture overlay instead
+    /// (see canvasSection's fill-tap overlay / ShapeDrawingOverlay) while
+    /// either the shape tool is armed or Fill is the active tool.
+    private func updateCanvasInteractionEnabled() {
+        canvasView.isUserInteractionEnabled = !isShapeModeArmed && toolState.activeKind != .fill
+    }
+
+    private func performFill(at point: CGPoint) {
+        guard let filled = FillTool.fill(canvasView.drawing, in: canvasView.bounds.size, at: point, color: UIColor(toolState.fillColor)) else {
+            return
+        }
+        canvasView.drawing = filled
+        scheduleAutosave()
     }
     #endif
 
@@ -598,7 +627,7 @@ struct NotebookDetailView: View {
     private func toggleShapeMode() {
         isShapeModeArmed.toggle()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        canvasView.isUserInteractionEnabled = !isShapeModeArmed
+        updateCanvasInteractionEnabled()
 #endif
     }
 
@@ -606,7 +635,7 @@ struct NotebookDetailView: View {
     private func addRecognizedShape(from points: [CGPoint]) {
         defer {
             isShapeModeArmed = false
-            canvasView.isUserInteractionEnabled = true
+            updateCanvasInteractionEnabled()
         }
         let ink = PKInk(.pen, color: UIColor(toolState.penColor))
         guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }

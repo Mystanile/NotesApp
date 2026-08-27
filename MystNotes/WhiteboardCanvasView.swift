@@ -36,7 +36,11 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         scrollView.contentSize = canvasView.frame.size
         scrollView.addSubview(canvasView)
 
-        canvasView.becomeFirstResponder()
+        // See PencilCanvasView.makeUIView - becomeFirstResponder() can
+        // silently fail if called before the view is actually in a window.
+        DispatchQueue.main.async {
+            canvasView.becomeFirstResponder()
+        }
 
         return scrollView
     }

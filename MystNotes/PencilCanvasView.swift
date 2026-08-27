@@ -21,7 +21,16 @@ struct PencilCanvasView: UIViewRepresentable {
         canvasView.backgroundColor = .clear
         canvasView.tool = AppSettings.initialTool()   // starting tool/color/width; DrawingToolbarView takes over from here
         canvasView.delegate = context.coordinator
-        canvasView.becomeFirstResponder()
+
+        // becomeFirstResponder() can silently fail if called before the view
+        // is actually attached to a window (i.e. right at construction time
+        // here) - Pencil/touch input then doesn't reliably start working
+        // until some later event happens to re-trigger the responder chain.
+        // Deferring one tick, after this view has actually been placed in
+        // the hierarchy, makes it succeed immediately instead.
+        DispatchQueue.main.async {
+            canvasView.becomeFirstResponder()
+        }
 
         return canvasView
     }
