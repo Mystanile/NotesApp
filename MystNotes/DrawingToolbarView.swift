@@ -8,7 +8,7 @@ import PencilKit
 /// popover), while Highlighter is its own slot with a fixed translucent
 /// marker ink, since PencilKit has no dedicated highlighter ink type.
 enum DrawingToolKind: Equatable {
-    case pen, highlighter, eraser, lasso
+    case pen, highlighter, eraser, lasso, fill
 }
 
 /// Everything needed to build the live `PKTool` PencilKit should be using,
@@ -23,6 +23,7 @@ struct DrawingToolState: Equatable {
     var highlighterWidth: Double = 20
     var eraserType: PKEraserTool.EraserType = .vector
     var eraserWidth: Double = 20
+    var fillColor: Color = .yellow
 
     var pkTool: PKTool {
         switch activeKind {
@@ -34,6 +35,12 @@ struct DrawingToolState: Equatable {
             return PKInkingTool(.marker, color: UIColor(highlighterColor).withAlphaComponent(0.4), width: highlighterWidth)
         case .eraser:
             return PKEraserTool(eraserType, width: eraserWidth)
+        case .fill:
+            // Fill isn't a real PKTool - NotebookDetailView disables canvas
+            // interaction while it's active and taps go to FillTool instead
+            // (see canvasSection's fill-tap overlay). This is just an inert
+            // fallback so canvasView.tool always has a valid value.
+            return PKLassoTool()
         case .lasso:
             return PKLassoTool()
         }
@@ -52,16 +59,40 @@ struct DrawingToolbarView: View {
     var canRedo: Bool
     var isShapeModeArmed: Bool
     var isShapeToolAvailable: Bool
+    var isFillToolAvailable: Bool
     var onUndo: () -> Void
     var onRedo: () -> Void
     var onToggleShapeMode: () -> Void
 
     @State private var openPopover: DrawingToolKind?
 
+    // Lets the whole bar be dragged out of the way instead of sitting fixed
+    // over the canvas. Session-only (resets to the default top-center spot
+    // next time a page opens) rather than persisted - repositioning is a
+    // "get it out of my way right now" action, not a settings-level choice.
+    @State private var position: CGSize = .zero
+    @GestureState private var activeDrag: CGSize = .zero
+
     private let presetColors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
 
     var body: some View {
         HStack(spacing: 4) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 34)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .updating($activeDrag) { value, state, _ in state = value.translation }
+                        .onEnded { value in
+                            position.width += value.translation.width
+                            position.height += value.translation.height
+                        }
+                )
+
+            Divider().frame(height: 24)
+
             iconButton("arrow.uturn.backward", disabled: !canUndo, action: onUndo)
             iconButton("arrow.uturn.forward", disabled: !canRedo, action: onRedo)
 
@@ -71,6 +102,7 @@ struct DrawingToolbarView: View {
             toolButton(.highlighter, systemImage: "highlighter")
             toolButton(.eraser, systemImage: "eraser")
             toolButton(.lasso, systemImage: "lasso")
+            toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable)
 
             Divider().frame(height: 24)
 
@@ -85,10 +117,11 @@ struct DrawingToolbarView: View {
         .padding(.vertical, 6)
         .background(.ultraThinMaterial, in: Capsule())
         .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+        .offset(x: position.width + activeDrag.width, y: position.height + activeDrag.height)
     }
 
     @ViewBuilder
-    private func toolButton(_ kind: DrawingToolKind, systemImage: String) -> some View {
+    private func toolButton(_ kind: DrawingToolKind, systemImage: String, disabled: Bool = false) -> some View {
         Button {
             if toolState.activeKind == kind {
                 openPopover = kind
@@ -98,6 +131,8 @@ struct DrawingToolbarView: View {
         } label: {
             toolIcon(systemImage, isOn: toolState.activeKind == kind)
         }
+        .disabled(disabled)
+        .opacity(disabled ? 0.35 : 1)
         .popover(isPresented: Binding(
             get: { openPopover == kind },
             set: { if !$0 { openPopover = nil } }
@@ -155,6 +190,13 @@ struct DrawingToolbarView: View {
                 }
                 .pickerStyle(.segmented)
                 widthSlider(label: "Width", value: $toolState.eraserWidth, range: 5...60)
+            }
+        case .fill:
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Tap an enclosed area to fill it, like the bucket tool in Paint.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                colorRow(selection: $toolState.fillColor)
             }
         case .lasso:
             EmptyView()
