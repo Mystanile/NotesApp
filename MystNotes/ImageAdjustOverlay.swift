@@ -2,86 +2,85 @@ import SwiftUI
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 import UIKit
 
-/// Move/resize handles for an imported PDF page or photo placed on a page.
-/// Shown while "adjust image" mode is active - right after importing onto
-/// an existing page, and again whenever the artwork is long-pressed. The
-/// page's ink is untouched underneath; only the artwork's frame changes.
+/// Selection handles for imported artwork placed on a page, modelled on
+/// Google Docs / Freeform: the border hugs the image itself, four corner
+/// handles resize it proportionally from the opposite corner, and dragging
+/// anywhere inside moves it. Tapping off the image finishes.
 ///
-/// The canvas has its own touch handling, so this sits above it and the
-/// parent disables canvas interaction while it's up (the same approach
-/// ShapeDrawingOverlay and the fill tool already use).
+/// `frame` is the artwork's real on-page rect (the image is drawn to fill
+/// it exactly), which is what lets the border sit right on the artwork
+/// instead of around a larger box.
 struct ImageAdjustOverlay: View {
     @Binding var frame: CGRect
     var containerSize: CGSize
     var onDone: () -> Void
 
-    private let minimumSide: CGFloat = 60
-    private let handleSize: CGFloat = 28
+    private let minimumSide: CGFloat = 40
+    private let handleDiameter: CGFloat = 18
 
-    @State private var dragStartFrame: CGRect?
-    @State private var resizeStartFrame: CGRect?
+    private enum Corner: CaseIterable {
+        case topLeading, topTrailing, bottomLeading, bottomTrailing
+    }
+
+    @State private var gestureStartFrame: CGRect?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // Dim everything outside the artwork so what's being adjusted
-            // reads clearly against the rest of the page.
-            Color.black.opacity(0.25)
-                .allowsHitTesting(false)
-                .mask {
-                    ZStack {
-                        Rectangle()
-                        Rectangle()
-                            .frame(width: frame.width, height: frame.height)
-                            .offset(x: frame.minX, y: frame.minY)
-                            .blendMode(.destinationOut)
-                    }
-                    .compositingGroup()
-                }
+            // Tapping anywhere off the artwork commits the placement, the
+            // way clicking away from an image deselects it elsewhere.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { onDone() }
 
-            selectionRectangle
-            doneButton
+            border
+            ForEach(Array(Corner.allCases.enumerated()), id: \.offset) { _, corner in
+                handle(for: corner)
+            }
+
+            // Tapping away also finishes, but that has no visible
+            // affordance - keep an explicit exit so adjust mode can't feel
+            // like a trap. Bottom-trailing stays clear of the drawing
+            // toolbar at the top of the canvas.
+            Button("Done", action: onDone)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 1)
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
-        .contentShape(Rectangle())
     }
 
-    private var selectionRectangle: some View {
+    private var border: some View {
         Rectangle()
-            .strokeBorder(Color.accentColor, lineWidth: 2)
+            .strokeBorder(Color.accentColor, lineWidth: 1.5)
             .contentShape(Rectangle())
             .frame(width: frame.width, height: frame.height)
             .offset(x: frame.minX, y: frame.minY)
             .gesture(moveGesture)
-            .overlay(alignment: .topLeading) {
-                resizeHandle
-                    .offset(
-                        x: frame.minX + frame.width - handleSize / 2,
-                        y: frame.minY + frame.height - handleSize / 2
-                    )
-            }
     }
 
-    private var resizeHandle: some View {
-        Circle()
-            .fill(Color.accentColor)
-            .overlay {
-                Image(systemName: "arrow.down.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: handleSize, height: handleSize)
-            .contentShape(Rectangle())
-            .gesture(resizeGesture)
+    private func handle(for corner: Corner) -> some View {
+        let point = position(of: corner, in: frame)
+        return Circle()
+            .fill(.white)
+            .overlay { Circle().strokeBorder(Color.accentColor, lineWidth: 1.5) }
+            .shadow(color: .black.opacity(0.2), radius: 1.5, y: 1)
+            .frame(width: handleDiameter, height: handleDiameter)
+            // Generous hit area so a finger can actually catch the corner.
+            .contentShape(Rectangle().inset(by: -12))
+            .offset(x: point.x - handleDiameter / 2, y: point.y - handleDiameter / 2)
+            .gesture(resizeGesture(from: corner))
     }
 
-    private var doneButton: some View {
-        Button("Done", action: onDone)
-            .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: Capsule())
-            .shadow(color: .black.opacity(0.15), radius: 4, y: 1)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+    private func position(of corner: Corner, in rect: CGRect) -> CGPoint {
+        switch corner {
+        case .topLeading:     return CGPoint(x: rect.minX, y: rect.minY)
+        case .topTrailing:    return CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeading:  return CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomTrailing: return CGPoint(x: rect.maxX, y: rect.maxY)
+        }
     }
 
     // MARK: - Gestures
@@ -89,35 +88,58 @@ struct ImageAdjustOverlay: View {
     private var moveGesture: some Gesture {
         DragGesture(coordinateSpace: .global)
             .onChanged { value in
-                let start = dragStartFrame ?? frame
-                if dragStartFrame == nil { dragStartFrame = frame }
-                // Keep at least a corner on the page so artwork can't be
-                // dragged somewhere it can't be grabbed again.
-                let x = clamp(start.minX + value.translation.width,
-                              min: -start.width + minimumSide,
-                              max: containerSize.width - minimumSide)
-                let y = clamp(start.minY + value.translation.height,
-                              min: -start.height + minimumSide,
-                              max: containerSize.height - minimumSide)
-                frame.origin = CGPoint(x: x, y: y)
-            }
-            .onEnded { _ in dragStartFrame = nil }
-    }
-
-    private var resizeGesture: some Gesture {
-        DragGesture(coordinateSpace: .global)
-            .onChanged { value in
-                let start = resizeStartFrame ?? frame
-                if resizeStartFrame == nil { resizeStartFrame = frame }
-                frame.size = CGSize(
-                    width: max(start.width + value.translation.width, minimumSide),
-                    height: max(start.height + value.translation.height, minimumSide)
+                let start = gestureStartFrame ?? frame
+                if gestureStartFrame == nil { gestureStartFrame = frame }
+                // Keep a grabbable sliver on the page at all times.
+                frame.origin = CGPoint(
+                    x: clamp(start.minX + value.translation.width,
+                             -start.width + minimumSide, containerSize.width - minimumSide),
+                    y: clamp(start.minY + value.translation.height,
+                             -start.height + minimumSide, containerSize.height - minimumSide)
                 )
             }
-            .onEnded { _ in resizeStartFrame = nil }
+            .onEnded { _ in gestureStartFrame = nil }
     }
 
-    private func clamp(_ value: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
+    /// Proportional resize anchored on the opposite corner, so the artwork
+    /// keeps its aspect ratio and the corner you aren't dragging stays put.
+    private func resizeGesture(from corner: Corner) -> some Gesture {
+        DragGesture(coordinateSpace: .global)
+            .onChanged { value in
+                let start = gestureStartFrame ?? frame
+                if gestureStartFrame == nil { gestureStartFrame = frame }
+                guard start.width > 0, start.height > 0 else { return }
+                let aspect = start.width / start.height
+
+                // Width is the driver; height follows from the aspect ratio.
+                let widthDelta: CGFloat
+                switch corner {
+                case .topTrailing, .bottomTrailing: widthDelta = value.translation.width
+                case .topLeading, .bottomLeading:   widthDelta = -value.translation.width
+                }
+                // Floor the width such that the *height* also clears the
+                // minimum - clamping the two independently would break the
+                // aspect ratio at the smallest sizes (a 2:1 image squashing
+                // to a square as it bottoms out).
+                let minWidth = max(minimumSide, minimumSide * aspect)
+                let width = max(start.width + widthDelta, minWidth)
+                let height = width / aspect
+
+                // Pin the opposite corner.
+                let x: CGFloat
+                let y: CGFloat
+                switch corner {
+                case .bottomTrailing: x = start.minX;          y = start.minY
+                case .bottomLeading:  x = start.maxX - width;  y = start.minY
+                case .topTrailing:    x = start.minX;          y = start.maxY - height
+                case .topLeading:     x = start.maxX - width;  y = start.maxY - height
+                }
+                frame = CGRect(x: x, y: y, width: width, height: height)
+            }
+            .onEnded { _ in gestureStartFrame = nil }
+    }
+
+    private func clamp(_ value: CGFloat, _ lower: CGFloat, _ upper: CGFloat) -> CGFloat {
         Swift.min(Swift.max(value, lower), upper)
     }
 }
