@@ -11,12 +11,12 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E8832418303B3CCC00ACC8F5 /* Exceptions for "MystNotes" folder in "MystNotes" target */ = {
+		E8832418303B3CCC00ACC8F5 /* Exceptions for "MystNotes" folder in "Mystnotes" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = E883240A303B3CCB00ACC8F5 /* MystNotes */;
+			target = E883240A303B3CCB00ACC8F5 /* Mystnotes */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -24,7 +24,7 @@
 		E883240D303B3CCB00ACC8F5 /* MystNotes */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				E8832418303B3CCC00ACC8F5 /* Exceptions for "MystNotes" folder in "MystNotes" target */,
+				E8832418303B3CCC00ACC8F5 /* Exceptions for "MystNotes" folder in "Mystnotes" target */,
 			);
 			path = MystNotes;
 			sourceTree = "<group>";
@@ -169,7 +169,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Mystanile.Mystnotes;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mozynas.Mystnotes;
 				PRODUCT_NAME = Mystnotes;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -217,7 +217,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Mystanile.Mystnotes;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mozynas.Mystnotes;
 				PRODUCT_NAME = Mystnotes;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
