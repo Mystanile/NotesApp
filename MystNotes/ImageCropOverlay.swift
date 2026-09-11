@@ -14,9 +14,14 @@ struct ImageCropOverlay: View {
     var artworkRect: CGRect
     /// Crop rect in page coordinates.
     @Binding var cropRect: CGRect
+    /// Canvas zoom, for the same reason as `ImageAdjustOverlay.scale`:
+    /// drag translations are screen points, the rects are page points.
+    var scale: CGFloat = 1
 
-    private let handleLength: CGFloat = 22
-    private let handleThickness: CGFloat = 4
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
+
+    private var handleLength: CGFloat { 22 / zoom }
+    private var handleThickness: CGFloat { 4 / zoom }
     private let minimumSide: CGFloat = 32
 
     private enum Corner: CaseIterable { case topLeading, topTrailing, bottomLeading, bottomTrailing }
@@ -56,16 +61,16 @@ struct ImageCropOverlay: View {
 
     private var grid: some View {
         ZStack {
-            Rectangle().strokeBorder(.white, lineWidth: 1)
+            Rectangle().strokeBorder(.white, lineWidth: 1 / zoom)
             // Rule-of-thirds guides, the familiar cue that this is a crop.
             ForEach(1..<3) { i in
                 Rectangle()
                     .fill(.white.opacity(0.5))
-                    .frame(width: 0.5)
+                    .frame(width: 0.5 / zoom)
                     .offset(x: cropRect.width * (CGFloat(i) / 3) - cropRect.width / 2)
                 Rectangle()
                     .fill(.white.opacity(0.5))
-                    .frame(height: 0.5)
+                    .frame(height: 0.5 / zoom)
                     .offset(y: cropRect.height * (CGFloat(i) / 3) - cropRect.height / 2)
             }
         }
@@ -79,7 +84,7 @@ struct ImageCropOverlay: View {
         let point = position(of: corner)
         return CornerBracket(corner: corner, length: handleLength, thickness: handleThickness)
             .frame(width: handleLength, height: handleLength)
-            .contentShape(Rectangle().inset(by: -14))
+            .contentShape(Rectangle().inset(by: -14 / zoom))
             .offset(x: point.x - handleLength / 2, y: point.y - handleLength / 2)
             .gesture(resizeGesture(from: corner))
     }
@@ -100,10 +105,10 @@ struct ImageCropOverlay: View {
             .onChanged { value in
                 let start = startRect ?? cropRect
                 if startRect == nil { startRect = cropRect }
-                let x = clamp(start.minX + value.translation.width,
-                              artworkRect.minX, artworkRect.maxX - start.width)
-                let y = clamp(start.minY + value.translation.height,
-                              artworkRect.minY, artworkRect.maxY - start.height)
+                let dx = value.translation.width / zoom
+                let dy = value.translation.height / zoom
+                let x = clamp(start.minX + dx, artworkRect.minX, artworkRect.maxX - start.width)
+                let y = clamp(start.minY + dy, artworkRect.minY, artworkRect.maxY - start.height)
                 cropRect = CGRect(x: x, y: y, width: start.width, height: start.height)
             }
             .onEnded { _ in startRect = nil }
@@ -115,21 +120,23 @@ struct ImageCropOverlay: View {
                 let start = startRect ?? cropRect
                 if startRect == nil { startRect = cropRect }
 
+                let dx = value.translation.width / zoom
+                let dy = value.translation.height / zoom
                 var minX = start.minX, maxX = start.maxX
                 var minY = start.minY, maxY = start.maxY
                 switch corner {
                 case .topLeading:
-                    minX = clamp(start.minX + value.translation.width, artworkRect.minX, maxX - minimumSide)
-                    minY = clamp(start.minY + value.translation.height, artworkRect.minY, maxY - minimumSide)
+                    minX = clamp(start.minX + dx, artworkRect.minX, maxX - minimumSide)
+                    minY = clamp(start.minY + dy, artworkRect.minY, maxY - minimumSide)
                 case .topTrailing:
-                    maxX = clamp(start.maxX + value.translation.width, minX + minimumSide, artworkRect.maxX)
-                    minY = clamp(start.minY + value.translation.height, artworkRect.minY, maxY - minimumSide)
+                    maxX = clamp(start.maxX + dx, minX + minimumSide, artworkRect.maxX)
+                    minY = clamp(start.minY + dy, artworkRect.minY, maxY - minimumSide)
                 case .bottomLeading:
-                    minX = clamp(start.minX + value.translation.width, artworkRect.minX, maxX - minimumSide)
-                    maxY = clamp(start.maxY + value.translation.height, minY + minimumSide, artworkRect.maxY)
+                    minX = clamp(start.minX + dx, artworkRect.minX, maxX - minimumSide)
+                    maxY = clamp(start.maxY + dy, minY + minimumSide, artworkRect.maxY)
                 case .bottomTrailing:
-                    maxX = clamp(start.maxX + value.translation.width, minX + minimumSide, artworkRect.maxX)
-                    maxY = clamp(start.maxY + value.translation.height, minY + minimumSide, artworkRect.maxY)
+                    maxX = clamp(start.maxX + dx, minX + minimumSide, artworkRect.maxX)
+                    maxY = clamp(start.maxY + dy, minY + minimumSide, artworkRect.maxY)
                 }
                 cropRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
             }

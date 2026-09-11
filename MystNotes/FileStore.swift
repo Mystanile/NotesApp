@@ -38,6 +38,13 @@ enum FileStore {
         return resolved
     }
 
+    /// The app's own local sandbox Documents directory - where payload files
+    /// actually live in this (free-account, no-iCloud-entitlement) build.
+    /// `SyncEngine` writes files pulled from the sync folder straight here.
+    static func localBaseDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
     /// Drops the cached directory so the next `baseDirectory()` call
     /// re-resolves it. Call this when the iCloud identity changes, since
     /// that's the only thing that can change the answer.

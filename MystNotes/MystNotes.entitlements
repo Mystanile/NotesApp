@@ -2,5 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Only self-declared App Sandbox entitlements live here - NOT CloudKit,
+	  Sign in with Apple, or push (those need a paid Apple Developer account
+	  and are parked in Mystnotes.entitlements.paid-account-backup).
+
+	  These let the Mac Catalyst build keep read/write access to the folder
+	  the user picks for library sync, across launches, via a security-scoped
+	  bookmark. iOS ignores the macOS-only keys. None of these require special
+	  provisioning, so free-account signing still works.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
 </dict>
 </plist>

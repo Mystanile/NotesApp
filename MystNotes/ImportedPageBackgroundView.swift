@@ -90,15 +90,22 @@ struct ImportedPageBackgroundView: View {
         }
     }
 
+    /// The background is laid out in page points and then scaled up by the
+    /// canvas zoom, so it has to be rasterized above 1:1 or an imported PDF
+    /// template turns to mush the moment you pinch in to write on it.
+    private static let oversampling: CGFloat = 2.5
+
     private func loadImage(targetSize: CGSize) {
         guard let ref = page.backgroundRef else {
             image = nil
             return
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let renderSize = (targetSize.width > 0 && targetSize.height > 0)
+        let pageSize = (targetSize.width > 0 && targetSize.height > 0)
             ? targetSize
-            : CGSize(width: 1000, height: 1300)
+            : PageGeometry.contentSize(for: page)
+        let renderSize = CGSize(width: pageSize.width * Self.oversampling,
+                                height: pageSize.height * Self.oversampling)
         // Crop and rotation are applied here, by the same helper the
         // thumbnails and exports use.
         image = ImportedArtwork.displayImage(

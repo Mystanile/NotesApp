@@ -25,6 +25,11 @@ enum AppSettings {
         static let signedInDisplayName = "signedInDisplayName"
         static let isGuestMode = "isGuestMode"
         static let syncEnabled = "syncEnabled"
+        static let syncFolderBookmark = "syncFolderBookmark"
+        static let syncFolderName = "syncFolderName"
+        static let lastPulledExportDate = "syncLastPulledExportDate"
+        static let lastPushSignature = "syncLastPushSignature"
+        static let syncTombstones = "syncTombstones"
     }
 
     // MARK: Account (Sign in with Apple)
@@ -61,6 +66,43 @@ enum AppSettings {
 
     static func exitGuestMode() {
         isGuestMode = false
+    }
+
+    // MARK: Folder sync (the free-account alternative to CloudKit)
+
+    /// Security-scoped bookmark to the user-chosen sync folder (typically in
+    /// iCloud Drive). See `SyncFolder`.
+    static var syncFolderBookmark: Data? {
+        get { defaults.data(forKey: Keys.syncFolderBookmark) }
+        set { defaults.set(newValue, forKey: Keys.syncFolderBookmark) }
+    }
+
+    /// Display name of that folder, for Settings.
+    static var syncFolderName: String {
+        get { defaults.string(forKey: Keys.syncFolderName) ?? "" }
+        set { defaults.set(newValue, forKey: Keys.syncFolderName) }
+    }
+
+    /// `exportedAt` of the last remote snapshot this device successfully
+    /// pulled, so an unchanged snapshot isn't re-applied every foreground.
+    static var lastPulledExportDate: Date? {
+        get { defaults.object(forKey: Keys.lastPulledExportDate) as? Date }
+        set { defaults.set(newValue, forKey: Keys.lastPulledExportDate) }
+    }
+
+    /// `LibrarySnapshot.signature` of the last snapshot this device pushed,
+    /// so a no-op push is skipped.
+    static var lastPushSignature: String {
+        get { defaults.string(forKey: Keys.lastPushSignature) ?? "" }
+        set { defaults.set(newValue, forKey: Keys.lastPushSignature) }
+    }
+
+    /// JSON-encoded `[Tombstone]` for folders/notebooks deleted on this
+    /// device, so those deletions propagate through the next push instead of
+    /// the item coming back from another device's snapshot.
+    static var syncTombstonesData: Data? {
+        get { defaults.data(forKey: Keys.syncTombstones) }
+        set { defaults.set(newValue, forKey: Keys.syncTombstones) }
     }
 
     /// The stable identifier from `ASAuthorizationAppleIDCredential.user`,

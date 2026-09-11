@@ -15,6 +15,9 @@ struct ContentView: View {
     @AppStorage(AppSettings.Keys.isGuestMode) private var isGuestMode = false
     @State private var showingOnboarding = !AppSettings.hasSeenOnboarding
 
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         Group {
             if isSignedIn || isGuestMode {
@@ -45,6 +48,18 @@ struct ContentView: View {
         .preferredColorScheme(scheme)
         .task {
             validateAppleIDCredentialState()
+            SyncEngine.shared.configure(container: modelContext.container)
+            SyncEngine.shared.pullOnForeground()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                SyncEngine.shared.pullOnForeground()
+            case .background:
+                SyncEngine.shared.pushOnBackground()
+            default:
+                break
+            }
         }
     }
 

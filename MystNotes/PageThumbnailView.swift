@@ -24,13 +24,19 @@ struct PageThumbnailView: View {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
-    /// Re-renders when the ink, the imported file, or its placement changes.
+    /// Re-renders when the ink, the imported file, its placement, or the
+    /// page's own shape changes.
     private var contentKey: String {
         let doc = importedDocument
         let frame = [doc?.frameX, doc?.frameY, doc?.frameWidth, doc?.frameHeight]
             .map { $0.map { String(format: "%.4f", $0) } ?? "-" }
             .joined(separator: ",")
-        return [page.drawingFileRef ?? "-", page.backgroundRef ?? "-", frame].joined(separator: "|")
+        return [
+            page.drawingFileRef ?? "-",
+            page.backgroundRef ?? "-",
+            frame,
+            String(format: "%.4f", page.aspectRatio ?? -1)
+        ].joined(separator: "|")
     }
 
     var body: some View {
@@ -64,11 +70,18 @@ struct PageThumbnailView: View {
     }
 
 #if canImport(UIKit)
-    /// Thumbnails are 60x80, so background placement (stored as fractions of
-    /// the page) and ink (stored in page points) are composited through this
-    /// shared nominal page rect to keep them aligned with each other.
-    private static let nominalPageSize = CGSize(width: 780, height: 1040)
-    private static let renderSize = CGSize(width: 120, height: 160)
+    /// Background placement (stored as fractions of the page) and ink
+    /// (stored in page points) are composited through the page's own
+    /// coordinate space, the same one the editor and the exporter use.
+    private var nominalPageSize: CGSize { PageGeometry.contentSize(for: page) }
+
+    /// The thumbnail bitmap, at the page's own proportions so a portrait
+    /// template and a landscape one don't both come back the same shape.
+    private var renderSize: CGSize {
+        let nominal = nominalPageSize
+        let scale = 160 / max(nominal.height, 1)
+        return CGSize(width: max((nominal.width * scale).rounded(), 1), height: 160)
+    }
 
     private func loadThumbnail() {
         let drawing = loadDrawing()
@@ -87,7 +100,7 @@ struct PageThumbnailView: View {
 
         // With a background, both layers must share one coordinate space, so
         // render the whole page area rather than cropping to the ink.
-        let nominal = Self.nominalPageSize
+        let nominal = nominalPageSize
         let doc = importedDocument
         let artworkRect = ImportedArtwork.placedRect(
             x: doc?.frameX, y: doc?.frameY, width: doc?.frameWidth, height: doc?.frameHeight, in: nominal
@@ -95,13 +108,14 @@ struct PageThumbnailView: View {
 
         let inkImage = drawing.map { $0.image(from: CGRect(origin: .zero, size: nominal), scale: 1) }
 
-        let renderer = UIGraphicsImageRenderer(size: Self.renderSize)
+        let output = renderSize
+        let renderer = UIGraphicsImageRenderer(size: output)
         thumbnail = renderer.image { context in
             UIColor.white.setFill()
-            context.fill(CGRect(origin: .zero, size: Self.renderSize))
+            context.fill(CGRect(origin: .zero, size: output))
 
-            let scaleX = Self.renderSize.width / nominal.width
-            let scaleY = Self.renderSize.height / nominal.height
+            let scaleX = output.width / nominal.width
+            let scaleY = output.height / nominal.height
             context.cgContext.scaleBy(x: scaleX, y: scaleY)
 
             backgroundImage.draw(in: artworkRect)
@@ -121,7 +135,7 @@ struct PageThumbnailView: View {
         return ImportedArtwork.displayImage(
             fileRef: ref,
             document: importedDocument,
-            targetSize: Self.nominalPageSize
+            targetSize: nominalPageSize
         )
     }
 #else

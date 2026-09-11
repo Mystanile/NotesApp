@@ -8,20 +8,20 @@ import Photos
 /// Flattens a page - imported PDF page or photo behind it, plus the
 /// PencilKit ink on top - into an image or a PDF, for export.
 ///
-/// Placement is stored as fractions of the page, so it maps cleanly onto
-/// any output size. Ink, though, is stored in the canvas's own points, and
-/// nothing records how big that canvas was; `nominalPageSize` is the assumed
-/// page space both layers are composited through so they line up with each
-/// other (and with what the page thumbnails show).
+/// Placement is stored as fractions of the page and ink in page points, so
+/// both layers composite cleanly onto any output size. The page space they
+/// share is `PageGeometry.contentSize(for:)` - the same space the editor
+/// draws in - so an export is exactly what was on screen.
 enum PageRenderer {
-    static let nominalPageSize = CGSize(width: 780, height: 1040)
+    /// The default page, for callers with no specific page in hand.
+    static let nominalPageSize = PageGeometry.contentSize(aspectRatio: PageGeometry.defaultAspectRatio)
 
     /// 2x the nominal page - readable when exported without producing
     /// enormous files for a multi-page notebook.
     static let exportScale: CGFloat = 2
 
     static func image(for page: Page, importedDocument: ImportedDocument?, scale: CGFloat = exportScale) -> UIImage {
-        let nominal = nominalPageSize
+        let nominal = PageGeometry.contentSize(for: page)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
@@ -53,12 +53,19 @@ enum PageRenderer {
         }
     }
 
-    /// One PDF page per notebook page, in the order given.
+    /// One PDF page per notebook page, in the order given. Each output page
+    /// takes the shape of the notebook page it came from, so a notebook that
+    /// mixes an imported portrait template with a landscape one exports as
+    /// exactly those pages rather than squeezing both into one shape.
     static func pdfData(for pages: [(page: Page, document: ImportedDocument?)]) -> Data {
-        let bounds = CGRect(origin: .zero, size: nominalPageSize)
-        return UIGraphicsPDFRenderer(bounds: bounds).pdfData { context in
+        let firstBounds = CGRect(
+            origin: .zero,
+            size: pages.first.map { PageGeometry.contentSize(for: $0.page) } ?? nominalPageSize
+        )
+        return UIGraphicsPDFRenderer(bounds: firstBounds).pdfData { context in
             for entry in pages {
-                context.beginPage()
+                let bounds = CGRect(origin: .zero, size: PageGeometry.contentSize(for: entry.page))
+                context.beginPage(withBounds: bounds, pageInfo: [:])
                 image(for: entry.page, importedDocument: entry.document)
                     .draw(in: bounds)
             }

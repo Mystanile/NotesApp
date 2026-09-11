@@ -405,16 +405,35 @@ struct LibraryView: View {
         let pageIDs = allPageIDs(in: folder)
         cleanUpLinks(forPageIDs: pageIDs)
         deleteStoredFiles(forPageIDs: pageIDs)
+        // Record the deletion so folder sync propagates it instead of the
+        // items coming back from another device's older snapshot.
+        SyncTombstones.merge(tombstones(for: folder))
         modelContext.delete(folder) // cascade delete rule removes subfolders/notebooks too
         save()
+        SyncEngine.shared.pushOnBackground()
     }
 
     private func deleteNotebook(_ notebook: Notebook) {
         let pageIDs = Set((notebook.pages ?? []).map { $0.id })
         cleanUpLinks(forPageIDs: pageIDs)
         deleteStoredFiles(forPageIDs: pageIDs)
+        SyncTombstones.merge([Tombstone(kind: .notebook, id: notebook.id, deletedAt: Date())])
         modelContext.delete(notebook) // cascade delete rule removes pages too
         save()
+        SyncEngine.shared.pushOnBackground()
+    }
+
+    /// A tombstone for `folder` and everything the cascade delete will take
+    /// with it (its notebooks and, recursively, its subfolders).
+    private func tombstones(for folder: Folder) -> [Tombstone] {
+        var stones = [Tombstone(kind: .folder, id: folder.id, deletedAt: Date())]
+        for notebook in folder.notebooks ?? [] {
+            stones.append(Tombstone(kind: .notebook, id: notebook.id, deletedAt: Date()))
+        }
+        for subfolder in folder.subfolders ?? [] {
+            stones.append(contentsOf: tombstones(for: subfolder))
+        }
+        return stones
     }
 
     /// Removes the on-disk payloads for pages that are about to be deleted.

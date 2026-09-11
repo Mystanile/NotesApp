@@ -61,6 +61,14 @@ final class Page {
     var drawingFileRef: String?
     var backgroundRef: String?
 
+    // The page's shape, width / height. nil means the app's default page
+    // (see PageGeometry.defaultAspectRatio). Importing a PDF sets this from
+    // that PDF page's own media box, which is what makes an imported
+    // engineering-paper template *be* the page - portrait, full bleed -
+    // instead of a portrait picture floating in the middle of a
+    // landscape-shaped canvas.
+    var aspectRatio: Double?
+
     // Populated later by the Vision OCR pipeline (Phase 6), used for search
     var recognizedTextCache: String?
 

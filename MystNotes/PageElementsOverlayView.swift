@@ -10,6 +10,12 @@ import SwiftData
 struct PageElementsOverlayView: View {
     @Bindable var page: Page
 
+    /// The canvas zoom these elements are being drawn through. Element
+    /// frames are page coordinates while a `DragGesture` reports screen
+    /// points, so drags are divided by this - otherwise a sticker moves
+    /// twice as far as your finger the moment you pinch in.
+    var scale: CGFloat = 1
+
     @Query private var allLinks: [Link]
 
     var onNavigateToPage: (UUID) -> Void
@@ -23,16 +29,17 @@ struct PageElementsOverlayView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(page.textBlocks ?? [], id: \.id) { block in
-                TextBlockView(block: block, onSave: onSave)
+                TextBlockView(block: block, scale: scale, onSave: onSave)
             }
 
             ForEach(page.stickers ?? [], id: \.id) { sticker in
-                StickerElementView(sticker: sticker, onSave: onSave)
+                StickerElementView(sticker: sticker, scale: scale, onSave: onSave)
             }
 
             ForEach(links, id: \.id) { link in
                 LinkAnchorView(
                     link: link,
+                    scale: scale,
                     onNavigate: onNavigateToPage,
                     onSave: onSave,
                     onRequestDestinationChange: onRequestLinkDestinationChange
@@ -46,7 +53,10 @@ struct PageElementsOverlayView: View {
 
 private struct TextBlockView: View {
     @Bindable var block: TypedTextBlock
+    var scale: CGFloat = 1
     var onSave: () -> Void
+
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
 
     @Environment(\.modelContext) private var modelContext
     // Plain (Double, Double) rather than CGPoint on purpose: CGPoint's x/y
@@ -111,8 +121,8 @@ private struct TextBlockView: View {
                     dragOrigin = (x: block.frameX, y: block.frameY)
                 }
                 let origin = dragOrigin ?? (x: block.frameX, y: block.frameY)
-                block.frameX = origin.x + Double(value.translation.width)
-                block.frameY = origin.y + Double(value.translation.height)
+                block.frameX = origin.x + Double(value.translation.width / zoom)
+                block.frameY = origin.y + Double(value.translation.height / zoom)
             }
             .onEnded { _ in
                 dragOrigin = nil
@@ -125,7 +135,10 @@ private struct TextBlockView: View {
 
 private struct StickerElementView: View {
     @Bindable var sticker: Sticker
+    var scale: CGFloat = 1
     var onSave: () -> Void
+
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
 
     @Environment(\.modelContext) private var modelContext
     @State private var dragOrigin: (x: Double, y: Double)?
@@ -155,8 +168,8 @@ private struct StickerElementView: View {
                     dragOrigin = (x: sticker.frameX, y: sticker.frameY)
                 }
                 let origin = dragOrigin ?? (x: sticker.frameX, y: sticker.frameY)
-                sticker.frameX = origin.x + Double(value.translation.width)
-                sticker.frameY = origin.y + Double(value.translation.height)
+                sticker.frameX = origin.x + Double(value.translation.width / zoom)
+                sticker.frameY = origin.y + Double(value.translation.height / zoom)
             }
             .onEnded { _ in
                 dragOrigin = nil
@@ -169,7 +182,10 @@ private struct StickerElementView: View {
 
 private struct LinkAnchorView: View {
     @Bindable var link: Link
+    var scale: CGFloat = 1
     var onNavigate: (UUID) -> Void
+
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
     var onSave: () -> Void
     var onRequestDestinationChange: (Link) -> Void
 
@@ -210,8 +226,8 @@ private struct LinkAnchorView: View {
                     dragOrigin = (x: link.anchorX, y: link.anchorY)
                 }
                 let origin = dragOrigin ?? (x: link.anchorX, y: link.anchorY)
-                link.anchorX = origin.x + Double(value.translation.width)
-                link.anchorY = origin.y + Double(value.translation.height)
+                link.anchorX = origin.x + Double(value.translation.width / zoom)
+                link.anchorY = origin.y + Double(value.translation.height / zoom)
             }
             .onEnded { _ in
                 dragOrigin = nil

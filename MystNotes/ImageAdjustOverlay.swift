@@ -13,10 +13,18 @@ import UIKit
 struct ImageAdjustOverlay: View {
     @Binding var frame: CGRect
     var containerSize: CGSize
+    /// The canvas zoom the handles are being drawn through. Drag
+    /// translations arrive in screen points, while `frame` is in page
+    /// points, so every translation has to be divided by this or the
+    /// artwork races away from your finger whenever you're zoomed in.
+    var scale: CGFloat = 1
     var onDone: () -> Void
 
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
+
     private let minimumSide: CGFloat = 40
-    private let handleDiameter: CGFloat = 18
+    private var handleDiameter: CGFloat { 18 / zoom }
+    private var borderWidth: CGFloat { 1.5 / zoom }
 
     private enum Corner: CaseIterable {
         case topLeading, topTrailing, bottomLeading, bottomTrailing
@@ -47,14 +55,17 @@ struct ImageAdjustOverlay: View {
                 .padding(.vertical, 8)
                 .background(.ultraThinMaterial, in: Capsule())
                 .shadow(color: .black.opacity(0.15), radius: 4, y: 1)
-                .padding(16)
+                // Chrome, not content: keep it a constant size on screen
+                // rather than growing and shrinking with the page.
+                .scaleEffect(1 / zoom, anchor: .bottomTrailing)
+                .padding(16 / zoom)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
     }
 
     private var border: some View {
         Rectangle()
-            .strokeBorder(Color.accentColor, lineWidth: 1.5)
+            .strokeBorder(Color.accentColor, lineWidth: borderWidth)
             .contentShape(Rectangle())
             .frame(width: frame.width, height: frame.height)
             .offset(x: frame.minX, y: frame.minY)
@@ -65,11 +76,11 @@ struct ImageAdjustOverlay: View {
         let point = position(of: corner, in: frame)
         return Circle()
             .fill(.white)
-            .overlay { Circle().strokeBorder(Color.accentColor, lineWidth: 1.5) }
+            .overlay { Circle().strokeBorder(Color.accentColor, lineWidth: borderWidth) }
             .shadow(color: .black.opacity(0.2), radius: 1.5, y: 1)
             .frame(width: handleDiameter, height: handleDiameter)
             // Generous hit area so a finger can actually catch the corner.
-            .contentShape(Rectangle().inset(by: -12))
+            .contentShape(Rectangle().inset(by: -12 / zoom))
             .offset(x: point.x - handleDiameter / 2, y: point.y - handleDiameter / 2)
             .gesture(resizeGesture(from: corner))
     }
@@ -91,10 +102,12 @@ struct ImageAdjustOverlay: View {
                 let start = gestureStartFrame ?? frame
                 if gestureStartFrame == nil { gestureStartFrame = frame }
                 // Keep a grabbable sliver on the page at all times.
+                let translation = CGSize(width: value.translation.width / zoom,
+                                         height: value.translation.height / zoom)
                 frame.origin = CGPoint(
-                    x: clamp(start.minX + value.translation.width,
+                    x: clamp(start.minX + translation.width,
                              -start.width + minimumSide, containerSize.width - minimumSide),
-                    y: clamp(start.minY + value.translation.height,
+                    y: clamp(start.minY + translation.height,
                              -start.height + minimumSide, containerSize.height - minimumSide)
                 )
             }
@@ -112,10 +125,11 @@ struct ImageAdjustOverlay: View {
                 let aspect = start.width / start.height
 
                 // Width is the driver; height follows from the aspect ratio.
+                let dragged = value.translation.width / zoom
                 let widthDelta: CGFloat
                 switch corner {
-                case .topTrailing, .bottomTrailing: widthDelta = value.translation.width
-                case .topLeading, .bottomLeading:   widthDelta = -value.translation.width
+                case .topTrailing, .bottomTrailing: widthDelta = dragged
+                case .topLeading, .bottomLeading:   widthDelta = -dragged
                 }
                 // Floor the width such that the *height* also clears the
                 // minimum - clamping the two independently would break the

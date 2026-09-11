@@ -130,9 +130,53 @@ enum ImportedArtwork {
         if fileRef.lowercased().hasSuffix(".pdf") {
             guard let document = PDFDocument(url: url),
                   let page = document.page(at: pdfPageIndex) else { return nil }
-            return page.thumbnail(of: targetSize, for: .mediaBox)
+            return render(page, within: targetSize)
         }
         return UIImage(contentsOfFile: url.path)
+    }
+
+    /// Draws a PDF page at the largest size that fits inside `bounding`,
+    /// keeping its own aspect ratio exactly.
+    ///
+    /// `PDFPage.thumbnail(of:for:)` is the shorter way to do this, but it
+    /// gives no guarantee about the size it hands back, and every caller
+    /// here composites the result against a rect it computes itself - a page
+    /// whose background is meant to be full bleed can't afford to be a few
+    /// points off. Drawing it ourselves makes the output size exact.
+    private static func render(_ page: PDFPage, within bounding: CGSize) -> UIImage? {
+        let box = PDFDisplayBox.mediaBox
+        guard let natural = naturalSize(of: page, box: box),
+              natural.width > 0, natural.height > 0,
+              bounding.width > 0, bounding.height > 0 else { return nil }
+
+        let scale = min(bounding.width / natural.width, bounding.height / natural.height)
+        let output = CGSize(width: max(natural.width * scale, 1),
+                            height: max(natural.height * scale, 1))
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1                      // output is already in pixels
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: output, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: output))
+            let cg = context.cgContext
+            // PDFs are drawn bottom-up; PDFPage.draw applies the page's own
+            // /Rotate and box origin on top of whatever transform is set.
+            cg.translateBy(x: 0, y: output.height)
+            cg.scaleBy(x: scale, y: -scale)
+            page.draw(with: box, to: cg)
+        }
+    }
+
+    /// A PDF page's size as displayed, i.e. with a 90/270-degree /Rotate
+    /// already applied - the shape the page actually appears in.
+    static func naturalSize(of page: PDFPage, box: PDFDisplayBox = .mediaBox) -> CGSize? {
+        let bounds = page.bounds(for: box)
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        let quarterTurned = abs(page.rotation / 90) % 2 == 1
+        return quarterTurned
+            ? CGSize(width: bounds.height, height: bounds.width)
+            : bounds.size
     }
 
     /// Loads a page's artwork with its crop and rotation already applied -
@@ -158,10 +202,17 @@ enum ImportedArtwork {
         if fileRef.lowercased().hasSuffix(".pdf") {
             guard let document = PDFDocument(url: url),
                   let page = document.page(at: pdfPageIndex) else { return nil }
-            let bounds = page.bounds(for: .mediaBox)
-            return CGSize(width: bounds.width, height: bounds.height)
+            return naturalSize(of: page)
         }
         return UIImage(contentsOfFile: url.path)?.size
+    }
+
+    /// The artwork's shape (width / height), used to give an imported page
+    /// the same proportions as the document it came from.
+    static func aspectRatio(fileRef: String, pdfPageIndex: Int) -> Double? {
+        guard let size = naturalSize(fileRef: fileRef, pdfPageIndex: pdfPageIndex),
+              size.width > 0, size.height > 0 else { return nil }
+        return Double(size.width / size.height)
     }
 
     /// Aspect-fit the artwork named by `fileRef` inside `container`.

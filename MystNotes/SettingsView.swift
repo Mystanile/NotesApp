@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// App settings (plan Phase 6). Preferences live in `UserDefaults` via
 /// `@AppStorage` (matching the keys in `AppSettings`), and take effect when a
@@ -11,7 +12,10 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Keys.signedInDisplayName) private var signedInDisplayName = ""
     @AppStorage(AppSettings.Keys.isSignedIn) private var isSignedIn = false
     @AppStorage(AppSettings.Keys.isGuestMode) private var isGuestMode = false
-    @AppStorage(AppSettings.Keys.syncEnabled) private var syncEnabled = true
+    @AppStorage(AppSettings.Keys.syncFolderName) private var syncFolderName = ""
+
+    @ObservedObject private var sync = SyncEngine.shared
+    @State private var showingFolderPicker = false
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -67,13 +71,24 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Sync via iCloud", isOn: $syncEnabled)
-                LabeledContent("iCloud Drive", value: AppSettings.isCloudAvailable ? "Signed in" : "Not available")
-                LabeledContent("Storage", value: AppSettings.isUsingCloudStorage ? "iCloud Drive" : "On this Mac")
+                if syncFolderName.isEmpty {
+                    Button("Choose Sync Folder…") { showingFolderPicker = true }
+                } else {
+                    LabeledContent("Folder", value: syncFolderName)
+                    Button("Sync Now") { SyncEngine.shared.syncNow() }
+                        .disabled(sync.status == .syncing)
+                    Button("Choose a Different Folder…") { showingFolderPicker = true }
+                    Button("Turn Off Folder Sync", role: .destructive) { SyncFolder.clear() }
+                }
+                LabeledContent("Status") {
+                    Text(syncStatusText)
+                        .foregroundStyle(isSyncFailed ? Color.red : Color.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
             } header: {
                 Text("Sync")
             } footer: {
-                Text(syncFooterText)
+                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Mystnotes writes your whole library and its drawings there, and reads changes back when it opens or you tap Sync Now. Per notebook, the most recent edit wins — if two devices change the same notebook while offline, only the newer version is kept.")
             }
 
             Section {
@@ -100,19 +115,27 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .fileImporter(isPresented: $showingFolderPicker, allowedContentTypes: [.folder]) { result in
+            guard case .success(let url) = result else { return }
+            SyncEngine.shared.chooseFolder(url)
+        }
     }
 
-    /// SwiftData's CloudKit sync is fixed for the app's whole process
-    /// lifetime once the ModelContainer is built, so flipping this toggle
-    /// doesn't take effect until Mystnotes is relaunched — worth saying
-    /// plainly rather than implying it's instant.
-    private var syncFooterText: String {
-        if !syncEnabled {
-            return "Sync is off — notebooks, drawings, and imports stay on this device only. Turning this back on takes effect the next time you open Mystnotes."
-        } else if AppSettings.isUsingCloudStorage {
-            return "Drawings and imports sync to iCloud Drive."
-        } else {
-            return "Drawings and imports are stored on this device only for now. File sync is deferred until iCloud storage is freed — see the app's CloudKit capabilities."
+    private var isSyncFailed: Bool {
+        if case .failed = sync.status { return true }
+        return false
+    }
+
+    private var syncStatusText: String {
+        switch sync.status {
+        case .idle:
+            return syncFolderName.isEmpty ? "Not set up" : "Ready"
+        case .syncing:
+            return "Syncing…"
+        case .succeeded(let date):
+            return "Last synced \(date.formatted(date: .abbreviated, time: .shortened))"
+        case .failed(let message):
+            return message
         }
     }
 
