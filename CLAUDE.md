@@ -16,17 +16,17 @@ Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASEL
 
 ## Current state (read this before proposing anything)
 
-**~8,200 lines of Swift, 42 files, 26 commits. Far more is built than a phase list suggests.**
+**~10,200 lines of Swift in 50 app files, plus ~2,300 lines of tests in 10 files (73 tests, all green). 50 commits; M0 lives on `m0-correctness`, 24 commits past `main`. Far more is built than a phase list suggests.**
 
 Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, lasso, shape recognition, fill/bucket tool, per-page canvas with real zoom, PDF and photo import with crop/rotate/resize, nested folders, notebook covers, thumbnail strip, four templates, whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
 
 **Two shipped tools are broken (M1).** The shape tool only makes ovals and lines at a fixed thickness — four separate bugs in `ShapeRecognizer.swift`, including a `stdDev/avgRadius < 0.28` threshold that classifies squares as circles (a square's coefficient of variation is ~0.10), and passing polygon corners to `PKStrokePath(controlPoints:)`, which treats them as cubic B-spline controls and rounds every corner. It should also trigger by holding the stroke, not by arming a toolbar button. The fill tool doesn't work and has been fixed twice; the leading hypothesis is that HEAD's page-zoom commit broke the coordinate-space assumption its own doc comment spells out. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md`.
 
-**Three things block shipping. They are the current work.**
+**Three things blocked shipping. As of Sept 12, 2026 (M0, `m0-correctness`) all three are closed in code; what remains is on hardware — see the M0 task list below.**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
 2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11), the 30 s debounced push (task 12), `NSFilePresenter` folder watching (task 13), non-blocking downloads (task 14) and the single storage root (task 15) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
-3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness and durability suite, both green. Run on the iPad simulator.
+3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness, durability, codec, fidelity, watcher, debouncer, diagnostics and performance suites, 73 tests green. Run on the iPad simulator: boot it first (see gotchas), then `xcodebuild test -scheme MystNotes -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)'`.
 
 ---
 
@@ -190,7 +190,7 @@ In order. Each gates the next.
 20. ~~Performance baseline~~ done except ink latency (needs the iPad) — numbers and thresholds in `Docs/PERFORMANCE_BASELINE.md`, tests in `PerformanceTests`. Findings: the record was ~6× PencilKit's size — now LZFSE-compressed (~2×); no-op sync cost is linear in payload bytes (persist hashes, backlog).
 21. ~~Crash reporting~~ done — MetricKit subscriber + `AppLog` + Settings → Export Diagnostics (`Diagnostics.swift`). **Device verification still owed:** MetricKit payloads never arrive on the simulator or under the debugger; crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in the export.
 
-**M0 exit:** the task-3 scenario passes, no known path to data loss, index proven rebuildable, durability suite green.
+**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅. **Still owed before calling M0 done:** task 8 (decided by `Docs/SPIKE_ICLOUD_CONFLICTS.md` §5), task 18 on real hardware, the ink-latency baseline, crash-report verification on device, and the trash-retention decision in `BACKLOG.md`. Then merge `m0-correctness` → `main`.
 
 ---
 
