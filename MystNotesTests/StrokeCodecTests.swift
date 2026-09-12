@@ -114,6 +114,28 @@ final class StrokeCodecTests: XCTestCase {
                        "ids from the file are kept through the next save")
     }
 
+    // MARK: Compression
+
+    func testBody_isCompressedByDefault_andAnUncompressedFileReadsTheSame() throws {
+        let drawing = InkFixtures.drawing(inkType: .fountainPen, strokes: 3)
+        var ids = StrokeIDMap()
+        let compressed = StrokeCodec.encode(drawing, ids: &ids)
+        var ids2 = ids
+        let plain = StrokeCodec.encode(drawing, ids: &ids2, compress: false)
+
+        let flags = { (d: Data) in UInt32(d[6]) | UInt32(d[7]) << 8 | UInt32(d[8]) << 16 | UInt32(d[9]) << 24 }
+        XCTAssertEqual(flags(compressed) & StrokeCodec.compressedBodyFlag, StrokeCodec.compressedBodyFlag)
+        XCTAssertEqual(flags(plain) & StrokeCodec.compressedBodyFlag, 0)
+        XCTAssertLessThan(compressed.count, plain.count / 2, "compressed \(compressed.count) vs plain \(plain.count)")
+
+        let a = try StrokeCodec.decode(compressed)
+        let b = try StrokeCodec.decode(plain)
+        assertStrokesEqual(a.drawing, drawing, "compressed")
+        assertStrokesEqual(b.drawing, drawing, "plain")
+        XCTAssertEqual(a.ids, b.ids, "same ids either way")
+        print("STROKES 3 fountain-pen strokes: \(plain.count) bytes plain, \(compressed.count) compressed")
+    }
+
     // MARK: Format guards
 
     func testDecode_rejectsTruncationForeignBytesAndFutureVersions() {

@@ -13,12 +13,12 @@ import PencilKit
 /// gives them (`CGFloat` is 64-bit): halving a coordinate's precision is
 /// a way to lose ink, just a subtle one.
 ///
-///     header
+///     header (never compressed)
 ///       magic        4 bytes   "MYSK"
 ///       version      u16       1
-///       flags        u32       reserved, 0
+///       flags        u32       bit 0: the body is LZFSE-compressed
 ///       strokeCount  u32
-///     per stroke
+///     body: per stroke
 ///       id           16 bytes  UUID
 ///       inkType      string    PKInk.InkType.rawValue, u16 length + UTF-8
 ///       color        4 × f64   red, green, blue, alpha as UIColor reports them
@@ -40,9 +40,16 @@ import PencilKit
 ///
 /// Ink type strings, for readers without PencilKit: pen, pencil, marker,
 /// monoline, fountainPen, watercolor, crayon. Unknown strings decode as pen.
+///
+/// The body is LZFSE-compressed by default (flag bit 0): eleven float64s
+/// per control point are ~6× PencilKit's own encoding uncompressed, and
+/// this file is what syncs per page per edit. LZFSE decompresses in well
+/// under a millisecond for a dense page. A file written without the flag
+/// reads the same.
 enum StrokeCodec {
     static let magic: [UInt8] = Array("MYSK".utf8)
     static let version: UInt16 = 1
+    static let compressedBodyFlag: UInt32 = 1 << 0
 
     enum CodecError: Error, Equatable {
         case notAStrokesFile
@@ -56,50 +63,75 @@ enum StrokeCodec {
     /// before keeps its id, a new one is assigned - and updated to exactly
     /// the strokes in `drawing`, so the map never accumulates ids for
     /// strokes that no longer exist.
-    static func encode(_ drawing: PKDrawing, ids: inout StrokeIDMap) -> Data {
+    static func encode(_ drawing: PKDrawing, ids: inout StrokeIDMap, compress: Bool = true) -> Data {
+        var body = ByteWriter()
+        var next = StrokeIDMap()
+        for stroke in drawing.strokes {
+            let w = encodeStroke(stroke, ids: &ids, next: &next)
+            body.bytes(Array(w.data))
+        }
+        ids = next
+
+        var flags: UInt32 = 0
+        var bodyData = body.data
+        if compress, let compressed = try? (bodyData as NSData).compressed(using: .lzfse) as Data {
+            flags |= compressedBodyFlag
+            bodyData = compressed
+        }
+
         var w = ByteWriter()
         w.bytes(magic)
         w.u16(version)
-        w.u32(0)
+        w.u32(flags)
         w.u32(UInt32(drawing.strokes.count))
-
-        var next = StrokeIDMap()
-        for stroke in drawing.strokes {
-            let id = ids.id(for: stroke)
-            next.assign(id, to: stroke)
-            w.uuid(id)
-            w.string(stroke.ink.inkType.rawValue)
-            let (r, g, b, a) = components(of: stroke.ink.color)
-            w.f64(r); w.f64(g); w.f64(b); w.f64(a)
-            w.u32(stroke.randomSeed)
-            let t = stroke.transform
-            w.f64(t.a); w.f64(t.b); w.f64(t.c); w.f64(t.d); w.f64(t.tx); w.f64(t.ty)
-            w.f64(stroke.path.creationDate.timeIntervalSinceReferenceDate)
-            writeMask(stroke.mask, to: &w)
-            w.u32(UInt32(stroke.path.count))
-            for point in stroke.path {
-                w.f64(point.location.x); w.f64(point.location.y)
-                w.f64(point.timeOffset)
-                w.f64(point.size.width); w.f64(point.size.height)
-                w.f64(point.opacity); w.f64(point.force)
-                w.f64(point.azimuth); w.f64(point.altitude)
-                w.f64(point.secondaryScale); w.f64(point.threshold)
-            }
-        }
-        ids = next
+        w.bytes(Array(bodyData))
         return w.data
+    }
+
+    private static func encodeStroke(_ stroke: PKStroke, ids: inout StrokeIDMap, next: inout StrokeIDMap) -> ByteWriter {
+        var w = ByteWriter()
+        let id = ids.id(for: stroke)
+        next.assign(id, to: stroke)
+        w.uuid(id)
+        w.string(stroke.ink.inkType.rawValue)
+        let (r, g, b, a) = components(of: stroke.ink.color)
+        w.f64(r); w.f64(g); w.f64(b); w.f64(a)
+        w.u32(stroke.randomSeed)
+        let t = stroke.transform
+        w.f64(t.a); w.f64(t.b); w.f64(t.c); w.f64(t.d); w.f64(t.tx); w.f64(t.ty)
+        w.f64(stroke.path.creationDate.timeIntervalSinceReferenceDate)
+        writeMask(stroke.mask, to: &w)
+        w.u32(UInt32(stroke.path.count))
+        for point in stroke.path {
+            w.f64(point.location.x); w.f64(point.location.y)
+            w.f64(point.timeOffset)
+            w.f64(point.size.width); w.f64(point.size.height)
+            w.f64(point.opacity); w.f64(point.force)
+            w.f64(point.azimuth); w.f64(point.altitude)
+            w.f64(point.secondaryScale); w.f64(point.threshold)
+        }
+        return w
     }
 
     // MARK: Decode
 
     /// Rebuilds the drawing and the id map that goes with it.
     static func decode(_ data: Data) throws -> (drawing: PKDrawing, ids: StrokeIDMap) {
-        var r = ByteReader(data)
-        guard try r.bytes(4) == magic else { throw CodecError.notAStrokesFile }
-        let fileVersion = try r.u16()
+        var header = ByteReader(data)
+        guard try header.bytes(4) == magic else { throw CodecError.notAStrokesFile }
+        let fileVersion = try header.u16()
         guard fileVersion <= version else { throw CodecError.unsupportedVersion(fileVersion) }
-        _ = try r.u32()   // flags
-        let count = try r.u32()
+        let flags = try header.u32()
+        let count = try header.u32()
+
+        var bodyData = data.suffix(from: data.startIndex + header.offset)
+        if flags & compressedBodyFlag != 0 {
+            guard let expanded = try? (Data(bodyData) as NSData).decompressed(using: .lzfse) as Data else {
+                throw CodecError.truncated
+            }
+            bodyData = expanded
+        }
+        var r = ByteReader(Data(bodyData))
 
         var strokes: [PKStroke] = []
         var ids = StrokeIDMap()
@@ -263,7 +295,7 @@ struct ByteWriter {
 
 struct ByteReader {
     private let data: Data
-    private var offset = 0
+    private(set) var offset = 0
 
     init(_ data: Data) { self.data = data }
 

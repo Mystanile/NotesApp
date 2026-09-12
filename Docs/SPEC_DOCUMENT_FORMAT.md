@@ -145,7 +145,7 @@ The most important file in the system. Binary, little-endian. **Rewritten Sept 1
 |---|---|---|
 | magic | 4 bytes | `MYSK` |
 | version | uint16 | 1 |
-| flags | uint32 | reserved, 0 |
+| flags | uint32 | bit 0: the body (everything after the header) is LZFSE-compressed. Set by default; a file without it reads the same. |
 | strokeCount | uint32 | |
 
 ### Per stroke

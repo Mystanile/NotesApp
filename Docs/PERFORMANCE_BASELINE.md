@@ -42,9 +42,10 @@ The test PDF is text and rules; a scanned lecture deck will be heavier per page.
 | Second save, all stroke ids known | 0.015 s | — |
 | `DrawingStore.load` (cache hit) | 0.024 s | 1 s |
 | `StrokeCodec.decode` alone | 0.021 s | — |
-| **Record size (`.strokes`)** | **1,440 KB** | — |
+| Record size (`.strokes`), 500-stroke fixture | 15 KB compressed (1,440 KB uncompressed) | — |
+| Record size, 3 varied fountain-pen strokes | 2.8 KB compressed (8.9 KB uncompressed) | — |
 
-**What to watch.** 1.4 MB for a dense page is ~6× PencilKit's own `dataRepresentation()` for the same strokes: eleven float64s per control point, uncompressed, by design (spec §5 — precision is ink). It is what syncs, per page, per edit. A 200-page notebook of dense ink is ~300 MB in the folder and in iCloud. Compression is the obvious step — the header's `flags` field exists for it, and control-point streams compress well — and it should land **before any library is synced in anger**, because a format flag is cheap to add now and expensive to retrofit. On the backlog as a pre-M1 item.
+**Compression landed the same day** (LZFSE body, header flag bit 0). The fixture's 96:1 is flattered by repetition; the 3.2:1 on varied strokes is the honest figure, which puts the record at roughly 2× PencilKit's own `dataRepresentation()` rather than 6×. Decompression is under a millisecond for a dense page (load stayed at 22 ms). Measured against zlib (11.4%, 6 ms) and LZMA (0.6%, 75 ms compress): LZFSE's speed wins for something written on every autosave.
 
 ## Not measured here — needs the iPad
 
