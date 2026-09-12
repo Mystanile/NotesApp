@@ -10,7 +10,7 @@ MystNotes is a handwriting-first note app for iPad and Mac (Mac Catalyst), built
 
 Long-term thesis: notes are a **connected graph you can draw on**, with **stroke-level time travel** and **recall built in**. Not a filing cabinet.
 
-Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`.
+Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Open spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (decides task 8).
 
 ---
 
