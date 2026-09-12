@@ -189,6 +189,88 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    // MARK: Nothing is ever deleted (M0 task 11)
+
+    func testDeletePage_movesInkToLocalTrash() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("ink on the page about to go".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+
+        harness.clock.advance(); try ipad.deletePage(pages[1])
+
+        XCTAssertNil(ipad.ink(forPageID: pages[1].id), "the live file is gone")
+        XCTAssertTrue(ipad.trashedInk().contains(ink), "the ink is in trash, not destroyed")
+    }
+
+    /// Deleting a page on one device moves its ink to trash on the other
+    /// as well - the tombstone never destroys anything.
+    func testPageTombstone_trashesInkOnTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("Mac will have this".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(mac.ink(forPageID: pages[1].id), ink, "precondition")
+
+        harness.clock.advance(); try ipad.deletePage(pages[1])
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertNil(mac.ink(forPageID: pages[1].id))
+        XCTAssertTrue(mac.trashedInk().contains(ink), "the Mac's copy went to its trash")
+    }
+
+    /// A payload nothing references any more is moved to the folder's
+    /// trash - but only after the grace period, so a notebook file that
+    /// hasn't arrived can't lose its ink.
+    func testPush_movesOrphanedPayloadsToFolderTrash_onlyAfterGracePeriod() throws {
+        let ipad = try harness.makeDevice("iPad")
+        ipad.orphanGracePeriod = 3600
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+        let oldInk = Data("first version".utf8), newInk = Data("second version".utf8)
+        harness.clock.advance(); try ipad.edit(page: page, ink: oldInk)
+        harness.clock.advance(); try ipad.sync()
+        let oldName = "\(PayloadHash.sha256(of: oldInk)).drawing"
+        let newName = "\(PayloadHash.sha256(of: newInk)).drawing"
+
+        // Supersede it. The old payload is now unreferenced but fresh.
+        harness.clock.advance(); try ipad.edit(page: page, ink: newInk)
+        harness.clock.advance(); try ipad.sync()
+        XCTAssertEqual(harness.folderPayloadNames(), [oldName, newName], "a fresh orphan is kept")
+        XCTAssertTrue(harness.folderTrashNames().isEmpty)
+
+        // Age it past the grace period (file mtime is what pruning reads;
+        // the harness clock is what "now" is).
+        try FileManager.default.setAttributes([.modificationDate: harness.clock.now.addingTimeInterval(-7200)],
+                                              ofItemAtPath: harness.folderFile("files/\(oldName)").path)
+        harness.clock.advance(); try ipad.edit(page: page, ink: Data("third".utf8))
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertFalse(harness.folderPayloadNames().contains(oldName), "the aged orphan left files/")
+        XCTAssertTrue(harness.folderTrashNames().contains { $0.hasPrefix(String(oldName.prefix(20))) }, "…and is in trash, not gone")
+        XCTAssertTrue(harness.folderPayloadNames().contains(newName), "a fresh orphan is still kept")
+    }
+
+    func testPush_movesTombstonedNotebookFileToFolderTrash() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "Gone", pageCount: 1)
+        harness.clock.advance(); try ipad.sync()
+        let file = "notebooks/\(notebook.id.uuidString).json"
+        XCTAssertTrue(harness.folderFileExists(file), "precondition")
+
+        harness.clock.advance(); try ipad.deleteNotebook(try XCTUnwrap(try ipad.notebook(id: notebook.id)))
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertFalse(harness.folderFileExists(file))
+        XCTAssertTrue(harness.folderTrashNames().contains { $0.hasPrefix(notebook.id.uuidString) })
+    }
+
     // MARK: Content-addressed payloads (M0 task 10)
 
     func testPayloads_areNamedByContentHash_andIdenticalInkIsStoredOnce() throws {

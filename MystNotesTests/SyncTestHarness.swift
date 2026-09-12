@@ -6,14 +6,17 @@ import XCTest
 /// A clock the harness advances by hand. Every timestamp the engine or the
 /// harness records comes from here, so two "devices" acting in the same
 /// test run are spaced the way real devices are (minutes apart), not
-/// microseconds apart. That matters because `library.json` stores dates as
-/// ISO-8601 whole seconds: actions inside one wall-clock second would
-/// compare truncated against untruncated values and make results depend on
-/// test timing.
+/// microseconds apart, and a test's dates are exact whole seconds that
+/// survive the snapshot's millisecond encoding unchanged.
+///
+/// It starts at the real wall clock, not an arbitrary date: the engine
+/// compares file modification dates (which the OS stamps in real time)
+/// against `now()` for the orphan grace period, so the two must live in
+/// the same time domain.
 final class SyncTestClock {
     private(set) var now: Date
 
-    init(start: Date = Date(timeIntervalSince1970: 1_800_000_000)) {
+    init(start: Date = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))) {
         now = start
     }
 
@@ -44,6 +47,7 @@ final class SyncTestDevice {
     let filesDirectory: URL
     let state = InMemorySyncStateStore()
     var indexHistoryLimit = 50
+    var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
 
     private let syncFolder: URL
     private let clock: SyncTestClock
@@ -81,7 +85,8 @@ final class SyncTestDevice {
             state: state,
             deviceName: name,
             now: { [clock] in clock.now },
-            indexHistoryLimit: indexHistoryLimit
+            indexHistoryLimit: indexHistoryLimit,
+            orphanGracePeriod: orphanGracePeriod
         )
     }
 
@@ -132,10 +137,11 @@ final class SyncTestDevice {
         try context.save()
     }
 
-    /// Mirrors `MystNotesDetailView.deletePage`: drop the page, re-index
-    /// the rest, record a page tombstone.
+    /// Mirrors `MystNotesDetailView.deletePage`: trash the ink, drop the
+    /// page, re-index the rest, record a page tombstone.
     func deletePage(_ page: Page) throws {
         guard let notebook = page.notebook else { return }
+        DrawingStore.inDirectory(filesDirectory).trashDrawing(forPageID: page.id)
         notebook.pages?.removeAll { $0.id == page.id }
         context.delete(page)
         SyncTombstones.merge([Tombstone(kind: .page, id: page.id, deletedAt: clock.now)], into: state)
@@ -267,6 +273,14 @@ final class SyncTestHarness {
             return try? Data(contentsOf: folderFile("files/\(PayloadHash.folderName(hash: hash, localName: ref))"))
         }
         return try? Data(contentsOf: folderFile("files/\(pageID.uuidString).drawing"))
+    }
+
+    /// Names in the folder's `files/trash/` and `notebooks/trash/`.
+    func folderTrashNames() -> [String] {
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(atPath: folderFile("files/trash").path)) ?? []
+        let notebooks = (try? fm.contentsOfDirectory(atPath: folderFile("notebooks/trash").path)) ?? []
+        return (files + notebooks).sorted()
     }
 
     func folderPayloadNames() -> [String] {

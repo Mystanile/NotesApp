@@ -445,10 +445,11 @@ struct LibraryView: View {
     /// time.
     private func deleteStoredFiles(forPageIDs pageIDs: Set<UUID>) {
         guard !pageIDs.isEmpty else { return }
-        let fileManager = FileManager.default
 
+        // Never removeItem on ink: it goes to trash/ (invariant 3).
+        let store = DrawingStore.live
         for id in pageIDs {
-            try? fileManager.removeItem(at: FileStore.url(for: "\(id.uuidString).drawing"))
+            store.trashDrawing(forPageID: id)
         }
 
         // A multi-page PDF import shares one file across its pages, so only
@@ -459,7 +460,7 @@ struct LibraryView: View {
         let refsInside = Set(allImportedDocuments.filter(belongsToDeletedPage).map(\.fileRef))
         let refsOutside = Set(allImportedDocuments.filter { !belongsToDeletedPage($0) }.map(\.fileRef))
         for ref in refsInside.subtracting(refsOutside) where !ref.isEmpty {
-            try? fileManager.removeItem(at: FileStore.url(for: ref))
+            store.trashPayload(named: ref)
         }
     }
 

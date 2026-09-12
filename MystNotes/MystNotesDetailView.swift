@@ -629,10 +629,9 @@ struct NotebookDetailView: View {
             modelContext.delete(doc)
         }
 
-        let url = drawingURL(for: page)
-        try? FileManager.default.removeItem(at: url)
+        drawingStore.trashDrawing(forPageID: page.id)
         for ref in orphanedRefs {
-            try? FileManager.default.removeItem(at: FileStore.url(for: ref))
+            drawingStore.trashPayload(named: ref)
         }
 
         let deletedIndex = sortedPages.firstIndex(where: { $0.id == page.id }) ?? 0
@@ -1193,12 +1192,6 @@ struct NotebookDetailView: View {
     #endif
 
     // MARK: - Drawing persistence
-
-    /// Only `deletePage` still needs the raw URL; reads and writes go
-    /// through `drawingStore`.
-    private func drawingURL(for page: Page) -> URL {
-        drawingStore.fileURL(for: page.id)
-    }
 
     private func loadCurrentPageDrawing() {
         guard let page = currentPage else {

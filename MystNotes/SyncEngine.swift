@@ -249,6 +249,7 @@ struct SyncRunner {
         }
         try writeJSON(index, to: Self.indexURL(in: workingDir))
         keepHistory(of: index, workingDir: workingDir)
+        pruneFolder(workingDir: workingDir, tombstones: snapshot.tombstones, pending: pending)
 
         environment.state.lastPushSignature = snapshot.signature
         // We authored this snapshot - don't turn around and re-apply it.
@@ -376,6 +377,59 @@ struct SyncRunner {
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         let file: TombstoneFile? = try? readJSON(from: url)
         return file?.tombstones ?? []
+    }
+
+    // MARK: Pruning
+
+    /// Moves what nothing references any more out of the way - never
+    /// deletes it (invariant 3). Runs after every index write, while the
+    /// folder is held.
+    ///
+    /// - A tombstoned notebook's `notebooks/<id>.json` goes to
+    ///   `notebooks/trash/`.
+    /// - A payload in `files/` that no notebook file in the folder
+    ///   references goes to `files/trash/` - but only once it is older
+    ///   than `orphanGracePeriod`, because the notebook file that
+    ///   references it may simply not have arrived yet (iCloud delivers
+    ///   files in no particular order, and a device can be offline for
+    ///   days between uploading its payloads and its notebook file).
+    private func pruneFolder(workingDir: URL, tombstones: [Tombstone], pending: Set<UUID>) {
+        let fm = FileManager.default
+        let notebooksDir = workingDir.appendingPathComponent("notebooks", isDirectory: true)
+        let filesDir = workingDir.appendingPathComponent("files", isDirectory: true)
+
+        for stone in tombstones where stone.kind == .notebook {
+            DrawingStore.moveToTrash(Self.notebookFileURL(for: stone.id, in: workingDir), tag: "deleted")
+        }
+
+        // Known to be missing notebook files this round: their payloads
+        // would all look unreferenced. Don't prune until the folder is
+        // whole.
+        guard pending.isEmpty else { return }
+
+        // Everything any notebook file still points at, under the name it
+        // has in the folder. An unreadable notebook file (still
+        // downloading) keeps everything: we can't know what it references,
+        // so nothing is pruned this round.
+        var referenced: Set<String> = []
+        guard let notebookNames = try? fm.contentsOfDirectory(atPath: notebooksDir.path) else { return }
+        for name in notebookNames where name.hasSuffix(".json") {
+            guard let notebook: NotebookDTO = try? readJSON(from: notebooksDir.appendingPathComponent(name)) else { return }
+            for page in notebook.pages {
+                for ref in Self.payloads(of: page) { referenced.insert(ref.folderName) }
+            }
+        }
+
+        let cutoff = environment.now().addingTimeInterval(-environment.orphanGracePeriod)
+        guard let payloadNames = try? fm.contentsOfDirectory(atPath: filesDir.path) else { return }
+        for name in payloadNames where !name.hasPrefix(".") && !referenced.contains(name) {
+            let url = filesDir.appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else { continue }
+            guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                  modified < cutoff else { continue }
+            DrawingStore.moveToTrash(url, tag: "orphan")
+        }
     }
 
     // MARK: Index history
@@ -753,7 +807,10 @@ struct SyncRunner {
                 guard plan.deletedLocalPages.contains(stone.id), let page = pageByID[stone.id] else { continue }
                 removeChildren(of: page, links: &links, docs: &docs, context: context)
                 page.notebook?.pages?.removeAll { $0.id == page.id }
-                context.delete(page)   // the ink file stays on disk; orphan pruning is task 11
+                context.delete(page)
+                DrawingStore.moveToTrash(
+                    environment.localFilesDirectory().appendingPathComponent(DrawingStore.fileName(for: page.id)),
+                    tag: "deleted")
                 pageByID[stone.id] = nil
             }
         }

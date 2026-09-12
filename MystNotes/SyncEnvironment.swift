@@ -25,6 +25,10 @@ struct SyncEnvironment {
     var now: () -> Date
     /// How many past copies of `index.json` to keep in `index-history/`.
     var indexHistoryLimit: Int = 50
+    /// A payload in the folder that nothing references is left alone
+    /// this long before it's moved to `trash/` - a notebook file that
+    /// hasn't arrived yet may still be about to reference it.
+    var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
 
     static var live: SyncEnvironment {
         SyncEnvironment(

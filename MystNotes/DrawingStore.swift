@@ -95,10 +95,21 @@ struct DrawingStore {
     }
 #endif
 
+    /// What deleting a page does to its ink: the file goes to `trash/`.
+    func trashDrawing(forPageID pageID: UUID) {
+        Self.moveToTrash(fileURL(for: pageID), tag: "deleted")
+    }
+
+    /// Same for any other payload this page owned (an imported PDF or
+    /// image no remaining page uses).
+    func trashPayload(named name: String) {
+        Self.moveToTrash(url(name), tag: "deleted")
+    }
+
     /// Moves a payload into `trash/` beside it instead of deleting it
     /// (invariant 3), under a name that can't collide with a later copy of
     /// the same page. `tag` says why it went there - "unreadable",
-    /// "conflict" - so the user can tell the entries apart.
+    /// "conflict", "deleted" - so the user can tell the entries apart.
     static func moveToTrash(_ file: URL, tag: String) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: file.path) else { return }
