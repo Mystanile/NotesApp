@@ -79,7 +79,7 @@ struct SettingsView: View {
                     Button("Sync Now") { SyncEngine.shared.syncNow() }
                         .disabled(sync.status == .syncing)
                     Button("Choose a Different Folder…") { showingFolderPicker = true }
-                    Button("Turn Off Folder Sync", role: .destructive) { SyncFolder.clear() }
+                    Button("Turn Off Folder Sync", role: .destructive) { SyncEngine.shared.clearFolder() }
                     #if DEBUG
                     // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md.
                     Button("Write Sync Diagnostics") {
@@ -147,6 +147,8 @@ struct SettingsView: View {
             return "Syncing…"
         case .succeeded(let date):
             return "Last synced \(date.formatted(date: .abbreviated, time: .shortened))"
+        case .waiting(let message):
+            return message
         case .failed(let message):
             return message
         }

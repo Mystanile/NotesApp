@@ -25,7 +25,7 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 **Three things block shipping. They are the current work.**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
-2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11) and the 30 s debounced push (task 12) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
+2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11), the 30 s debounced push (task 12), `NSFilePresenter` folder watching (task 13) and non-blocking downloads (task 14) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
 3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness and durability suite, both green. Run on the iPad simulator.
 
 ---
@@ -62,7 +62,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Data:** `MystNotesModels` (210), `FileStore` (131), `DrawingStore`, `AppSettings` (227)
 
-**Sync:** `SyncEngine`, `SyncEnvironment`, `SyncFolder` (160), `SyncModels` — folder layout is documented at the top of `SyncModels.swift`
+**Sync:** `SyncEngine`, `SyncEnvironment`, `SyncFolder`, `SyncModels`, `SyncDebouncer`, `SyncFolderWatcher`, `SyncDiagnostics` (debug) — folder layout is documented at the top of `SyncModels.swift`
 
 **Search:** `HandwritingRecognizer` (133), `SearchIndex`, `SearchResultsView` (132)
 
@@ -128,6 +128,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - SwiftData's template-generated `Item.swift` causes duplicate schema conflicts. Delete it.
 - A missing iPad Air simulator destination makes UIKit / `UIViewRepresentable` types unavailable when building for Mac.
 - Simulator launch failures: quit and relaunch Xcode. Stalled iPad pairing needs manual intervention.
+- `NSFilePresenter` on a user-picked folder inside iCloud Drive **does** fire for other processes' writes — coordinated or not, any depth — about a second after the write, several times per write. Verified Sept 12, 2026 with a two-process script on the Mac. It is *not* verified for a folder outside iCloud Drive with an uncoordinated writer (Dropbox etc.); the foreground pull and Sync Now still cover that.
 - `xcodebuild test` against a simulator that isn't booted fails with `Simulator device failed to launch … Busy ("Application failed preflight checks")` — SpringBoard is still coming up. Boot first: `xcrun simctl boot <udid> && xcrun simctl bootstatus <udid> -b`, then run. A leftover test host from a previous run does the same; `xcrun simctl terminate <udid> com.mozynas.Mystnotes` clears it.
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.

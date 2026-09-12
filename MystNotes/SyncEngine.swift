@@ -21,9 +21,10 @@ import SwiftData
 ///
 /// Triggers: pull when the app becomes active and push when it goes to the
 /// background (wired in `ContentView`), a manual "Sync Now" in Settings,
-/// and a push about `debounceInterval` after the last save on the app's
-/// main `ModelContext` - so a long session, or one that crashes before it
-/// backgrounds, still reaches the folder.
+/// a push about `debounceInterval` after the last save on the app's main
+/// `ModelContext` - so a long session, or one that crashes before it
+/// backgrounds, still reaches the folder - and a pull whenever
+/// `SyncFolderWatcher` sees the folder change underneath the open app.
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
@@ -36,6 +37,9 @@ final class SyncEngine: ObservableObject {
         case idle
         case syncing
         case succeeded(Date)
+        /// Not an error: iCloud hasn't delivered something yet. The folder
+        /// watcher will trigger the next attempt.
+        case waiting(String)
         case failed(String)
     }
 
@@ -46,6 +50,7 @@ final class SyncEngine: ObservableObject {
     /// A change arrived while a sync was running: run again when it ends.
     private var pushAgainWhenDone = false
     private var saveObserver: NSObjectProtocol?
+    private var watcher: SyncFolderWatcher?
     private lazy var debouncer = SyncDebouncer(interval: Self.debounceInterval) { [weak self] in
         self?.pushAfterEdits()
     }
@@ -53,6 +58,7 @@ final class SyncEngine: ObservableObject {
     func configure(container: ModelContainer) {
         guard self.container == nil else { return }
         self.container = container
+        startWatchingFolder()
 
         // Every user edit ends in a save on the main context (the views'
         // @Environment(\.modelContext)). The runner saves on a context of
@@ -84,10 +90,45 @@ final class SyncEngine: ObservableObject {
         do {
             try SyncFolder.setFolder(url)
             objectWillChange.send()
+            startWatchingFolder()
             syncNow()
         } catch {
             status = .failed(error.localizedDescription)
         }
+    }
+
+    /// "Turn Off Folder Sync" in Settings.
+    func clearFolder() {
+        stopWatchingFolder()
+        debouncer.cancel()
+        SyncFolder.clear()
+        objectWillChange.send()
+        status = .idle
+    }
+
+    // MARK: Watching the folder
+
+    /// Changes another device's sync lands in the folder while the app is
+    /// open are pulled a couple of seconds after the last one arrives. Our
+    /// own pushes trigger this too; that pull finds nothing newer than what
+    /// it just wrote and stops at the index.
+    private func startWatchingFolder() {
+        guard watcher == nil, SyncFolder.isConfigured else { return }
+        guard let folder = try? SyncFolder.openFolder(),
+              let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else { return }
+        watcher = SyncFolderWatcher(url: workingDir, stopAccess: folder.stop) { [weak self] in
+            self?.folderDidChange()
+        }
+    }
+
+    private func stopWatchingFolder() {
+        watcher?.stop()
+        watcher = nil
+    }
+
+    private func folderDidChange() {
+        guard SyncFolder.isConfigured, !isRunning else { return }
+        start(pull: true, push: false)
     }
 
     func syncNow() { start(pull: true, push: true) }
@@ -133,6 +174,8 @@ final class SyncEngine: ObservableObject {
                 switch outcome {
                 case .success:
                     self.status = .succeeded(Date())
+                case .failure(let error as SyncRunner.Waiting):
+                    self.status = .waiting(error.localizedDescription)
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
                 }
@@ -320,6 +363,13 @@ struct SyncRunner {
         var isComplete: Bool { pending.isEmpty }
     }
 
+    /// The folder's index exists but iCloud hasn't downloaded it. Nothing
+    /// can be merged or safely written until it has - pushing now would
+    /// put this library's index over one we never read.
+    struct Waiting: LocalizedError {
+        var errorDescription: String? { "Waiting for iCloud to download the library…" }
+    }
+
     enum SyncFormatError: LocalizedError {
         case newerThanThisBuild(Int)
 
@@ -354,15 +404,19 @@ struct SyncRunner {
 
     private func readRemote(workingDir: URL, context: ModelContext) throws -> RemoteLibrary? {
         let indexURL = Self.indexURL(in: workingDir)
-        SyncFolder.ensureDownloaded(indexURL)
-        if FileManager.default.fileExists(atPath: indexURL.path) {
-            return try readIndexedLibrary(indexURL: indexURL, workingDir: workingDir, context: context)
+        switch SyncFolder.availability(of: indexURL) {
+        case .available: return try readIndexedLibrary(indexURL: indexURL, workingDir: workingDir, context: context)
+        case .pending: throw Waiting()
+        case .absent: break
         }
 
         // Format 1: the whole library in one file, from before the split.
         let legacyURL = Self.legacyLibraryURL(in: workingDir)
-        SyncFolder.ensureDownloaded(legacyURL)
-        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return nil }
+        switch SyncFolder.availability(of: legacyURL) {
+        case .available: break
+        case .pending: throw Waiting()
+        case .absent: return nil
+        }
         let legacy: LibrarySnapshot = try readJSON(from: legacyURL)
         guard legacy.formatVersion <= librarySnapshotFormatVersion else {
             throw SyncFormatError.newerThanThisBuild(legacy.formatVersion)
@@ -388,8 +442,7 @@ struct SyncRunner {
         var pending: Set<UUID> = []
         for entry in index.notebooks where localSignatures[entry.id] != entry.contentSignature {
             let url = Self.notebookFileURL(for: entry.id, in: workingDir)
-            SyncFolder.ensureDownloaded(url)
-            guard FileManager.default.fileExists(atPath: url.path),
+            guard SyncFolder.availability(of: url) == .available,
                   let notebook: NotebookDTO = try? readJSON(from: url) else {
                 pending.insert(entry.id)   // not here yet, or not all here yet
                 continue
@@ -419,8 +472,7 @@ struct SyncRunner {
     /// because the local list still has everything this device knew.
     private func readTombstones(workingDir: URL) throws -> [Tombstone] {
         let url = Self.tombstonesURL(in: workingDir)
-        SyncFolder.ensureDownloaded(url)
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard SyncFolder.availability(of: url) == .available else { return [] }
         let file: TombstoneFile? = try? readJSON(from: url)
         return file?.tombstones ?? []
     }
@@ -675,8 +727,7 @@ struct SyncRunner {
         }
 
         let src = source.appendingPathComponent(ref.folderName)
-        SyncFolder.ensureDownloaded(src)
-        guard fm.fileExists(atPath: src.path) else { return false }
+        guard SyncFolder.availability(of: src) == .available else { return false }
         if let hash = ref.hash, PayloadHash.sha256(of: src) != hash {
             return false   // partial download or damaged: not this content
         }

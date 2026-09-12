@@ -123,6 +123,28 @@ enum SyncFolder {
         return try body(url)
     }
 
+    /// Resolves the bookmark and holds security-scoped access open until
+    /// the returned `stop` is called. For the folder watcher, which needs
+    /// the folder for as long as the app is open; everything else should
+    /// use `withFolder`.
+    static func openFolder() throws -> (url: URL, stop: () -> Void) {
+        guard let bookmark = AppSettings.syncFolderBookmark else {
+            throw SyncFolderError.notConfigured
+        }
+        var isStale = false
+        let url: URL
+        do {
+            url = try URL(resolvingBookmarkData: bookmark, options: bookmarkResolutionOptions,
+                          relativeTo: nil, bookmarkDataIsStale: &isStale)
+        } catch {
+            throw SyncFolderError.bookmarkUnresolvable
+        }
+        guard url.startAccessingSecurityScopedResource() else {
+            throw SyncFolderError.accessDenied
+        }
+        return (url, { url.stopAccessingSecurityScopedResource() })
+    }
+
     /// The `Mystnotes/` working directory inside the chosen folder, created if
     /// needed. `files/` beneath it holds the payload copies.
     static func workingDirectory(in folder: URL) throws -> URL {
@@ -133,28 +155,43 @@ enum SyncFolder {
         return dir
     }
 
-    /// Best-effort: ask iCloud to materialize a placeholder file and wait
-    /// briefly for it. A no-op (throws, ignored) for a plain non-iCloud
-    /// folder, where the file is already local.
-    static func ensureDownloaded(_ url: URL, timeout: TimeInterval = 15) {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) || (try? url.checkResourceIsReachable()) == true else {
-            // Might be an `.icloud` placeholder with a dotted name; still try.
-            try? fm.startDownloadingUbiquitousItem(at: url)
-            return
-        }
-        try? fm.startDownloadingUbiquitousItem(at: url)
+    /// Whether a file in the folder can be read right now.
+    enum Availability {
+        /// The content is on disk.
+        case available
+        /// iCloud knows the file but hasn't downloaded it; a download has
+        /// been requested. Come back when the folder watcher fires.
+        case pending
+        /// Nothing by that name, and no placeholder for it.
+        case absent
+    }
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
-            if let status = values?.ubiquitousItemDownloadingStatus {
-                if status == .current || status == .downloaded { return }
-            } else {
-                // Not an iCloud item - nothing to wait for.
-                return
+    /// Asks iCloud to materialize `url` if it's evicted, without waiting.
+    /// The engine treats `.pending` the way it treats a file that hasn't
+    /// arrived yet - it defers what depends on it and the next pull, which
+    /// the folder watcher triggers when the download lands, finishes the
+    /// job. Nothing here ever sleeps: a pull of two hundred evicted files
+    /// used to block for as long as iCloud took to fetch every one.
+    static func availability(of url: URL) -> Availability {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
+            guard values?.isUbiquitousItem == true,
+                  let status = values?.ubiquitousItemDownloadingStatus else {
+                return .available   // not an iCloud item: it's just a file
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            if status == .current || status == .downloaded { return .available }
+            try? fm.startDownloadingUbiquitousItem(at: url)
+            return .pending
         }
+        // An evicted file in a user-picked iCloud Drive folder shows up as
+        // a dotted placeholder next to where the file would be.
+        let placeholder = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).icloud")
+        if fm.fileExists(atPath: placeholder.path) {
+            try? fm.startDownloadingUbiquitousItem(at: url)
+            return .pending
+        }
+        return .absent
     }
 }

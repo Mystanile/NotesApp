@@ -189,6 +189,53 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    // MARK: Evicted files (M0 task 14)
+
+    /// An evicted `index.json` is a dotted placeholder. That's "wait", not
+    /// "no library here": nothing may be written over an index we couldn't
+    /// read, and nothing local changes.
+    func testEvictedIndex_isWaiting_notAnEmptyFolder() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "Mine", pageCount: 1)
+        try FileManager.default.createDirectory(at: harness.workingDirectory, withIntermediateDirectories: true)
+        try Data().write(to: harness.folderFile(".index.json.icloud"))
+
+        XCTAssertThrowsError(try ipad.sync()) { error in
+            XCTAssertTrue(error is SyncRunner.Waiting, "expected Waiting, got \(error)")
+        }
+        XCTAssertFalse(harness.folderFileExists("index.json"), "must not write an index over one it couldn't read")
+        XCTAssertFalse(harness.folderFileExists("notebooks/\(notebook.id.uuidString).json"))
+        XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.count, 1)
+    }
+
+    /// An evicted payload defers its page the same way a partial download
+    /// does, and the sync itself completes without waiting.
+    func testEvictedPayload_defersThePage_withoutBlocking() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("evicted on the Mac".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+
+        // iCloud evicted the payload on the Mac's side: placeholder only.
+        let name = "\(PayloadHash.sha256(of: ink)).drawing"
+        let payload = harness.folderFile("files/\(name)")
+        try FileManager.default.moveItem(at: payload, to: harness.folderFile("files/.\(name).icloud"))
+
+        let started = Date()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "a missing download must not be waited for")
+        XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 1)
+        XCTAssertNil(mac.state.lastPulledExportDate)
+
+        // It downloads.
+        try FileManager.default.moveItem(at: harness.folderFile("files/.\(name).icloud"), to: payload)
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(mac.ink(forPageID: pages[1].id), ink)
+    }
+
     // MARK: Nothing is ever deleted (M0 task 11)
 
     func testDeletePage_movesInkToLocalTrash() throws {
