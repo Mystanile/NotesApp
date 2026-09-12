@@ -10,7 +10,7 @@ MystNotes is a handwriting-first note app for iPad and Mac (Mac Catalyst), built
 
 Long-term thesis: notes are a **connected graph you can draw on**, with **stroke-level time travel** and **recall built in**. Not a filing cabinet.
 
-Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Out-of-scope ideas: `Docs/BACKLOG.md`.
+Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`.
 
 ---
 
@@ -19,6 +19,8 @@ Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMA
 **~8,200 lines of Swift, 42 files, 26 commits. Far more is built than a phase list suggests.**
 
 Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, lasso, shape recognition, fill/bucket tool, per-page canvas with real zoom, PDF and photo import with crop/rotate/resize, nested folders, notebook covers, thumbnail strip, four templates, whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
+
+**Two shipped tools are broken (M1).** The shape tool only makes ovals and lines at a fixed thickness — four separate bugs in `ShapeRecognizer.swift`, including a `stdDev/avgRadius < 0.28` threshold that classifies squares as circles (a square's coefficient of variation is ~0.10), and passing polygon corners to `PKStrokePath(controlPoints:)`, which treats them as cubic B-spline controls and rounds every corner. It should also trigger by holding the stroke, not by arming a toolbar button. The fill tool doesn't work and has been fixed twice; the leading hypothesis is that HEAD's page-zoom commit broke the coordinate-space assumption its own doc comment spells out. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md`.
 
 **Three things block shipping. They are the current work.**
 
@@ -37,7 +39,9 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink.
 4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. There must be a tested rebuild path.
 5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable.
-6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit has no stroke ID API** — verified against the iOS 26.5 SDK on Sept 12, 2026: `PKStrokePath` has only `init(controlPoints:creationDate:)`, and `PKStroke` carries `randomSeed: UInt32` and nothing else identity-like. The neutral format (M0 task 16) owns the IDs; mapping a `PKStroke` back to its ID must key on what does survive a `PKDrawing` round trip (`path.creationDate`, `randomSeed`, point count, order).
+6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit's stroke ID API exists but is iOS 27+** — `PKStrokePath.id` and `init(controlPoints:creationDate:id:)` are both marked iOS/iPadOS/macOS 27.0+, so they are genuinely unavailable on the iOS 26.5 SDK. Verified against Apple's docs Sept 12, 2026. Adopt them when the deployment target can move; until then the neutral format (M0 task 16) owns the IDs.
+
+Two notes on the interim mapping. First, **you mostly don't need one**: when the neutral format is the source of truth, you build the `PKDrawing` yourself in a known order, so index position *is* the mapping. The problem only arises after PencilKit itself mutates the drawing, and then it's a diff. Second, for that diff key on **`path.creationDate` + `randomSeed` only**. Drop point count and order: the vector eraser modifies a stroke's `mask` rather than its path, so creationDate and randomSeed survive erasing while point count and array position do not.
 7. **One storage root.** `FileStore`'s iCloud ubiquity path is dead code in a free-account build and has already caused one shipped bug. Payloads live in one place.
 8. **Local-first.** Fully functional with no sync folder chosen, an unreachable folder, or an evicted file. These are designed states with calm UI, not error dialogs.
 9. **The user can export everything, always.** Any feature that creates data is covered by export before it ships.
@@ -139,7 +143,7 @@ Detail and exit criteria in `Docs/PROJECT_PLAN.md`.
 | # | Milestone | Purpose |
 |---|---|---|
 | **M0** | Correctness | Tests, sync rewrite, storage cleanup, ink format. **Blocking. No new features.** |
-| **M1** | Parity Floor | Real PDF annotation, lasso-to-text, per-page templates, favorites, note lock |
+| **M1** | Parity Floor | Real PDF annotation, shape tool rebuild, fill tool, lasso-to-text, per-page templates, favorites, note lock |
 | **M2** | The Graph | Nodes, links, backlinks, graph canvas, ink transclusion |
 | **M3** | Time & Voice | Stroke timeline, replay, audio, transcription, stroke-bound playback |
 | **M4** | Recall | Semantic search, cloze on ink, spaced repetition, math |
@@ -191,7 +195,7 @@ In order. Each gates the next.
 | Area | API |
 |---|---|
 | Ink | `PencilKit` — `PKCanvasView`, `PKDrawing`, `PKStroke`, `PKStrokePath`, `PKStrokePoint`, `PKInkingTool` |
-| Stroke reconstruction | `PKStrokePath(controlPoints:creationDate:)` — there is no `id:` variant; IDs live in the neutral format (see invariant 6) |
+| Stroke reconstruction | `PKStrokePath(controlPoints:creationDate:)` — the `id:` variant is iOS 27+; until then IDs live in the neutral format (see invariant 6) |
 | Persistence | `SwiftData` (local index only) |
 | Sync | `NSFileCoordinator`, `NSFilePresenter`, `NSFileVersion`, security-scoped bookmarks, `startDownloadingUbiquitousItem` |
 | PDF | `PDFKit` — real annotation layer, **not** rasterization (M1) |
@@ -210,6 +214,8 @@ In order. Each gates the next.
 - `removeItem` on a payload file for any reason
 - Touching sync without a test that fails first
 - Any feature that runs on the main thread during drawing
+- Hardcoding stroke width, colour, or anything else that belongs to the active `PKInkingTool`
+- Rewriting the fill tool again without instrumenting it first
 - Reorganizing the file layout as a side effect of unrelated work
 - Starting a new milestone before the current one's exit criteria are met
 - Network AI calls in v1

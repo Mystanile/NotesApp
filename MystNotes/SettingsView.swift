@@ -16,6 +16,7 @@ struct SettingsView: View {
 
     @ObservedObject private var sync = SyncEngine.shared
     @State private var showingFolderPicker = false
+    @State private var diagnosticsMessage: String?
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -79,6 +80,18 @@ struct SettingsView: View {
                         .disabled(sync.status == .syncing)
                     Button("Choose a Different Folder…") { showingFolderPicker = true }
                     Button("Turn Off Folder Sync", role: .destructive) { SyncFolder.clear() }
+                    #if DEBUG
+                    // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md.
+                    Button("Write Sync Diagnostics") {
+                        switch SyncDiagnostics.write() {
+                        case .success(let url): diagnosticsMessage = "Wrote \(url.lastPathComponent)"
+                        case .failure(let error): diagnosticsMessage = error.localizedDescription
+                        }
+                    }
+                    if let diagnosticsMessage {
+                        Text(diagnosticsMessage).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    #endif
                 }
                 LabeledContent("Status") {
                     Text(syncStatusText)
@@ -88,7 +101,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sync")
             } footer: {
-                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Mystnotes writes your whole library and its drawings there, and reads changes back when it opens or you tap Sync Now. Per notebook, the most recent edit wins — if two devices change the same notebook while offline, only the newer version is kept.")
+                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Mystnotes writes your library and its drawings there, and reads changes back when it opens or you tap Sync Now. Edits merge page by page, so two devices can work on different pages of the same notebook offline. If both change the same page, the more recent version is shown and the other is kept in the folder's trash.")
             }
 
             Section {
