@@ -116,6 +116,30 @@ final class SyncTestDevice {
         try context.save()
     }
 
+    /// Mirrors `MystNotesDetailView.deletePage`: drop the page, re-index
+    /// the rest, record a page tombstone.
+    func deletePage(_ page: Page) throws {
+        guard let notebook = page.notebook else { return }
+        notebook.pages?.removeAll { $0.id == page.id }
+        context.delete(page)
+        SyncTombstones.merge([Tombstone(kind: .page, id: page.id, deletedAt: clock.now)], into: state)
+        let remaining = (notebook.pages ?? []).sorted { $0.index < $1.index }
+        for (newIndex, remainingPage) in remaining.enumerated() where remainingPage.index != newIndex {
+            remainingPage.index = newIndex
+            remainingPage.markModified(at: clock.now)
+        }
+        notebook.modifiedAt = clock.now
+        try context.save()
+    }
+
+    /// Every file under this device's `files/trash/`, for asserting that
+    /// losing ink was kept rather than destroyed.
+    func trashedInk() -> [Data] {
+        let trash = filesDirectory.appendingPathComponent("trash", isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: trash.path) else { return [] }
+        return names.compactMap { try? Data(contentsOf: trash.appendingPathComponent($0)) }
+    }
+
     private func writeInk(_ data: Data, to page: Page) throws {
         let url = filesDirectory.appendingPathComponent("\(page.id.uuidString).drawing")
         try data.write(to: url)

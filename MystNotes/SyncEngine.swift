@@ -10,9 +10,13 @@ import SwiftData
 /// the chosen folder) moves those between devices; this engine only reads and
 /// writes local files.
 ///
-/// Merge is per-notebook last-writer-wins on `Notebook.modifiedAt`; folders
-/// are a flat upsert; deletions travel as `Tombstone`s. Two devices that both
-/// edit the *same* notebook while offline will keep only the newer edit.
+/// Merge is per page, last-writer-wins on `Page.modifiedAt`, so two devices
+/// that edit different pages of the same notebook while offline both keep
+/// their edits. When both edit the *same* page the newer one shows and the
+/// other device's ink goes to its `trash/`, never discarded. Notebook
+/// scalars (title, cover, folder) are last-writer-wins on
+/// `Notebook.modifiedAt`; folders are a flat upsert; deletions travel as
+/// `Tombstone`s.
 ///
 /// Triggers (wired in `ContentView`): pull when the app becomes active, push
 /// when it goes to the background, plus a manual "Sync Now" in Settings.
@@ -109,13 +113,13 @@ struct SyncRunner {
 
     private var jsonEncoder: JSONEncoder {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = SnapshotDates.encoding
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }
     private var jsonDecoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
         return decoder
     }
 
@@ -132,6 +136,11 @@ struct SyncRunner {
 
     // MARK: Pull
 
+    /// Order matters for a kill in the middle: decide, copy payloads, then
+    /// change the model. Killed after the copy, the next pull reaches the
+    /// same decisions and copies the same bytes again. Killed after the
+    /// model save but before the "pulled" marker, the next pull finds every
+    /// page tied and changes nothing.
     private func performPull(context: ModelContext, workingDir: URL) throws {
         guard let remote = try readSnapshot(workingDir: workingDir) else { return }
 
@@ -139,18 +148,23 @@ struct SyncRunner {
             return  // already applied this snapshot
         }
 
-        copyFiles(remote.referencedFileNames,
-                  from: workingDir.appendingPathComponent("files", isDirectory: true),
-                  to: environment.localFilesDirectory(),
-                  downloadFirst: true)
+        let plan = try planMerge(of: remote, context: context)
 
-        try apply(remote, context: context)
+        pullPayloads(for: remote, plan: plan,
+                     from: workingDir.appendingPathComponent("files", isDirectory: true),
+                     to: environment.localFilesDirectory())
+
+        try apply(remote, plan: plan, context: context)
 
         SyncTombstones.merge(remote.tombstones, into: environment.state)
         environment.state.lastPulledExportDate = remote.exportedAt
-        // Our library now matches this snapshot; only push again if something
-        // actually diverges from it (e.g. a local tombstone not in `remote`).
-        if SyncTombstones.load(from: environment.state).allSatisfy({ stone in remote.tombstones.contains(stone) }) {
+
+        // If the merge left this library identical to the snapshot, there's
+        // nothing to push. If it didn't - a local page won, a local
+        // tombstone isn't in the folder yet - the next push must go out, so
+        // the marker is left alone. (It used to be set unconditionally,
+        // which is how a device's own edits went unpushed.)
+        if try buildSnapshot(context: context).signature == remote.signature {
             environment.state.lastPushSignature = remote.signature
         }
     }
@@ -161,10 +175,9 @@ struct SyncRunner {
         let snapshot = try buildSnapshot(context: context)
         guard snapshot.signature != environment.state.lastPushSignature else { return }
 
-        copyFiles(snapshot.referencedFileNames,
-                  from: environment.localFilesDirectory(),
-                  to: workingDir.appendingPathComponent("files", isDirectory: true),
-                  downloadFirst: false)
+        pushPayloads(for: snapshot,
+                     from: environment.localFilesDirectory(),
+                     to: workingDir.appendingPathComponent("files", isDirectory: true))
 
         try writeSnapshot(snapshot, workingDir: workingDir)
 
@@ -213,29 +226,156 @@ struct SyncRunner {
         if let thrown { throw thrown }
     }
 
+    // MARK: Planning the merge
+
+    /// What the merge will do to each page, decided before anything is
+    /// touched so payload copies and model changes agree.
+    struct MergePlan {
+        enum PageOutcome {
+            /// The page is new here.
+            case insert
+            /// Both sides have it and the remote copy is newer.
+            case remoteWins
+            /// Both sides have it and the local copy is newer or the same.
+            case localWins
+            /// A tombstone covers it; it must not come (back) in.
+            case skip
+        }
+        var pages: [UUID: PageOutcome] = [:]
+        /// Local pages a page tombstone removes.
+        var deletedLocalPages: Set<UUID> = []
+        /// The newest tombstone per id, local and remote combined.
+        var tombstones: [UUID: Tombstone] = [:]
+    }
+
+    private func planMerge(of remote: LibrarySnapshot, context: ModelContext) throws -> MergePlan {
+        var plan = MergePlan()
+
+        for stone in SyncTombstones.load(from: environment.state) + remote.tombstones {
+            if let existing = plan.tombstones[stone.id], existing.deletedAt >= stone.deletedAt { continue }
+            plan.tombstones[stone.id] = stone
+        }
+
+        let localPages = Dictionary(
+            (try context.fetch(FetchDescriptor<Page>())).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for (id, stone) in plan.tombstones where stone.kind == .page {
+            if let page = localPages[id], Self.date(page.modifiedAt) <= stone.deletedAt {
+                plan.deletedLocalPages.insert(id)
+            }
+        }
+
+        for notebookDTO in remote.notebooks where plan.tombstones[notebookDTO.id] == nil {
+            for pageDTO in notebookDTO.pages {
+                if let stone = plan.tombstones[pageDTO.id], stone.kind == .page,
+                   Self.date(pageDTO.modifiedAt) <= stone.deletedAt {
+                    plan.pages[pageDTO.id] = .skip
+                } else if let local = localPages[pageDTO.id] {
+                    plan.pages[pageDTO.id] = Self.date(pageDTO.modifiedAt) > Self.date(local.modifiedAt)
+                        ? .remoteWins : .localWins
+                } else {
+                    plan.pages[pageDTO.id] = .insert
+                }
+            }
+        }
+        return plan
+    }
+
+    /// `nil` predates the field and loses to any real date.
+    private static func date(_ optional: Date?) -> Date {
+        optional ?? .distantPast
+    }
+
     // MARK: Payload files
 
-    /// Copies each named file from `source` to `destination` when the
-    /// destination is missing or older. Best-effort - a file that isn't
-    /// present on the source side yet is just skipped this round.
-    private func copyFiles(_ names: Set<String>, from source: URL, to destination: URL, downloadFirst: Bool) {
+    /// Brings in the files the merge is going to need. Imported PDFs and
+    /// images are immutable and uniquely named, so "copy if missing" is
+    /// exact. Drawing files change in place, so one is copied only when the
+    /// merge decided its page comes from the folder - and if the local copy
+    /// differs, that's the same-page conflict: the local ink goes to
+    /// `trash/` first, never overwritten.
+    private func pullPayloads(for remote: LibrarySnapshot, plan: MergePlan, from source: URL, to destination: URL) {
         let fm = FileManager.default
         try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
 
-        for name in names {
-            let src = source.appendingPathComponent(name)
-            if downloadFirst { SyncFolder.ensureDownloaded(src) }
-            guard fm.fileExists(atPath: src.path) else { continue }
-
-            let dst = destination.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) {
-                let srcDate = (try? src.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                let dstDate = (try? dst.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                guard srcDate > dstDate else { continue }
-                try? fm.removeItem(at: dst)
+        for notebookDTO in remote.notebooks {
+            for pageDTO in notebookDTO.pages {
+                for name in Self.immutableFileNames(of: pageDTO) {
+                    copyIfMissing(name, from: source, to: destination, downloadFirst: true)
+                }
+                guard let name = pageDTO.drawingFileRef, !name.isEmpty else { continue }
+                switch plan.pages[pageDTO.id] {
+                case .insert?, .remoteWins?:
+                    let src = source.appendingPathComponent(name)
+                    SyncFolder.ensureDownloaded(src)
+                    guard fm.fileExists(atPath: src.path) else { continue }
+                    let dst = destination.appendingPathComponent(name)
+                    if fm.fileExists(atPath: dst.path) {
+                        guard Self.filesDiffer(src, dst) else { continue }
+                        DrawingStore.moveToTrash(dst, tag: "conflict")
+                    }
+                    try? fm.copyItem(at: src, to: dst)
+                case .localWins?, .skip?, nil:
+                    continue
+                }
             }
-            try? fm.copyItem(at: src, to: dst)
         }
+    }
+
+    /// Puts this library's files in the folder. Immutable payloads are
+    /// copied if missing; a drawing file replaces the folder's copy when it
+    /// differs. Because a push always pulls first, a differing folder copy
+    /// is one this device's page has already won against.
+    private func pushPayloads(for snapshot: LibrarySnapshot, from source: URL, to destination: URL) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+
+        for notebookDTO in snapshot.notebooks {
+            for pageDTO in notebookDTO.pages {
+                for name in Self.immutableFileNames(of: pageDTO) {
+                    copyIfMissing(name, from: source, to: destination, downloadFirst: false)
+                }
+                guard let name = pageDTO.drawingFileRef, !name.isEmpty else { continue }
+                let src = source.appendingPathComponent(name)
+                guard fm.fileExists(atPath: src.path) else { continue }
+                let dst = destination.appendingPathComponent(name)
+                if fm.fileExists(atPath: dst.path) {
+                    guard Self.filesDiffer(src, dst) else { continue }
+                    // Same discipline as DrawingStore.save: never leave the
+                    // folder's copy half-written.
+                    let staging = dst.appendingPathExtension("tmp")
+                    try? fm.removeItem(at: staging)
+                    guard (try? fm.copyItem(at: src, to: staging)) != nil else { continue }
+                    _ = try? fm.replaceItemAt(dst, withItemAt: staging)
+                } else {
+                    try? fm.copyItem(at: src, to: dst)
+                }
+            }
+        }
+    }
+
+    private func copyIfMissing(_ name: String, from source: URL, to destination: URL, downloadFirst: Bool) {
+        let fm = FileManager.default
+        let dst = destination.appendingPathComponent(name)
+        guard !fm.fileExists(atPath: dst.path) else { return }
+        let src = source.appendingPathComponent(name)
+        if downloadFirst { SyncFolder.ensureDownloaded(src) }
+        guard fm.fileExists(atPath: src.path) else { return }
+        try? fm.copyItem(at: src, to: dst)
+    }
+
+    private static func immutableFileNames(of page: PageDTO) -> [String] {
+        var names: [String] = []
+        if let ref = page.backgroundRef, !ref.isEmpty { names.append(ref) }
+        for doc in page.importedDocuments where !doc.fileRef.isEmpty { names.append(doc.fileRef) }
+        return names
+    }
+
+    private static func filesDiffer(_ a: URL, _ b: URL) -> Bool {
+        guard let dataA = try? Data(contentsOf: a), let dataB = try? Data(contentsOf: b) else { return true }
+        return dataA != dataB
     }
 
     // MARK: Build snapshot from the model graph
@@ -266,6 +406,7 @@ struct SyncRunner {
                     recognizedTextCache: page.recognizedTextCache,
                     ocrUpdatedAt: page.ocrUpdatedAt,
                     modifiedAt: page.modifiedAt,
+                    aspectRatio: page.aspectRatio,
                     textBlocks: (page.textBlocks ?? []).map {
                         TextBlockDTO(id: $0.id, content: $0.content,
                                      frameX: $0.frameX, frameY: $0.frameY,
@@ -313,7 +454,7 @@ struct SyncRunner {
 
     // MARK: Apply snapshot into the model graph
 
-    private func apply(_ remote: LibrarySnapshot, context: ModelContext) throws {
+    private func apply(_ remote: LibrarySnapshot, plan: MergePlan, context: ModelContext) throws {
         var folderByID = Dictionary(
             (try context.fetch(FetchDescriptor<Folder>())).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -322,27 +463,39 @@ struct SyncRunner {
             (try context.fetch(FetchDescriptor<Notebook>())).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        var pageByID = Dictionary(
+            (try context.fetch(FetchDescriptor<Page>())).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var links = try context.fetch(FetchDescriptor<Link>())
+        var docs = try context.fetch(FetchDescriptor<ImportedDocument>())
 
         // 1. Deletions.
-        for stone in remote.tombstones {
+        for stone in plan.tombstones.values {
             switch stone.kind {
             case .notebook:
                 if let notebook = notebookByID[stone.id], notebook.modifiedAt <= stone.deletedAt {
-                    deleteFiles(for: notebook)
+                    trashFiles(for: notebook)
                     context.delete(notebook)
                     notebookByID[stone.id] = nil
+                    for page in notebook.pages ?? [] { pageByID[page.id] = nil }
                 }
             case .folder:
                 if let folder = folderByID[stone.id] {
                     context.delete(folder)   // cascades to subfolders / notebooks
                     folderByID[stone.id] = nil
                 }
+            case .page:
+                guard plan.deletedLocalPages.contains(stone.id), let page = pageByID[stone.id] else { continue }
+                removeChildren(of: page, links: &links, docs: &docs, context: context)
+                page.notebook?.pages?.removeAll { $0.id == page.id }
+                context.delete(page)   // the ink file stays on disk; orphan pruning is task 11
+                pageByID[stone.id] = nil
             }
         }
-        let tombstonedIDs = Set(remote.tombstones.map(\.id))
 
         // 2. Folders: upsert, then wire up parents once all exist.
-        for dto in remote.folders where !tombstonedIDs.contains(dto.id) {
+        for dto in remote.folders where plan.tombstones[dto.id] == nil {
             if let folder = folderByID[dto.id] {
                 folder.name = dto.name
             } else {
@@ -352,113 +505,149 @@ struct SyncRunner {
                 folderByID[dto.id] = folder
             }
         }
-        for dto in remote.folders where !tombstonedIDs.contains(dto.id) {
+        for dto in remote.folders where plan.tombstones[dto.id] == nil {
             folderByID[dto.id]?.parentFolder = dto.parentID.flatMap { folderByID[$0] }
         }
 
-        // 3. Notebooks: last-writer-wins by modifiedAt.
-        let links = try context.fetch(FetchDescriptor<Link>())
-        let docs = try context.fetch(FetchDescriptor<ImportedDocument>())
-        for dto in remote.notebooks where !tombstonedIDs.contains(dto.id) {
+        // 3. Notebooks: scalars last-writer-wins, then page by page.
+        for dto in remote.notebooks where plan.tombstones[dto.id] == nil {
+            let notebook: Notebook
             if let existing = notebookByID[dto.id] {
-                guard dto.modifiedAt > existing.modifiedAt else { continue }
-                rebuild(existing, from: dto, folderByID: folderByID,
-                        existingLinks: links, existingDocs: docs, context: context)
+                notebook = existing
+                if dto.modifiedAt > existing.modifiedAt {
+                    notebook.title = dto.title
+                    notebook.coverStyle = dto.coverStyle
+                    notebook.createdAt = dto.createdAt
+                    notebook.modifiedAt = dto.modifiedAt
+                    notebook.folder = dto.folderID.flatMap { folderByID[$0] }
+                }
             } else {
-                let notebook = Notebook(title: dto.title)
+                notebook = Notebook(title: dto.title)
                 notebook.id = dto.id
+                notebook.coverStyle = dto.coverStyle
+                notebook.createdAt = dto.createdAt
+                notebook.modifiedAt = dto.modifiedAt
+                notebook.folder = dto.folderID.flatMap { folderByID[$0] }
                 context.insert(notebook)
                 notebookByID[dto.id] = notebook
-                rebuild(notebook, from: dto, folderByID: folderByID,
-                        existingLinks: links, existingDocs: docs, context: context)
+            }
+
+            for pageDTO in dto.pages.sorted(by: { $0.index < $1.index }) {
+                switch plan.pages[pageDTO.id] {
+                case .insert?:
+                    let page = Page(index: pageDTO.index, type: pageDTO.type, template: pageDTO.template, notebook: notebook)
+                    page.id = pageDTO.id
+                    context.insert(page)
+                    notebook.pages?.append(page)
+                    pageByID[page.id] = page
+                    setFields(of: page, from: pageDTO)
+                    page.recognizedTextCache = pageDTO.recognizedTextCache
+                    page.ocrUpdatedAt = pageDTO.ocrUpdatedAt
+                    addChildren(to: page, from: pageDTO, links: dto.links, context: context)
+                    lift(notebook, to: page.modifiedAt)
+
+                case .remoteWins?:
+                    guard let page = pageByID[pageDTO.id] else { continue }
+                    removeChildren(of: page, links: &links, docs: &docs, context: context)
+                    setFields(of: page, from: pageDTO)
+                    addChildren(to: page, from: pageDTO, links: dto.links, context: context)
+                    mergeRecognizedText(into: page, from: pageDTO)
+                    lift(notebook, to: page.modifiedAt)
+
+                case .localWins?:
+                    guard let page = pageByID[pageDTO.id] else { continue }
+                    mergeRecognizedText(into: page, from: pageDTO)
+
+                case .skip?, nil:
+                    continue
+                }
             }
         }
 
         try context.save()
     }
 
-    /// Replaces a notebook's scalar fields and its entire page tree from the
-    /// DTO. Page ids are stable, so a page's `<id>.drawing` file still lines
-    /// up after the rebuild.
-    private func rebuild(_ notebook: Notebook,
-                         from dto: NotebookDTO,
-                         folderByID: [UUID: Folder],
-                         existingLinks: [Link],
-                         existingDocs: [ImportedDocument],
-                         context: ModelContext) {
-        notebook.title = dto.title
-        notebook.coverStyle = dto.coverStyle
-        notebook.createdAt = dto.createdAt
-        notebook.modifiedAt = dto.modifiedAt
-        notebook.folder = dto.folderID.flatMap { folderByID[$0] }
+    /// The user-edited fields. Never the OCR fields - see
+    /// `mergeRecognizedText`.
+    private func setFields(of page: Page, from dto: PageDTO) {
+        page.index = dto.index
+        page.type = dto.type
+        page.template = dto.template
+        page.drawingFileRef = dto.drawingFileRef
+        page.backgroundRef = dto.backgroundRef
+        page.modifiedAt = dto.modifiedAt
+        if let aspectRatio = dto.aspectRatio { page.aspectRatio = aspectRatio }
+    }
 
-        let oldPages = notebook.pages ?? []
-        let oldPageIDs = Set(oldPages.map(\.id))
-        for link in existingLinks where oldPageIDs.contains(link.sourcePageID) || oldPageIDs.contains(link.destinationPageID) {
-            context.delete(link)
+    /// Derived data merges on its own clock, whichever side won the page:
+    /// a background recognition pass must never out-rank a stroke, and a
+    /// stroke must never throw away a newer recognition result.
+    private func mergeRecognizedText(into page: Page, from dto: PageDTO) {
+        guard Self.date(dto.ocrUpdatedAt) > Self.date(page.ocrUpdatedAt) else { return }
+        page.recognizedTextCache = dto.recognizedTextCache
+        page.ocrUpdatedAt = dto.ocrUpdatedAt
+    }
+
+    private func lift(_ notebook: Notebook, to date: Date?) {
+        if let date, date > notebook.modifiedAt { notebook.modifiedAt = date }
+    }
+
+    private func removeChildren(of page: Page, links: inout [Link], docs: inout [ImportedDocument], context: ModelContext) {
+        for block in page.textBlocks ?? [] { context.delete(block) }
+        page.textBlocks = []
+        for sticker in page.stickers ?? [] { context.delete(sticker) }
+        page.stickers = []
+        for doc in docs where doc.page?.id == page.id { context.delete(doc) }
+        docs.removeAll { $0.page?.id == page.id }
+        for link in links where link.sourcePageID == page.id { context.delete(link) }
+        links.removeAll { $0.sourcePageID == page.id }
+    }
+
+    private func addChildren(to page: Page, from pageDTO: PageDTO, links: [LinkDTO], context: ModelContext) {
+        var textBlocks: [TypedTextBlock] = []
+        for blockDTO in pageDTO.textBlocks {
+            let block = TypedTextBlock(content: blockDTO.content, page: page)
+            block.id = blockDTO.id
+            block.frameX = blockDTO.frameX
+            block.frameY = blockDTO.frameY
+            block.frameWidth = blockDTO.frameWidth
+            block.frameHeight = blockDTO.frameHeight
+            block.textColorHex = blockDTO.textColorHex
+            context.insert(block)
+            textBlocks.append(block)
         }
-        for doc in existingDocs where doc.page.map({ oldPageIDs.contains($0.id) }) ?? false {
-            context.delete(doc)
+        page.textBlocks = textBlocks
+
+        var stickers: [Sticker] = []
+        for stickerDTO in pageDTO.stickers {
+            let sticker = Sticker(assetRef: stickerDTO.assetRef, page: page)
+            sticker.id = stickerDTO.id
+            sticker.frameX = stickerDTO.frameX
+            sticker.frameY = stickerDTO.frameY
+            sticker.frameWidth = stickerDTO.frameWidth
+            sticker.frameHeight = stickerDTO.frameHeight
+            context.insert(sticker)
+            stickers.append(sticker)
         }
-        for page in oldPages { context.delete(page) }
-        notebook.pages = []
+        page.stickers = stickers
 
-        for pageDTO in dto.pages.sorted(by: { $0.index < $1.index }) {
-            let page = Page(index: pageDTO.index, type: pageDTO.type, template: pageDTO.template, notebook: notebook)
-            page.id = pageDTO.id
-            page.drawingFileRef = pageDTO.drawingFileRef
-            page.backgroundRef = pageDTO.backgroundRef
-            page.recognizedTextCache = pageDTO.recognizedTextCache
-            page.ocrUpdatedAt = pageDTO.ocrUpdatedAt
-            page.modifiedAt = pageDTO.modifiedAt
-            context.insert(page)
-            notebook.pages?.append(page)
-
-            var textBlocks: [TypedTextBlock] = []
-            for blockDTO in pageDTO.textBlocks {
-                let block = TypedTextBlock(content: blockDTO.content, page: page)
-                block.id = blockDTO.id
-                block.frameX = blockDTO.frameX
-                block.frameY = blockDTO.frameY
-                block.frameWidth = blockDTO.frameWidth
-                block.frameHeight = blockDTO.frameHeight
-                block.textColorHex = blockDTO.textColorHex
-                context.insert(block)
-                textBlocks.append(block)
-            }
-            page.textBlocks = textBlocks
-
-            var stickers: [Sticker] = []
-            for stickerDTO in pageDTO.stickers {
-                let sticker = Sticker(assetRef: stickerDTO.assetRef, page: page)
-                sticker.id = stickerDTO.id
-                sticker.frameX = stickerDTO.frameX
-                sticker.frameY = stickerDTO.frameY
-                sticker.frameWidth = stickerDTO.frameWidth
-                sticker.frameHeight = stickerDTO.frameHeight
-                context.insert(sticker)
-                stickers.append(sticker)
-            }
-            page.stickers = stickers
-
-            for docDTO in pageDTO.importedDocuments {
-                let doc = ImportedDocument(sourceType: docDTO.sourceType, fileRef: docDTO.fileRef,
-                                          pdfPageIndex: docDTO.pdfPageIndex, page: page)
-                doc.id = docDTO.id
-                doc.frameX = docDTO.frameX
-                doc.frameY = docDTO.frameY
-                doc.frameWidth = docDTO.frameWidth
-                doc.frameHeight = docDTO.frameHeight
-                doc.rotationDegrees = docDTO.rotationDegrees
-                doc.cropX = docDTO.cropX
-                doc.cropY = docDTO.cropY
-                doc.cropWidth = docDTO.cropWidth
-                doc.cropHeight = docDTO.cropHeight
-                context.insert(doc)
-            }
+        for docDTO in pageDTO.importedDocuments {
+            let doc = ImportedDocument(sourceType: docDTO.sourceType, fileRef: docDTO.fileRef,
+                                      pdfPageIndex: docDTO.pdfPageIndex, page: page)
+            doc.id = docDTO.id
+            doc.frameX = docDTO.frameX
+            doc.frameY = docDTO.frameY
+            doc.frameWidth = docDTO.frameWidth
+            doc.frameHeight = docDTO.frameHeight
+            doc.rotationDegrees = docDTO.rotationDegrees
+            doc.cropX = docDTO.cropX
+            doc.cropY = docDTO.cropY
+            doc.cropWidth = docDTO.cropWidth
+            doc.cropHeight = docDTO.cropHeight
+            context.insert(doc)
         }
 
-        for linkDTO in dto.links {
+        for linkDTO in links where linkDTO.sourcePageID == page.id {
             let link = Link(sourcePageID: linkDTO.sourcePageID, destinationPageID: linkDTO.destinationPageID)
             link.id = linkDTO.id
             link.anchorX = linkDTO.anchorX
@@ -469,11 +658,11 @@ struct SyncRunner {
         }
     }
 
-    private func deleteFiles(for notebook: Notebook) {
-        let fm = FileManager.default
+    /// A tombstoned notebook's ink goes to `trash/`, not away (invariant 3).
+    private func trashFiles(for notebook: Notebook) {
         let base = environment.localFilesDirectory()
         for page in notebook.pages ?? [] {
-            try? fm.removeItem(at: base.appendingPathComponent("\(page.id.uuidString).drawing"))
+            DrawingStore.moveToTrash(base.appendingPathComponent(DrawingStore.fileName(for: page.id)), tag: "deleted")
         }
     }
 }

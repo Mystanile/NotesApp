@@ -5,12 +5,42 @@ import Foundation
 /// classes aren't `Codable`, and serializing SwiftData directly is fragile,
 /// so `SyncEngine` translates between these DTOs and the model graph.
 ///
-/// Merge granularity is the notebook: a `NotebookDTO` carries its whole page
-/// tree, so when one side's copy wins (newer `modifiedAt`) it replaces the
-/// other wholesale. Folders are a flat upsert by id; deletions travel as
-/// `Tombstone`s.
+/// Merge granularity is the page: a `NotebookDTO` carries its pages, each
+/// with its own `modifiedAt`, and `SyncRunner` decides page by page which
+/// side is newer. Notebook scalars (title, cover, folder) are last-writer-
+/// wins on `Notebook.modifiedAt`. Folders are a flat upsert by id;
+/// deletions of folders, notebooks and pages travel as `Tombstone`s.
 
 let librarySnapshotFormatVersion = 1
+
+/// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
+/// `.iso8601` strategy) made two edits inside one second compare equal
+/// and made a device's own dates look different after a round trip.
+/// Decoding accepts both forms so snapshots written before this still read.
+enum SnapshotDates {
+    private static let fractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let whole: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    static let encoding: JSONEncoder.DateEncodingStrategy = .custom { date, encoder in
+        var container = encoder.singleValueContainer()
+        try container.encode(fractional.string(from: date))
+    }
+
+    static let decoding: JSONDecoder.DateDecodingStrategy = .custom { decoder in
+        let string = try decoder.singleValueContainer().decode(String.self)
+        if let date = fractional.date(from: string) ?? whole.date(from: string) { return date }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                debugDescription: "Unreadable date \(string)"))
+    }
+}
 
 struct LibrarySnapshot: Codable {
     var formatVersion: Int = librarySnapshotFormatVersion
@@ -59,7 +89,9 @@ struct LibrarySnapshot: Codable {
 // MARK: - Tombstone
 
 struct Tombstone: Codable, Hashable {
-    enum Kind: String, Codable { case folder, notebook }
+    /// `page` was added with per-page merge; a build from before it can't
+    /// decode a snapshot that contains one.
+    enum Kind: String, Codable { case folder, notebook, page }
     var kind: Kind
     var id: UUID
     var deletedAt: Date
@@ -131,6 +163,8 @@ struct PageDTO: Codable {
     /// Absent in snapshots written before this field existed; decodes as
     /// nil, which merge treats as older than any date.
     var modifiedAt: Date?
+    /// Absent in older snapshots. See `Page.aspectRatio`.
+    var aspectRatio: Double?
     var textBlocks: [TextBlockDTO]
     var stickers: [StickerDTO]
     var importedDocuments: [ImportedDocumentDTO]

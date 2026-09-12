@@ -142,4 +142,142 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(harness.inkInFolder(forPageID: page3ID), ipadInk, "sync folder holds a stale page 3")
         XCTAssertEqual(harness.inkInFolder(forPageID: page7ID), macInk, "sync folder holds a stale page 7")
     }
+
+    /// Same scenario, other order: the iPad reaches the folder first. This
+    /// passed even under whole-notebook merge, because payload files travel
+    /// separately from metadata; it's pinned so both orders stay green.
+    func testEditsToDifferentPages_iPadSyncsFirst_bothSurvive() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 8).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let page3ID = ipadPages[2].id, page7ID = ipadPages[6].id
+        let ipadInk = Data("iPad wrote on page 3".utf8), macInk = Data("Mac wrote on page 7".utf8)
+
+        harness.clock.advance(); try ipad.edit(page: ipadPages[2], ink: ipadInk)
+        harness.clock.advance(); try mac.edit(page: macPages[6], ink: macInk)
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        for device in [ipad, mac] {
+            XCTAssertEqual(try device.pages(ofNotebook: notebookID)?.count, 8, "\(device.name) lost pages")
+            XCTAssertEqual(device.ink(forPageID: page3ID), ipadInk, "\(device.name): page 3 wrong")
+            XCTAssertEqual(device.ink(forPageID: page7ID), macInk, "\(device.name): page 7 wrong")
+        }
+    }
+
+    /// Invariant 2, directly: a pull that changes one page must not replace
+    /// the others. The untouched page's SwiftData identity survives.
+    func testPull_updatesPagesInPlace_neverRebuildsTheTree() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 4).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macBefore = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let identitiesBefore = macBefore.map(\.persistentModelID)
+
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        harness.clock.advance(); try ipad.edit(page: ipadPages[1], ink: Data("new".utf8))
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macAfter = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        XCTAssertEqual(macAfter.map(\.persistentModelID), identitiesBefore,
+                       "page objects were deleted and recreated - the tree was rebuilt")
+    }
+
+    // MARK: Same page, both devices - keep both versions
+
+    /// Both devices write on page 3 offline; the Mac is later. Both must
+    /// end up showing the Mac's ink, and the iPad's ink must still exist
+    /// in the iPad's trash - the losing side is recoverable, never gone.
+    func testSamePageEditedOnBothDevices_newerShows_olderIsKeptInTrash() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 4).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let page3ID = ipadPages[2].id
+        let ipadInk = Data("iPad's version of page 3".utf8)
+        let macInk = Data("Mac's later version of page 3".utf8)
+
+        harness.clock.advance(); try ipad.edit(page: ipadPages[2], ink: ipadInk)
+        harness.clock.advance(); try mac.edit(page: macPages[2], ink: macInk)
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertEqual(ipad.ink(forPageID: page3ID), macInk, "iPad should show the newer (Mac) ink")
+        XCTAssertEqual(mac.ink(forPageID: page3ID), macInk, "Mac should keep its own newer ink")
+        XCTAssertEqual(harness.inkInFolder(forPageID: page3ID), macInk)
+        XCTAssertTrue(ipad.trashedInk().contains(ipadInk), "the iPad's losing ink must be in its trash, not destroyed")
+        XCTAssertEqual(try ipad.pages(ofNotebook: notebookID)?.count, 4)
+    }
+
+    // MARK: Deletion
+
+    /// A page deleted on one device disappears on the other and does not
+    /// come back on later rounds.
+    func testPageDeletedOnOneDevice_isRemovedOnTheOther_andStaysRemoved() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 4).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        let deletedID = ipadPages[1].id
+
+        harness.clock.advance(); try ipad.deletePage(ipadPages[1])
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        for device in [ipad, mac] {
+            let pages = try XCTUnwrap(try device.pages(ofNotebook: notebookID))
+            XCTAssertEqual(pages.count, 3, "\(device.name) has the wrong page count")
+            XCTAssertFalse(pages.contains { $0.id == deletedID }, "\(device.name): the deleted page came back")
+            XCTAssertEqual(pages.map(\.index), [0, 1, 2], "\(device.name): indices not contiguous")
+        }
+    }
+
+    /// The other device edited the page *after* it was deleted. The edit is
+    /// newer than the deletion, so the page - and its ink - survive on both.
+    func testPageEditedAfterRemoteDeletion_survivesEverywhere() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 4).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let pageID = ipadPages[1].id
+        let macInk = Data("Mac kept writing on page 2".utf8)
+
+        harness.clock.advance(); try ipad.deletePage(ipadPages[1])
+        harness.clock.advance(); try mac.edit(page: macPages[1], ink: macInk)
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        for device in [ipad, mac] {
+            let pages = try XCTUnwrap(try device.pages(ofNotebook: notebookID))
+            XCTAssertTrue(pages.contains { $0.id == pageID }, "\(device.name): a page edited after deletion was lost")
+            XCTAssertEqual(device.ink(forPageID: pageID), macInk, "\(device.name): the post-deletion ink was lost")
+        }
+    }
 }

@@ -61,7 +61,7 @@ struct DrawingStore {
            !drawing.strokes.isEmpty || data.starts(with: Self.archiveHeader) {
             return drawing
         }
-        Self.quarantine(target)
+        Self.moveToTrash(target, tag: "unreadable")
         return nil
     }
 
@@ -95,14 +95,17 @@ struct DrawingStore {
     }
 #endif
 
-    /// Moves a damaged payload into `trash/` beside it, under a name that
-    /// can't collide with a later copy of the same page.
-    private static func quarantine(_ file: URL) {
+    /// Moves a payload into `trash/` beside it instead of deleting it
+    /// (invariant 3), under a name that can't collide with a later copy of
+    /// the same page. `tag` says why it went there - "unreadable",
+    /// "conflict" - so the user can tell the entries apart.
+    static func moveToTrash(_ file: URL, tag: String) {
         let fm = FileManager.default
+        guard fm.fileExists(atPath: file.path) else { return }
         let trash = file.deletingLastPathComponent().appendingPathComponent("trash", isDirectory: true)
         try? fm.createDirectory(at: trash, withIntermediateDirectories: true)
         let stamp = Int(Date().timeIntervalSince1970 * 1000)
-        let name = file.deletingPathExtension().lastPathComponent + "-\(stamp)-unreadable." + file.pathExtension
+        let name = file.deletingPathExtension().lastPathComponent + "-\(stamp)-\(tag)." + file.pathExtension
         try? fm.moveItem(at: file, to: trash.appendingPathComponent(name))
     }
 }

@@ -22,9 +22,9 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 
 **Three things block shipping. They are the current work.**
 
-1. **`SyncEngine` can silently destroy a page.** Merge is whole-notebook last-writer-wins on `Notebook.modifiedAt`, and when the remote wins, `rebuild()` deletes every local `Page` and recreates the tree. Edit page 3 on iPad and page 7 on Mac offline, sync, and one edit is gone — while the *ink file* for the lost page may still be the newer one on disk, producing a mixed state. Root cause: `Page` has no `modifiedAt`, so merge can't be finer than the notebook.
+1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
 2. **`library.json` holds the entire library in one file**, overwritten on every push, with no backup and no handling of iCloud conflict versions.
-3. **There are no tests.** No test target, no test files.
+3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness and durability suite, both green. Run on the iPad simulator.
 
 ---
 
@@ -33,7 +33,7 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 Violating any of these is a bug, even if it compiles and the tests pass.
 
 1. **Never lose ink.** Every write is atomic and recoverable. If the app is killed mid-stroke, the last committed state must load cleanly.
-2. **Merge at page granularity or finer. Never rebuild a page tree wholesale.** This is invariant #1's most likely failure mode and it is currently violated.
+2. **Merge at page granularity or finer. Never rebuild a page tree wholesale.** This is invariant #1's most likely failure mode. Was violated until M0 task 5; `testPull_updatesPagesInPlace_neverRebuildsTheTree` guards it now.
 3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink.
 4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. There must be a tested rebuild path.
 5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable.

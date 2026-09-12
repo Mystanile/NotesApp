@@ -18,10 +18,10 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 ## Found while building the sync harness (Sept 12, 2026)
 
-- [M0] `PageDTO` has no `aspectRatio`, so `rebuild()` resets every page's shape to default on a remote-wins merge, and an imported PDF page's aspect never syncs at all. Fold into task 5/6 when `PageDTO` gains `modifiedAt`.
-- [M0] `library.json` dates are ISO-8601 whole seconds, but `lastPulledExportDate` is stored at full precision after a push. Two devices acting inside the same wall-clock second compare truncated against untruncated values. Harmless in practice today; fix as part of task 6 rather than separately.
+- [M0] Notebook scalars (title, cover, folder) are still last-writer-wins on `Notebook.modifiedAt`, which page edits lift. Rename on A, then any page edit on B, and A's rename loses to B's stale title. Give notebook scalars their own `modifiedAt` when `NotebookDTO` changes in task 6.
+- [M0] A build from before task 5 can't decode a snapshot containing a `kind: "page"` tombstone (enum decode fails, whole `library.json` rejected). Only matters while a pre-task-5 build is still installed anywhere; the format split in task 6 should carry a real version gate.
+- [M0] `pushPayloads` replaces the folder's copy of a drawing file in place when the local page won. Folder-side history of superseded versions is task 7/11 territory; the loser device keeps its own copy in its local `trash/`.
 - [M0] `LibrarySnapshot.referencedFileNames` derives from `drawingFileRef`, so a page whose file was written but whose `context.save()` never ran (kill between the two) has ink on disk that never syncs. Derive the drawing file name from `page.id` instead; the ref is redundant with the id. Fold into task 6/10.
-- [M0] Reversed §1.2 ordering (iPad syncs before the Mac) happens to pass today because payload files travel independently of the metadata merge. Add it as a second `SyncTests` case once per-page merge lands so both orders are pinned.
 
 ## Parked from planning (Sept 12, 2026)
 

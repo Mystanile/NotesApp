@@ -639,6 +639,10 @@ struct NotebookDetailView: View {
 
         notebook.pages?.removeAll { $0.id == page.id }
         modelContext.delete(page) // cascades to its TypedTextBlocks/Stickers
+        // So sync removes it elsewhere instead of bringing it back from
+        // another device's copy. A page edited there *after* this moment
+        // survives - the edit is newer than the deletion.
+        SyncTombstones.merge([Tombstone(kind: .page, id: page.id, deletedAt: Date())])
 
         let remaining = sortedPages
         for (newIndex, remainingPage) in remaining.enumerated() where remainingPage.index != newIndex {
