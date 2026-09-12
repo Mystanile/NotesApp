@@ -20,6 +20,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 - [M0] `PageDTO` has no `aspectRatio`, so `rebuild()` resets every page's shape to default on a remote-wins merge, and an imported PDF page's aspect never syncs at all. Fold into task 5/6 when `PageDTO` gains `modifiedAt`.
 - [M0] `library.json` dates are ISO-8601 whole seconds, but `lastPulledExportDate` is stored at full precision after a push. Two devices acting inside the same wall-clock second compare truncated against untruncated values. Harmless in practice today; fix as part of task 6 rather than separately.
+- [M0] `LibrarySnapshot.referencedFileNames` derives from `drawingFileRef`, so a page whose file was written but whose `context.save()` never ran (kill between the two) has ink on disk that never syncs. Derive the drawing file name from `page.id` instead; the ref is redundant with the id. Fold into task 6/10.
 - [M0] Reversed §1.2 ordering (iPad syncs before the Mac) happens to pass today because payload files travel independently of the metadata merge. Add it as a second `SyncTests` case once per-page merge lands so both orders are pinned.
 
 ## Parked from planning (Sept 12, 2026)

@@ -37,7 +37,7 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink.
 4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. There must be a tested rebuild path.
 5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable.
-6. **Stroke IDs are stable forever.** Use `PKStrokePath(controlPoints:creationDate:id:)`. Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise.
+6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit has no stroke ID API** — verified against the iOS 26.5 SDK on Sept 12, 2026: `PKStrokePath` has only `init(controlPoints:creationDate:)`, and `PKStroke` carries `randomSeed: UInt32` and nothing else identity-like. The neutral format (M0 task 16) owns the IDs; mapping a `PKStroke` back to its ID must key on what does survive a `PKDrawing` round trip (`path.creationDate`, `randomSeed`, point count, order).
 7. **One storage root.** `FileStore`'s iCloud ubiquity path is dead code in a free-account build and has already caused one shipped bug. Payloads live in one place.
 8. **Local-first.** Fully functional with no sync folder chosen, an unreachable folder, or an evicted file. These are designed states with calm UI, not error dialogs.
 9. **The user can export everything, always.** Any feature that creates data is covered by export before it ships.
@@ -56,15 +56,15 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Library:** `LibraryView` (516), `LibraryCells`, `FolderPickerView`, `TutorialNotebookFactory` (303)
 
-**Data:** `MystNotesModels` (210), `FileStore` (131), `AppSettings` (227)
+**Data:** `MystNotesModels` (210), `FileStore` (131), `DrawingStore`, `AppSettings` (227)
 
-**Sync:** `SyncEngine` (482), `SyncFolder` (160), `SyncModels` (172)
+**Sync:** `SyncEngine` (482), `SyncEnvironment`, `SyncFolder` (160), `SyncModels` (172)
 
 **Search:** `HandwritingRecognizer` (133), `SearchIndex`, `SearchResultsView` (132)
 
 **App shell:** `MystnotesApp`, `ContentView`, `MystnotesWindowView`, `SettingsView` (155), `OnboardingView`, `LoginView`, `ShareSheet`, `Color+Hex`
 
-**Missing entirely:** any test target.
+**Tests:** `MystNotesTests/` — `SyncTestHarness` + `SyncTests` (two-library sync harness), `DurabilityTests` (+ `Fixtures/` schema fixture). Seams the tests drive: `SyncEnvironment` (sync), `DrawingStore` (ink file I/O). Run on the iPad simulator.
 
 ### Data model (`MystNotesModels.swift`)
 
@@ -86,6 +86,8 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Mac Catalyst as the second target, full editing, not view-only.
 - AI features stay behind a stub. No network AI calls in v1.
 - `AnyView` is an accepted escape hatch for recursive `some View` compiler errors (see `FolderPickerView`).
+- **`Page.recognizedTextCache` / `ocrUpdatedAt` never bump `Page.modifiedAt`.** They are derived data and merge on their own (newest `ocrUpdatedAt` wins). A background OCR pass on one device must never out-rank a real stroke on another. (Decided Sept 12, 2026.)
+- **Same-page concurrent edits keep both versions.** Per-page last-writer-wins picks what the page shows, but the losing ink goes to `trash/` and is recoverable, never discarded. Tasks 5 and 11 are designed together for this. (Decided Sept 12, 2026.)
 
 ---
 
@@ -120,6 +122,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - SwiftData's template-generated `Item.swift` causes duplicate schema conflicts. Delete it.
 - A missing iPad Air simulator destination makes UIKit / `UIViewRepresentable` types unavailable when building for Mac.
 - Simulator launch failures: quit and relaunch Xcode. Stalled iPad pairing needs manual intervention.
+- `xcodebuild test` against a simulator that isn't booted fails with `Simulator device failed to launch … Busy ("Application failed preflight checks")` — SpringBoard is still coming up. Boot first: `xcrun simctl boot <udid> && xcrun simctl bootstatus <udid> -b`, then run. A leftover test host from a previous run does the same; `xcrun simctl terminate <udid> com.mozynas.Mystnotes` clears it.
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
@@ -185,7 +188,7 @@ In order. Each gates the next.
 | Area | API |
 |---|---|
 | Ink | `PencilKit` — `PKCanvasView`, `PKDrawing`, `PKStroke`, `PKStrokePath`, `PKStrokePoint`, `PKInkingTool` |
-| Stroke reconstruction | `PKStrokePath(controlPoints:creationDate:id:)` — the `id:` variant, always |
+| Stroke reconstruction | `PKStrokePath(controlPoints:creationDate:)` — there is no `id:` variant; IDs live in the neutral format (see invariant 6) |
 | Persistence | `SwiftData` (local index only) |
 | Sync | `NSFileCoordinator`, `NSFilePresenter`, `NSFileVersion`, security-scoped bookmarks, `startDownloadingUbiquitousItem` |
 | PDF | `PDFKit` — real annotation layer, **not** rasterization (M1) |

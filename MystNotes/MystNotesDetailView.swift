@@ -63,6 +63,7 @@ struct NotebookDetailView: View {
     @State private var canUndo = false
     @State private var canRedo = false
     @State private var autosaveTask: Task<Void, Never>?
+    private let drawingStore = DrawingStore.live
     @State private var drawingNeedsOCR = false
     @State private var showingPageStrip = true
 
@@ -1185,10 +1186,10 @@ struct NotebookDetailView: View {
 
     // MARK: - Drawing persistence
 
+    /// Only `deletePage` still needs the raw URL; reads and writes go
+    /// through `drawingStore`.
     private func drawingURL(for page: Page) -> URL {
-        // via FileStore.url(for:) so an existing drawing is found even if
-        // the sync toggle has since moved the base directory.
-        FileStore.url(for: "\(page.id.uuidString).drawing")
+        drawingStore.fileURL(for: page.id)
     }
 
     private func loadCurrentPageDrawing() {
@@ -1203,8 +1204,7 @@ struct NotebookDetailView: View {
         adoptImportedPageShapeIfNeeded(page)
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         var drawing = PKDrawing()
-        if let data = try? Data(contentsOf: drawingURL(for: page)),
-           let saved = try? PKDrawing(data: data) {
+        if let saved = drawingStore.load(pageID: page.id) {
             drawing = fittingWithinPage(saved, on: page)
         }
         installFreshCanvas(with: drawing)
@@ -1258,9 +1258,7 @@ struct NotebookDetailView: View {
         guard scale < 0.98 else { return drawing }
 
         let fitted = drawing.transformed(using: CGAffineTransform(scaleX: scale, y: scale))
-        if let data = try? fitted.dataRepresentation() {
-            try? data.write(to: drawingURL(for: page))
-        }
+        try? drawingStore.save(fitted, pageID: page.id)
         return fitted
     }
 #endif
@@ -1280,10 +1278,8 @@ struct NotebookDetailView: View {
     /// a stroke must save the page that stroke was drawn on, even if a
     /// different page has been opened since.
     private func save(_ drawing: PKDrawing, to page: Page) {
-        let url = drawingURL(for: page)
         do {
-            try drawing.dataRepresentation().write(to: url)
-            page.drawingFileRef = url.lastPathComponent
+            page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
             notebook.modifiedAt = Date()
             try modelContext.save()
         } catch {
@@ -1292,7 +1288,7 @@ struct NotebookDetailView: View {
     }
 #else
     private func save(to page: Page) {
-        page.drawingFileRef = drawingURL(for: page).lastPathComponent
+        page.drawingFileRef = DrawingStore.fileName(for: page.id)
         notebook.modifiedAt = Date()
         try? modelContext.save()
     }
