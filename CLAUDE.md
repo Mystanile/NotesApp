@@ -37,7 +37,7 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 1. **Never lose ink.** Every write is atomic and recoverable. If the app is killed mid-stroke, the last committed state must load cleanly.
 2. **Merge at page granularity or finer. Never rebuild a page tree wholesale.** This is invariant #1's most likely failure mode. Was violated until M0 task 5; `testPull_updatesPagesInPlace_neverRebuildsTheTree` guards it now.
 3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink. As of M0 task 11 there is no `removeItem` on a payload anywhere; `DrawingStore.moveToTrash` is the one mechanism, and trash retention is an open decision in `BACKLOG.md`.
-4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. There must be a tested rebuild path.
+4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. The tested path is `LibraryRebuild` (Settings → Rebuild Index from Folder, M0 task 19): wipe, then pull. **Gap:** with no sync folder chosen there is no on-disk copy of the library's structure to rebuild from — see BACKLOG for the local mirror.
 5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable. In force since M0 task 16b: `<id>.strokes` is the record and the only ink file that syncs; `<id>.drawing` is a local render cache keyed by the record's hash; `DrawingStore` is the only code that reads or writes either.
 6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit's stroke ID API exists but is iOS 27+** — `PKStrokePath.id` and `init(controlPoints:creationDate:id:)` are both marked iOS/iPadOS/macOS 27.0+, so they are genuinely unavailable on the iOS 26.5 SDK. Verified against Apple's docs Sept 12, 2026. Adopt them when the deployment target can move; until then the neutral format (M0 task 16) owns the IDs.
 
@@ -186,7 +186,7 @@ In order. Each gates the next.
 
 **Proof**
 18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.
-19. SwiftData index rebuild: delete the store, reconstruct from the folder, test it.
+19. ~~SwiftData index rebuild~~ done — `LibraryRebuild`, two tests (shape equality after rebuild; a rebuild never pushes and trashes unpushed ink).
 20. Performance baseline (ink latency on ProMotion, 500-page PDF memory, cold launch with 200 notebooks). Record as regression thresholds.
 21. Crash reporting.
 

@@ -190,6 +190,61 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    // MARK: The index is rebuildable from the folder (M0 task 19)
+
+    /// Invariant 4. Build a library with folders, notebooks, pages, ink, a
+    /// text block and a link; sync it; wipe the index; rebuild. Everything
+    /// the index said before, it says again.
+    func testRebuild_reconstructsTheIndexFromTheFolder() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let school = try ipad.createFolder(name: "School")
+        let physics = try ipad.createFolder(name: "Physics", parent: school)
+        let mechanics = try ipad.createNotebook(title: "Mechanics", pageCount: 3)
+        mechanics.folder = physics
+        let loose = try ipad.createNotebook(title: "Loose notes", pageCount: 2)
+        let mPages = try XCTUnwrap(try ipad.pages(ofNotebook: mechanics.id))
+        let lPages = try XCTUnwrap(try ipad.pages(ofNotebook: loose.id))
+        harness.clock.advance(); try ipad.addTextBlock(to: mPages[0], content: "F = ma")
+        harness.clock.advance(); _ = try ipad.addLink(from: mPages[1], to: lPages[0])
+        let store = DrawingStore.inDirectory(ipad.filesDirectory)
+        harness.clock.advance()
+        mPages[2].drawingFileRef = try store.save(InkFixtures.drawing(inkType: .pencil, strokes: 2), pageID: mPages[2].id)
+        mPages[2].markModified(at: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+
+        let before = try ipad.shape()
+        let inkBefore = try XCTUnwrap(store.load(pageID: mPages[2].id))
+        XCTAssertEqual(before.notebooks.count, 2, "precondition")
+
+        try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.environment)
+
+        XCTAssertEqual(try ipad.shape(), before, "the rebuilt index must say exactly what the original did")
+        let rebuiltStore = DrawingStore.inDirectory(ipad.filesDirectory)
+        assertStrokesEqual(try XCTUnwrap(rebuiltStore.load(pageID: mPages[2].id)), inkBefore, "ink after rebuild")
+        for page in lPages { XCTAssertNotNil(ipad.ink(forPageID: page.id), "raw ink for \(page.index) survived") }
+        XCTAssertNotNil(ipad.state.lastPulledExportDate, "the rebuild is a complete pull")
+    }
+
+    /// A rebuild is a repair, not a merge: it must not push anything, and
+    /// an edit that never reached the folder ends up in trash, not gone.
+    func testRebuild_neverPushes_andKeepsUnpushedInkInTrash() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+        harness.clock.advance(); try ipad.sync()
+        let indexBefore = try Data(contentsOf: harness.folderFile("index.json"))
+
+        let unpushed = Data("edited after the last push".utf8)
+        harness.clock.advance(); try ipad.edit(page: page, ink: unpushed)
+
+        try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.environment)
+
+        XCTAssertEqual(try Data(contentsOf: harness.folderFile("index.json")), indexBefore, "a rebuild reads; it never writes the folder")
+        XCTAssertNotEqual(ipad.ink(forPageID: page.id), unpushed, "the folder's version is what the index now describes")
+        XCTAssertTrue(ipad.trashedInk().contains(unpushed), "the unpushed edit is in trash, not lost")
+    }
+
     // MARK: Ink travels as the neutral record (M0 task 16b)
 
     /// A real drawing saved through DrawingStore on one device loads through

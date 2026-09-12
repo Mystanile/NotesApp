@@ -106,6 +106,32 @@ final class SyncEngine: ObservableObject {
         status = .idle
     }
 
+    /// Settings → "Rebuild Index from Folder". See `LibraryRebuild`.
+    func rebuildIndex() {
+        guard let container, SyncFolder.isConfigured, !isRunning else { return }
+        isRunning = true
+        status = .syncing
+        debouncer.cancel()
+        let environment = SyncEnvironment.live
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<Void, Error>
+            do {
+                try LibraryRebuild.rebuild(container: container, environment: environment)
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+            await MainActor.run {
+                self.isRunning = false
+                switch outcome {
+                case .success: self.status = .succeeded(Date())
+                case .failure(let error as SyncRunner.Waiting): self.status = .waiting(error.localizedDescription)
+                case .failure(let error): self.status = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
     // MARK: Watching the folder
 
     /// Changes another device's sync lands in the folder while the app is

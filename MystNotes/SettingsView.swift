@@ -17,6 +17,7 @@ struct SettingsView: View {
     @ObservedObject private var sync = SyncEngine.shared
     @State private var showingFolderPicker = false
     @State private var diagnosticsMessage: String?
+    @State private var confirmingRebuild = false
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -79,6 +80,17 @@ struct SettingsView: View {
                     Button("Sync Now") { SyncEngine.shared.syncNow() }
                         .disabled(sync.status == .syncing)
                     Button("Choose a Different Folder…") { showingFolderPicker = true }
+                    Button("Rebuild Index from Folder…") { confirmingRebuild = true }
+                        .disabled(sync.status == .syncing)
+                        .confirmationDialog(
+                            "Rebuild the library index from the sync folder?",
+                            isPresented: $confirmingRebuild, titleVisibility: .visible
+                        ) {
+                            Button("Rebuild", role: .destructive) { SyncEngine.shared.rebuildIndex() }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
+                        }
                     Button("Turn Off Folder Sync", role: .destructive) { SyncEngine.shared.clearFolder() }
                     #if DEBUG
                     // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md.

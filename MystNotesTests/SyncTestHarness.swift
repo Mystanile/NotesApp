@@ -123,6 +123,52 @@ final class SyncTestDevice {
         try context.save()
     }
 
+    func createFolder(name: String, parent: Folder? = nil) throws -> Folder {
+        let folder = Folder(name: name, parentFolder: parent)
+        context.insert(folder)
+        try context.save()
+        return folder
+    }
+
+    func addTextBlock(to page: Page, content: String) throws {
+        let block = TypedTextBlock(content: content, page: page)
+        context.insert(block)
+        page.textBlocks?.append(block)
+        page.markModified(at: clock.now)
+        try context.save()
+    }
+
+    func addLink(from source: Page, to destination: Page) throws -> Link {
+        let link = Link(sourcePageID: source.id, destinationPageID: destination.id)
+        context.insert(link)
+        source.markModified(at: clock.now)
+        try context.save()
+        return link
+    }
+
+    /// Everything the index says, as plain values, for comparing a library
+    /// before and after a rebuild.
+    struct Shape: Equatable {
+        var folders: [String]           // "name<parent name or ->"
+        var notebooks: [String]         // "title@folder:<page ids in index order>"
+        var textBlocks: [String]        // "pageID:content"
+        var links: [String]             // "source->destination"
+    }
+
+    func shape() throws -> Shape {
+        let folders = try context.fetch(FetchDescriptor<Folder>())
+            .map { "\($0.name)<\($0.parentFolder?.name ?? "-")" }.sorted()
+        let notebooks = try context.fetch(FetchDescriptor<Notebook>()).map { notebook in
+            let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }.map(\.id.uuidString)
+            return "\(notebook.title)@\(notebook.folder?.name ?? "-"):\(pages.joined(separator: ","))"
+        }.sorted()
+        let blocks = try context.fetch(FetchDescriptor<TypedTextBlock>())
+            .map { "\($0.page?.id.uuidString ?? "-"):\($0.content)" }.sorted()
+        let links = try context.fetch(FetchDescriptor<Link>())
+            .map { "\($0.sourcePageID)->\($0.destinationPageID)" }.sorted()
+        return Shape(folders: folders, notebooks: notebooks, textBlocks: blocks, links: links)
+    }
+
     /// Mirrors `LibraryView.deleteNotebook`.
     func deleteNotebook(_ notebook: Notebook) throws {
         SyncTombstones.merge([Tombstone(kind: .notebook, id: notebook.id, deletedAt: clock.now)], into: state)
