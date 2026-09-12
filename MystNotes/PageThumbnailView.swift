@@ -124,10 +124,7 @@ struct PageThumbnailView: View {
     }
 
     private func loadDrawing() -> PKDrawing? {
-        guard let ref = page.drawingFileRef else { return nil }
-        let url = FileStore.url(for: ref)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? PKDrawing(data: data)
+        DrawingStore.live.load(pageID: page.id)
     }
 
     private func loadBackgroundImage() -> UIImage? {

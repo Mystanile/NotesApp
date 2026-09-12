@@ -905,9 +905,7 @@ struct SyncRunner {
                 removeChildren(of: page, links: &links, docs: &docs, context: context)
                 page.notebook?.pages?.removeAll { $0.id == page.id }
                 context.delete(page)
-                DrawingStore.moveToTrash(
-                    environment.localFilesDirectory().appendingPathComponent(DrawingStore.fileName(for: page.id)),
-                    tag: "deleted")
+                DrawingStore.inDirectory(environment.localFilesDirectory()).trashDrawing(forPageID: page.id)
                 pageByID[stone.id] = nil
             }
         }
@@ -1083,9 +1081,9 @@ struct SyncRunner {
 
     /// A tombstoned notebook's ink goes to `trash/`, not away (invariant 3).
     private func trashFiles(for notebook: Notebook) {
-        let base = environment.localFilesDirectory()
+        let store = DrawingStore.inDirectory(environment.localFilesDirectory())
         for page in notebook.pages ?? [] {
-            DrawingStore.moveToTrash(base.appendingPathComponent(DrawingStore.fileName(for: page.id)), tag: "deleted")
+            store.trashDrawing(forPageID: page.id)
         }
     }
 }

@@ -108,6 +108,88 @@ final class DurabilityTests: XCTestCase {
                       "the unreadable drawing was overwritten - the only copy of that ink is destroyed")
     }
 
+    // MARK: The neutral record and its render cache (M0 task 16b)
+
+    private func exists(_ name: String) -> Bool {
+        FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path)
+    }
+
+    func testSave_writesRecordAndCache_andLoadPrefersTheMatchingCache() throws {
+        let pageID = UUID()
+        let drawing = makeDrawing(strokes: 2)
+        let name = try store.save(drawing, pageID: pageID)
+
+        XCTAssertEqual(name, "\(pageID.uuidString).strokes", "drawingFileRef points at the record")
+        XCTAssertTrue(exists("\(pageID.uuidString).strokes"))
+        XCTAssertTrue(exists("\(pageID.uuidString).drawing"))
+        XCTAssertTrue(exists("\(pageID.uuidString).drawing.key"))
+        XCTAssertNoThrow(try StrokeCodec.decode(try Data(contentsOf: store.fileURL(for: pageID))), "the record is a MYSK file")
+
+        // Swap the cache for a different valid drawing but keep the key: the
+        // cache is trusted, so this is what loads. (That's the contract -
+        // PencilKit's own bytes render exactly; the record is the truth
+        // for everyone else.)
+        let other = makeDrawing(strokes: 5, xOffset: 300, seed: 7)
+        try other.dataRepresentation().write(to: directory.appendingPathComponent("\(pageID.uuidString).drawing"))
+        XCTAssertEqual(store.load(pageID: pageID)?.strokes.count, 5)
+    }
+
+    func testStaleCache_isIgnored_andRebuiltFromTheRecord() throws {
+        let pageID = UUID()
+        try store.save(makeDrawing(strokes: 2), pageID: pageID)
+        // The record moves on, the cache doesn't (a kill between the two writes).
+        var map = StrokeIDMap()
+        try StrokeCodec.encode(makeDrawing(strokes: 4, xOffset: 50), ids: &map).write(to: store.fileURL(for: pageID))
+
+        let loaded = try XCTUnwrap(store.load(pageID: pageID))
+        XCTAssertEqual(loaded.strokes.count, 4, "the record wins over a cache made from an older record")
+        // And the cache is now current again.
+        let key = try String(contentsOf: directory.appendingPathComponent("\(pageID.uuidString).drawing.key"), encoding: .utf8)
+        XCTAssertEqual(key, PayloadHash.sha256(of: try Data(contentsOf: store.fileURL(for: pageID))))
+    }
+
+    func testLegacyDrawingOnly_loadsAndWritesTheRecord() throws {
+        let pageID = UUID()
+        let legacy = makeDrawing(strokes: 3)
+        try legacy.dataRepresentation().write(to: directory.appendingPathComponent(DrawingStore.legacyFileName(for: pageID)))
+
+        let loaded = try XCTUnwrap(store.load(pageID: pageID))
+        XCTAssertEqual(loaded.strokes.count, 3)
+        XCTAssertTrue(exists("\(pageID.uuidString).strokes"), "migrated on first load")
+        XCTAssertTrue(exists("\(pageID.uuidString).drawing.key"))
+        XCTAssertEqual(store.load(pageID: pageID)?.strokes.count, 3, "and loads again from the record")
+    }
+
+    func testUnreadableRecord_withGoodCache_recoversTheInkAndRegeneratesTheRecord() throws {
+        let pageID = UUID()
+        try store.save(makeDrawing(strokes: 3), pageID: pageID)
+        let damaged = Data("MYSK but not really".utf8)
+        try damaged.write(to: store.fileURL(for: pageID))
+
+        let loaded = try XCTUnwrap(store.load(pageID: pageID), "the cache is the ink when the record is damaged")
+        XCTAssertEqual(loaded.strokes.count, 3)
+        XCTAssertTrue(fileExists(withContents: damaged, under: directory), "the damaged record is in trash, not gone")
+        XCTAssertNoThrow(try StrokeCodec.decode(try Data(contentsOf: store.fileURL(for: pageID))), "a fresh record was written")
+    }
+
+    func testStrokeIDs_surviveSaveLoadSave_throughTheStore() throws {
+        let pageID = UUID()
+        var drawing = makeDrawing(strokes: 2)
+        try store.save(drawing, pageID: pageID)
+        let before = drawing.strokes.map { store.ids.map(for: pageID).existingID(for: $0)! }
+
+        // A fresh store (new process) loads the page and the user adds a stroke.
+        let fresh = DrawingStore.inDirectory(directory)
+        drawing = try XCTUnwrap(fresh.load(pageID: pageID))
+        drawing.strokes.append(makeDrawing(strokes: 1, xOffset: 400, seed: 99).strokes[0])
+        try fresh.save(drawing, pageID: pageID)
+
+        let after = try StrokeCodec.decode(Data(contentsOf: fresh.fileURL(for: pageID)))
+        XCTAssertEqual(after.drawing.strokes.prefix(2).map { after.ids.existingID(for: $0)! }, before,
+                       "ids assigned in one process are the same ones the file holds after another process saves")
+        XCTAssertEqual(after.ids.count, 3)
+    }
+
     // MARK: Migration
 
     /// A library written by an earlier build opens under the current schema
@@ -146,9 +228,12 @@ final class DurabilityTests: XCTestCase {
                 bundle.url(forResource: page.id.uuidString, withExtension: "drawing", subdirectory: "Fixtures")
                     ?? bundle.url(forResource: page.id.uuidString, withExtension: "drawing"),
                 "fixture ink for page \(page.index) missing from the test bundle")
-            try FileManager.default.copyItem(at: inkURL, to: store.fileURL(for: page.id))
+            // Fixture ink predates the neutral format: a bare .drawing.
+            try FileManager.default.copyItem(at: inkURL, to: directory.appendingPathComponent(DrawingStore.legacyFileName(for: page.id)))
             let drawing = try XCTUnwrap(store.load(pageID: page.id), "fixture ink for page \(page.index) did not load")
             XCTAssertEqual(drawing.strokes.count, page.index + 1)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: page.id).path),
+                          "loading a legacy drawing writes its neutral record")
         }
     }
 

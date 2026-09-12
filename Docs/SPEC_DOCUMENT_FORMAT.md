@@ -203,9 +203,9 @@ The marker and crayon differences are not information the format drops. `PKStrok
 
 Two further facts the harness surfaced: `PKDrawing`'s `==` compares an internal drawing identity, not content (`PKDrawing() == PKDrawing()` is false), so content equality is checked stroke by stroke; and `PKDrawing(data:)` parses some short byte strings as an empty drawing rather than throwing, so `DrawingStore` checks the `wrd\xf0` archive header before trusting an empty result.
 
-### Storage (16b, pending)
+### Storage (16b, landed)
 
-Because the drift is one-time and invisible, the plan is: `.strokes` is the source of truth for every ink type, and the `.drawing` file stays as a render cache that is used when its recorded hash matches the `.strokes` file — so the user's own device never even sees the one-quantum drift, while every other reader gets the neutral file. No per-type dual-write flags.
+`<id>.strokes` is the source of truth for every ink type and the only ink file that syncs. `<id>.drawing` stays as a local render cache, used only when `<id>.drawing.key` holds the SHA-256 of the current `.strokes` bytes — so the user's own device never sees the one-quantum drift, while every other reader gets the neutral file. No per-type dual-write flags. A page from before the flip has only a `.drawing`; it loads and its record is written on first load. A damaged record with a readable cache is quarantined and regenerated from the cache. All of it lives in `DrawingStore`.
 
 ---
 

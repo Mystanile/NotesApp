@@ -235,11 +235,8 @@ enum TutorialNotebookFactory {
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private static func writeDrawing(_ strokes: [PKStroke], to page: Page) {
-        let drawing = PKDrawing(strokes: strokes)
-        let url = FileStore.url(for: "\(page.id.uuidString).drawing")
         do {
-            try drawing.dataRepresentation().write(to: url)
-            page.drawingFileRef = url.lastPathComponent
+            page.drawingFileRef = try DrawingStore.live.save(PKDrawing(strokes: strokes), pageID: page.id)
         } catch {
             print("Failed to write tutorial drawing: \(error)")
         }

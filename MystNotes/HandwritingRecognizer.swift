@@ -18,13 +18,12 @@ import Vision
 /// modification date against `Page.ocrUpdatedAt`. Unchanged pages keep their
 /// cached text and cost nothing on later searches.
 enum HandwritingRecognizer {
-    /// Recognizes the text in a page's drawing file. Returns nil when there is
-    /// no drawing, it's blank, or recognition finds nothing. Runs the Vision
+    /// Recognizes the text in a page's ink. Returns nil when there is no
+    /// drawing, it's blank, or recognition finds nothing. Runs the Vision
     /// request off the main actor so the UI never hangs on a search.
-    static func ocrText(forDrawingFile url: URL) async -> String? {
+    static func ocrText(forPageID pageID: UUID) async -> String? {
 #if canImport(UIKit)
-        guard let data = try? Data(contentsOf: url),
-              let drawing = try? PKDrawing(data: data) else {
+        guard let drawing = DrawingStore.live.load(pageID: pageID) else {
             return nil
         }
 
@@ -91,8 +90,8 @@ enum HandwritingRecognizer {
     /// last OCR, then persists the cache. Safe to call from a background task.
     @MainActor
     static func refreshOCR(for page: Page, modelContext: ModelContext) async {
-        let url = FileStore.url(for: "\(page.id.uuidString).drawing")
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let store = DrawingStore.live
+        guard let modDate = store.inkModifiedDate(forPageID: page.id) else { return }
 
         // Skip if we already indexed this drawing and it hasn't changed
         // since. The nil check is what lets pages recover: everything
@@ -102,7 +101,6 @@ enum HandwritingRecognizer {
         // permanently unsearchable.
         if let ocrDate = page.ocrUpdatedAt,
            page.recognizedTextCache != nil,
-           let modDate = try? url.resourceValues(forKeys: [URLResourceKey.contentModificationDateKey]).contentModificationDate,
            modDate <= ocrDate {
             return
         }
@@ -113,7 +111,7 @@ enum HandwritingRecognizer {
         // expensive Vision pass on it every single time search is opened.
         // Pages left nil by the dark-mode render bug still get their one
         // retry, then settle. SearchIndex already ignores empty text.
-        let text = await ocrText(forDrawingFile: url)
+        let text = await ocrText(forPageID: page.id)
         page.recognizedTextCache = text ?? ""
         page.ocrUpdatedAt = Date()
         do {

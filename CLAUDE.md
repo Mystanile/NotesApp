@@ -38,7 +38,7 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 2. **Merge at page granularity or finer. Never rebuild a page tree wholesale.** This is invariant #1's most likely failure mode. Was violated until M0 task 5; `testPull_updatesPagesInPlace_neverRebuildsTheTree` guards it now.
 3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink. As of M0 task 11 there is no `removeItem` on a payload anywhere; `DrawingStore.moveToTrash` is the one mechanism, and trash retention is an open decision in `BACKLOG.md`.
 4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. There must be a tested rebuild path.
-5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable.
+5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable. In force since M0 task 16b: `<id>.strokes` is the record and the only ink file that syncs; `<id>.drawing` is a local render cache keyed by the record's hash; `DrawingStore` is the only code that reads or writes either.
 6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit's stroke ID API exists but is iOS 27+** — `PKStrokePath.id` and `init(controlPoints:creationDate:id:)` are both marked iOS/iPadOS/macOS 27.0+, so they are genuinely unavailable on the iOS 26.5 SDK. Verified against Apple's docs Sept 12, 2026. Adopt them when the deployment target can move; until then the neutral format (M0 task 16) owns the IDs.
 
 Two notes on the interim mapping. First, **you mostly don't need one**: when the neutral format is the source of truth, you build the `PKDrawing` yourself in a known order, so index position *is* the mapping. The problem only arises after PencilKit itself mutates the drawing, and then it's a diff. Second, for that diff key on **`path.creationDate` + `randomSeed` only**. Drop point count and order: the vector eraser modifies a stroke's `mask` rather than its path, so creationDate and randomSeed survive erasing while point count and array position do not.
@@ -182,7 +182,7 @@ In order. Each gates the next.
 **Ink format**
 16. ~~Neutral stroke codec~~ done — `StrokeCodec` + `StrokeIDMap`, spec §5 rewritten against the SDK.
 17. ~~Pixel-diff fidelity harness per ink type~~ done — 5 of 7 inks exact, marker/crayon within a one-time quantization drift; numbers in spec §5.
-16b. Storage flip: `.strokes` becomes the source of truth, `.drawing` a hash-checked render cache. Touches every reader; fixture migration test required.
+16b. ~~Storage flip~~ done — `.strokes` is the record, `.drawing` a hash-keyed cache, legacy `.drawing`-only pages migrate on first load.
 
 **Proof**
 18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.

@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import PencilKit
 @testable import Mystnotes
 
 /// Two-library sync tests: independent devices sharing one sync folder,
@@ -187,6 +188,37 @@ final class SyncTests: XCTestCase {
             XCTAssertEqual(try device.notebook(id: notebookID)?.title, "Physics 101", "\(device.name) lost the rename")
             XCTAssertEqual(device.ink(forPageID: macPages[0].id), macInk, "\(device.name) lost the page edit")
         }
+    }
+
+    // MARK: Ink travels as the neutral record (M0 task 16b)
+
+    /// A real drawing saved through DrawingStore on one device loads through
+    /// DrawingStore on the other with the same strokes and the same ids.
+    func testNeutralInk_roundTripsBetweenDevices_withStableIDs() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Ink", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+
+        let ipadStore = DrawingStore.inDirectory(ipad.filesDirectory)
+        let drawing = InkFixtures.drawing(inkType: .pen, strokes: 3)
+        harness.clock.advance()
+        page.drawingFileRef = try ipadStore.save(drawing, pageID: page.id)
+        page.markModified(at: harness.clock.now)
+        try ipad.context.save()
+        XCTAssertEqual(page.drawingFileRef, "\(page.id.uuidString).strokes")
+        let ids = drawing.strokes.map { ipadStore.ids.map(for: page.id).existingID(for: $0)! }
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macStore = DrawingStore.inDirectory(mac.filesDirectory)
+        let loaded = try XCTUnwrap(macStore.load(pageID: page.id), "the record did not arrive")
+        assertStrokesEqual(loaded, drawing, "across devices")
+        XCTAssertEqual(loaded.strokes.map { macStore.ids.map(for: page.id).existingID(for: $0)! }, ids,
+                       "stroke ids are the same on both devices")
+        XCTAssertTrue(harness.folderPayloadNames().allSatisfy { $0.hasSuffix(".strokes") },
+                      "only the neutral record is synced, never the PKDrawing cache: \(harness.folderPayloadNames())")
     }
 
     // MARK: Evicted files (M0 task 14)
