@@ -4,19 +4,20 @@ import SwiftData
 
 /// Folder-based library sync - the free-account alternative to CloudKit.
 ///
-/// The whole library is serialized to `<sync folder>/Mystnotes/library.json`
-/// and every payload file (drawings, imported PDFs/images) is copied into
-/// `<sync folder>/Mystnotes/files/`. iCloud Drive (or whatever service backs
-/// the chosen folder) moves those between devices; this engine only reads and
-/// writes local files.
+/// The library is written to `<sync folder>/Mystnotes/` as `index.json`
+/// plus one `notebooks/<uuid>.json` per notebook (see `SyncModels`), and
+/// every payload file (drawings, imported PDFs/images) is copied into
+/// `files/`. iCloud Drive (or whatever service backs the chosen folder)
+/// moves those between devices; this engine only reads and writes local
+/// files.
 ///
 /// Merge is per page, last-writer-wins on `Page.modifiedAt`, so two devices
 /// that edit different pages of the same notebook while offline both keep
 /// their edits. When both edit the *same* page the newer one shows and the
 /// other device's ink goes to its `trash/`, never discarded. Notebook
-/// scalars (title, cover, folder) are last-writer-wins on
-/// `Notebook.modifiedAt`; folders are a flat upsert; deletions travel as
-/// `Tombstone`s.
+/// settings (title, cover, folder) are last-writer-wins on
+/// `Notebook.settingsModifiedAt`; folders are a flat upsert; deletions
+/// travel as `Tombstone`s.
 ///
 /// Triggers (wired in `ContentView`): pull when the app becomes active, push
 /// when it goes to the background, plus a manual "Sync Now" in Settings.
@@ -128,9 +129,10 @@ struct SyncRunner {
         try environment.withFolder { folder in
             let workingDir = try SyncFolder.workingDirectory(in: folder)
             // A push always pulls first: it folds in whatever another device
-            // wrote so the snapshot we're about to overwrite isn't stale.
-            if pull || push { try performPull(context: context, workingDir: workingDir) }
-            if push { try performPush(context: context, workingDir: workingDir) }
+            // wrote so what we're about to write isn't stale.
+            let remote = try readRemote(workingDir: workingDir, context: context)
+            if pull || push { try performPull(remote, context: context, workingDir: workingDir) }
+            if push { try performPush(against: remote, context: context, workingDir: workingDir) }
         }
     }
 
@@ -141,78 +143,213 @@ struct SyncRunner {
     /// same decisions and copies the same bytes again. Killed after the
     /// model save but before the "pulled" marker, the next pull finds every
     /// page tied and changes nothing.
-    private func performPull(context: ModelContext, workingDir: URL) throws {
-        guard let remote = try readSnapshot(workingDir: workingDir) else { return }
+    private func performPull(_ remote: RemoteLibrary?, context: ModelContext, workingDir: URL) throws {
+        guard let remote else { return }
 
-        if let lastPulled = environment.state.lastPulledExportDate, remote.exportedAt <= lastPulled {
+        if let lastPulled = environment.state.lastPulledExportDate, remote.snapshot.exportedAt <= lastPulled {
             return  // already applied this snapshot
         }
 
-        let plan = try planMerge(of: remote, context: context)
+        let plan = try planMerge(of: remote.snapshot, context: context)
 
-        pullPayloads(for: remote, plan: plan,
+        pullPayloads(for: remote.snapshot, plan: plan,
                      from: workingDir.appendingPathComponent("files", isDirectory: true),
                      to: environment.localFilesDirectory())
 
-        try apply(remote, plan: plan, context: context)
+        try apply(remote.snapshot, plan: plan, context: context)
 
-        SyncTombstones.merge(remote.tombstones, into: environment.state)
-        environment.state.lastPulledExportDate = remote.exportedAt
+        SyncTombstones.merge(remote.snapshot.tombstones, into: environment.state)
+        // A notebook file the index promised but that hasn't arrived yet
+        // (iCloud delivers files in no particular order) means this
+        // snapshot isn't fully applied: leave the marker so the next pull
+        // tries again. Nothing that did arrive is undone - the merge is
+        // safe to repeat.
+        if remote.isComplete {
+            environment.state.lastPulledExportDate = remote.snapshot.exportedAt
+        }
 
         // If the merge left this library identical to the snapshot, there's
         // nothing to push. If it didn't - a local page won, a local
         // tombstone isn't in the folder yet - the next push must go out, so
         // the marker is left alone. (It used to be set unconditionally,
         // which is how a device's own edits went unpushed.)
-        if try buildSnapshot(context: context).signature == remote.signature {
-            environment.state.lastPushSignature = remote.signature
+        if remote.isComplete, try buildSnapshot(context: context).signature == remote.snapshot.signature {
+            environment.state.lastPushSignature = remote.snapshot.signature
         }
     }
 
     // MARK: Push
 
-    private func performPush(context: ModelContext, workingDir: URL) throws {
+    /// Notebook files first, each atomically, then the index last, so a
+    /// reader never sees an index pointing at content older than what's
+    /// on disk - only newer, which the completeness rule in `readRemote`
+    /// handles.
+    ///
+    /// A notebook whose file is still on its way (see `RemoteLibrary.pending`)
+    /// is not written - this library only has its settings, and publishing
+    /// it with no pages would overwrite the real content when it lands.
+    /// The index keeps the folder's own entry for it.
+    private func performPush(against remote: RemoteLibrary?, context: ModelContext, workingDir: URL) throws {
         let snapshot = try buildSnapshot(context: context)
-        guard snapshot.signature != environment.state.lastPushSignature else { return }
+        let remoteIndex = remote?.index
+        // A folder without index.json yet (empty, or format 1) always gets
+        // one, even when nothing else changed - that's the migration.
+        guard snapshot.signature != environment.state.lastPushSignature || remoteIndex == nil else { return }
+        let pending = remote?.pending ?? []
 
         pushPayloads(for: snapshot,
                      from: environment.localFilesDirectory(),
                      to: workingDir.appendingPathComponent("files", isDirectory: true))
 
-        try writeSnapshot(snapshot, workingDir: workingDir)
+        let notebooksDir = workingDir.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooksDir, withIntermediateDirectories: true)
+        let remoteEntries = Dictionary((remoteIndex?.notebooks ?? []).map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        for notebook in snapshot.notebooks where !pending.contains(notebook.id) {
+            let url = Self.notebookFileURL(for: notebook.id, in: workingDir)
+            if let entry = remoteEntries[notebook.id],
+               entry.contentSignature == notebook.contentSignature,
+               entry.settingsModifiedAt == notebook.settingsModifiedAt,
+               FileManager.default.fileExists(atPath: url.path) {
+                continue  // the folder already has this exact notebook
+            }
+            try writeJSON(notebook, to: url)
+        }
+
+        var index = snapshot.makeIndex()
+        index.notebooks = index.notebooks.map { entry in
+            pending.contains(entry.id) ? (remoteEntries[entry.id] ?? entry) : entry
+        }
+        try writeJSON(index, to: Self.indexURL(in: workingDir))
 
         environment.state.lastPushSignature = snapshot.signature
         // We authored this snapshot - don't turn around and re-apply it.
-        environment.state.lastPulledExportDate = snapshot.exportedAt
+        // Unless something is still pending: then the next pull must look
+        // again, and re-reading our own index is cheap and harmless.
+        environment.state.lastPulledExportDate = pending.isEmpty ? snapshot.exportedAt : nil
     }
 
-    // MARK: Snapshot <-> file
+    // MARK: Reading the folder
 
-    private func readSnapshot(workingDir: URL) throws -> LibrarySnapshot? {
-        let url = workingDir.appendingPathComponent("library.json")
-        SyncFolder.ensureDownloaded(url)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    /// What a pull found in the folder.
+    struct RemoteLibrary {
+        /// Every folder, tombstone and notebook index entry, plus the
+        /// `NotebookDTO`s that needed reading (new here, or changed).
+        var snapshot: LibrarySnapshot
+        /// Notebooks whose file the index promised but which was missing,
+        /// unreadable, or didn't match its entry. Empty means complete.
+        var pending: Set<UUID>
+        /// nil for a format-1 `library.json`.
+        var index: LibraryIndex?
 
+        var isComplete: Bool { pending.isEmpty }
+    }
+
+    enum SyncFormatError: LocalizedError {
+        case newerThanThisBuild(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .newerThanThisBuild:
+                return "This sync folder was written by a newer version of MystNotes. Update the app to keep syncing."
+            }
+        }
+    }
+
+    private static func indexURL(in workingDir: URL) -> URL {
+        workingDir.appendingPathComponent("index.json")
+    }
+
+    private static func legacyLibraryURL(in workingDir: URL) -> URL {
+        workingDir.appendingPathComponent("library.json")
+    }
+
+    static func notebookFileURL(for id: UUID, in workingDir: URL) -> URL {
+        workingDir.appendingPathComponent("notebooks", isDirectory: true)
+            .appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private func readRemote(workingDir: URL, context: ModelContext) throws -> RemoteLibrary? {
+        let indexURL = Self.indexURL(in: workingDir)
+        SyncFolder.ensureDownloaded(indexURL)
+        if FileManager.default.fileExists(atPath: indexURL.path) {
+            return try readIndexedLibrary(indexURL: indexURL, workingDir: workingDir, context: context)
+        }
+
+        // Format 1: the whole library in one file, from before the split.
+        let legacyURL = Self.legacyLibraryURL(in: workingDir)
+        SyncFolder.ensureDownloaded(legacyURL)
+        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return nil }
+        let legacy: LibrarySnapshot = try readJSON(from: legacyURL)
+        guard legacy.formatVersion <= librarySnapshotFormatVersion else {
+            throw SyncFormatError.newerThanThisBuild(legacy.formatVersion)
+        }
+        return RemoteLibrary(snapshot: legacy, pending: [], index: nil)
+    }
+
+    private func readIndexedLibrary(indexURL: URL, workingDir: URL, context: ModelContext) throws -> RemoteLibrary {
+        let index: LibraryIndex = try readJSON(from: indexURL)
+        guard index.formatVersion <= librarySnapshotFormatVersion else {
+            throw SyncFormatError.newerThanThisBuild(index.formatVersion)
+        }
+
+        // Only open the notebook files whose page set differs from ours.
+        let localSignatures = Dictionary(
+            (try context.fetch(FetchDescriptor<Notebook>())).map { notebook in
+                (notebook.id, NotebookDTO.contentSignature(of: (notebook.pages ?? []).map { ($0.id, $0.modifiedAt) }))
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var notebooks: [NotebookDTO] = []
+        var pending: Set<UUID> = []
+        for entry in index.notebooks where localSignatures[entry.id] != entry.contentSignature {
+            let url = Self.notebookFileURL(for: entry.id, in: workingDir)
+            SyncFolder.ensureDownloaded(url)
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let notebook: NotebookDTO = try? readJSON(from: url) else {
+                pending.insert(entry.id)   // not here yet, or not all here yet
+                continue
+            }
+            // A file that doesn't match its entry is from another push -
+            // older or newer. Either is safe to merge by page date; it just
+            // means this snapshot isn't the one on disk, so come back.
+            if notebook.contentSignature != entry.contentSignature { pending.insert(entry.id) }
+            notebooks.append(notebook)
+        }
+
+        let snapshot = LibrarySnapshot(
+            formatVersion: index.formatVersion,
+            exportedAt: index.exportedAt,
+            deviceName: index.deviceName,
+            folders: index.folders,
+            notebooks: notebooks,
+            notebookIndex: index.notebooks,
+            tombstones: index.tombstones
+        )
+        return RemoteLibrary(snapshot: snapshot, pending: pending, index: index)
+    }
+
+    // MARK: Coordinated JSON I/O
+
+    private func readJSON<T: Decodable>(from url: URL) throws -> T {
         var coordinationError: NSError?
-        var decoded: LibrarySnapshot?
+        var decoded: T?
         var thrown: Error?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readURL in
             do {
-                let data = try Data(contentsOf: readURL)
-                decoded = try jsonDecoder.decode(LibrarySnapshot.self, from: data)
+                decoded = try jsonDecoder.decode(T.self, from: Data(contentsOf: readURL))
             } catch {
                 thrown = error
             }
         }
         if let coordinationError { throw coordinationError }
         if let thrown { throw thrown }
-        return decoded
+        return decoded!
     }
 
-    private func writeSnapshot(_ snapshot: LibrarySnapshot, workingDir: URL) throws {
-        let url = workingDir.appendingPathComponent("library.json")
-        let data = try jsonEncoder.encode(snapshot)
-
+    private func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {
+        let data = try jsonEncoder.encode(value)
         var coordinationError: NSError?
         var thrown: Error?
         NSFileCoordinator().coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError) { writeURL in
@@ -439,6 +576,7 @@ struct SyncRunner {
             return NotebookDTO(
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
                 createdAt: notebook.createdAt, modifiedAt: notebook.modifiedAt,
+                settingsModifiedAt: notebook.settingsModifiedAt,
                 folderID: notebook.folder?.id, pages: pageDTOs, links: links
             )
         }
@@ -448,6 +586,7 @@ struct SyncRunner {
             deviceName: environment.deviceName,
             folders: folderDTOs,
             notebooks: notebookDTOs,
+            notebookIndex: nil,
             tombstones: SyncTombstones.load(from: environment.state)
         )
     }
@@ -509,28 +648,33 @@ struct SyncRunner {
             folderByID[dto.id]?.parentFolder = dto.parentID.flatMap { folderByID[$0] }
         }
 
-        // 3. Notebooks: scalars last-writer-wins, then page by page.
-        for dto in remote.notebooks where plan.tombstones[dto.id] == nil {
-            let notebook: Notebook
-            if let existing = notebookByID[dto.id] {
-                notebook = existing
-                if dto.modifiedAt > existing.modifiedAt {
-                    notebook.title = dto.title
-                    notebook.coverStyle = dto.coverStyle
-                    notebook.createdAt = dto.createdAt
-                    notebook.modifiedAt = dto.modifiedAt
-                    notebook.folder = dto.folderID.flatMap { folderByID[$0] }
+        // 3. Notebook settings, from the index: last-writer-wins on their
+        //    own clock, so a rename can't lose to a later page edit.
+        for entry in remote.index where plan.tombstones[entry.id] == nil {
+            if let existing = notebookByID[entry.id] {
+                if Self.date(entry.settingsModifiedAt) > Self.date(existing.settingsModifiedAt) {
+                    existing.title = entry.title
+                    existing.coverStyle = entry.coverStyle
+                    existing.folder = entry.folderID.flatMap { folderByID[$0] }
+                    existing.settingsModifiedAt = entry.settingsModifiedAt
                 }
+                lift(existing, to: entry.modifiedAt)
             } else {
-                notebook = Notebook(title: dto.title)
-                notebook.id = dto.id
-                notebook.coverStyle = dto.coverStyle
-                notebook.createdAt = dto.createdAt
-                notebook.modifiedAt = dto.modifiedAt
-                notebook.folder = dto.folderID.flatMap { folderByID[$0] }
+                let notebook = Notebook(title: entry.title)
+                notebook.id = entry.id
+                notebook.coverStyle = entry.coverStyle
+                notebook.createdAt = entry.createdAt
+                notebook.modifiedAt = entry.modifiedAt
+                notebook.settingsModifiedAt = entry.settingsModifiedAt
+                notebook.folder = entry.folderID.flatMap { folderByID[$0] }
                 context.insert(notebook)
-                notebookByID[dto.id] = notebook
+                notebookByID[entry.id] = notebook
             }
+        }
+
+        // 4. Pages, from the notebook files that needed reading.
+        for dto in remote.notebooks where plan.tombstones[dto.id] == nil {
+            guard let notebook = notebookByID[dto.id] else { continue }
 
             for pageDTO in dto.pages.sorted(by: { $0.index < $1.index }) {
                 switch plan.pages[pageDTO.id] {

@@ -18,7 +18,8 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 ## Found while building the sync harness (Sept 12, 2026)
 
-- [M0] Notebook scalars (title, cover, folder) are still last-writer-wins on `Notebook.modifiedAt`, which page edits lift. Rename on A, then any page edit on B, and A's rename loses to B's stale title. Give notebook scalars their own `modifiedAt` when `NotebookDTO` changes in task 6.
+- [M0] A notebook whose `notebooks/<id>.json` never arrives (deleted by hand, lost by the provider) stays pending forever on the puller: its settings show, its pages don't, and the puller never publishes its own copy of it. Needs a designed state ("waiting for 1 notebook") and eventually a way out. Fits task 8/13.
+- [M0] A tombstoned notebook's `notebooks/<id>.json` is left in the folder. Move it to folder-side `trash/` in task 11 with the payloads.
 - [M0] A build from before task 5 can't decode a snapshot containing a `kind: "page"` tombstone (enum decode fails, whole `library.json` rejected). Only matters while a pre-task-5 build is still installed anywhere; the format split in task 6 should carry a real version gate.
 - [M0] `pushPayloads` replaces the folder's copy of a drawing file in place when the local page won. Folder-side history of superseded versions is task 7/11 territory; the loser device keeps its own copy in its local `trash/`.
 - [M0] `LibrarySnapshot.referencedFileNames` derives from `drawingFileRef`, so a page whose file was written but whose `context.save()` never ran (kill between the two) has ink on disk that never syncs. Derive the drawing file name from `page.id` instead; the ref is redundant with the id. Fold into task 6/10.

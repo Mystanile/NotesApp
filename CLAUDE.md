@@ -23,7 +23,7 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 **Three things block shipping. They are the current work.**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
-2. **`library.json` holds the entire library in one file**, overwritten on every push, with no backup and no handling of iCloud conflict versions.
+2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Still open: no index history (task 7), iCloud conflict versions ignored (task 8).
 3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness and durability suite, both green. Run on the iPad simulator.
 
 ---
@@ -58,7 +58,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Data:** `MystNotesModels` (210), `FileStore` (131), `DrawingStore`, `AppSettings` (227)
 
-**Sync:** `SyncEngine` (482), `SyncEnvironment`, `SyncFolder` (160), `SyncModels` (172)
+**Sync:** `SyncEngine`, `SyncEnvironment`, `SyncFolder` (160), `SyncModels` — folder layout is documented at the top of `SyncModels.swift`
 
 **Search:** `HandwritingRecognizer` (133), `SearchIndex`, `SearchResultsView` (132)
 
@@ -71,6 +71,8 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 `Folder` → `Notebook` → `Page` → (`TypedTextBlock`, `Sticker`, `ImportedDocument`), plus `Link` (`sourcePageID`, `destinationPageID`, anchor rect). All relationships cascade-delete; all properties optional or defaulted.
 
 `Page` carries `drawingFileRef`, `backgroundRef`, `aspectRatio`, `recognizedTextCache`, `ocrUpdatedAt`, and `modifiedAt: Date?` (M0 task 4, done). Set `modifiedAt` only through `Page.markModified(at:)` — it also lifts the notebook's date, never lowers it. `nil` means the page predates the field and loses to any dated page. OCR fields never call it.
+
+`Notebook.settingsModifiedAt: Date?` (M0 task 6) is the merge clock for title/cover/folder; set it only through `Notebook.markSettingsModified(at:)`. `Notebook.modifiedAt` is the library sort key, lifted by page edits, never a merge key.
 
 `Link` is the seed of the graph in M2. Generalize it; don't start a parallel model.
 

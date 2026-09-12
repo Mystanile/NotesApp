@@ -47,6 +47,148 @@ final class SyncTests: XCTestCase {
         XCTAssertNotEqual(try ipad.context.fetchCount(FetchDescriptor<Page>()), 0)
     }
 
+    // MARK: Folder layout (M0 task 6)
+
+    func testPush_writesIndexAndOneFilePerNotebook_neverLibraryJSON() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let a = try ipad.createNotebook(title: "A", pageCount: 2)
+        let b = try ipad.createNotebook(title: "B", pageCount: 1)
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertTrue(harness.folderFileExists("index.json"))
+        XCTAssertTrue(harness.folderFileExists("notebooks/\(a.id.uuidString).json"))
+        XCTAssertTrue(harness.folderFileExists("notebooks/\(b.id.uuidString).json"))
+        XCTAssertFalse(harness.folderFileExists("library.json"), "format 1 must never be written again")
+
+        let index = try harness.readIndex()
+        XCTAssertEqual(index.formatVersion, 2)
+        XCTAssertEqual(Set(index.notebooks.map(\.id)), [a.id, b.id])
+    }
+
+    func testPush_rewritesOnlyTheNotebookThatChanged() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let a = try ipad.createNotebook(title: "A", pageCount: 2)
+        let b = try ipad.createNotebook(title: "B", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+        let aBefore = try Data(contentsOf: harness.folderFile("notebooks/\(a.id.uuidString).json"))
+        let bBefore = try Data(contentsOf: harness.folderFile("notebooks/\(b.id.uuidString).json"))
+
+        let aPages = try XCTUnwrap(try ipad.pages(ofNotebook: a.id))
+        harness.clock.advance(); try ipad.edit(page: aPages[0], ink: Data("edit".utf8))
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertNotEqual(try Data(contentsOf: harness.folderFile("notebooks/\(a.id.uuidString).json")), aBefore, "A changed and must be rewritten")
+        XCTAssertEqual(try Data(contentsOf: harness.folderFile("notebooks/\(b.id.uuidString).json")), bBefore, "B did not change and must not be touched")
+    }
+
+    /// iCloud delivers files in no particular order. If the index lands
+    /// before a notebook file it points at, the pull applies what is there,
+    /// leaves the "pulled" marker alone, and finishes on a later pull.
+    func testPull_indexBeforeNotebookFile_appliesTheRestAndCompletesLater() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let a = try ipad.createNotebook(title: "A", pageCount: 2)
+        let b = try ipad.createNotebook(title: "B", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+
+        // B's file hasn't "arrived" yet.
+        let bFile = harness.folderFile("notebooks/\(b.id.uuidString).json")
+        let parked = bFile.appendingPathExtension("notyet")
+        try FileManager.default.moveItem(at: bFile, to: parked)
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotNil(try mac.notebook(id: a.id), "A arrived and must be applied")
+        XCTAssertEqual(try mac.pages(ofNotebook: a.id)?.count, 2)
+        XCTAssertNotNil(try mac.notebook(id: b.id), "B's settings are in the index; the notebook should exist")
+        XCTAssertEqual(try mac.pages(ofNotebook: b.id)?.count, 0, "B's pages can't exist yet")
+        XCTAssertNil(mac.state.lastPulledExportDate, "an incomplete pull must not be marked done")
+
+        try FileManager.default.moveItem(at: parked, to: bFile)
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.pages(ofNotebook: b.id)?.count, 2, "B's pages must land once the file is here")
+        XCTAssertNotNil(mac.state.lastPulledExportDate)
+    }
+
+    /// A folder written by the format-1 engine (one `library.json`) is read
+    /// on the first sync, migrated on the first push, and left in place.
+    func testLegacyLibraryJSON_isReadOnceAndLeftInPlace() throws {
+        let pageID = UUID(), notebookID = UUID()
+        let ink = Data("legacy ink".utf8)
+        try FileManager.default.createDirectory(at: harness.folderFile("files"), withIntermediateDirectories: true)
+        try ink.write(to: harness.folderFile("files/\(pageID.uuidString).drawing"))
+        let legacy = LibrarySnapshot(
+            formatVersion: 1,
+            exportedAt: harness.clock.now,
+            deviceName: "OldBuild",
+            folders: [],
+            notebooks: [NotebookDTO(
+                formatVersion: nil, id: notebookID, title: "From the old format", coverStyle: "default",
+                createdAt: harness.clock.now, modifiedAt: harness.clock.now, settingsModifiedAt: nil, folderID: nil,
+                pages: [PageDTO(id: pageID, index: 0, type: "paged", template: "blank",
+                                drawingFileRef: "\(pageID.uuidString).drawing", backgroundRef: nil,
+                                recognizedTextCache: nil, ocrUpdatedAt: nil, modifiedAt: nil, aspectRatio: nil,
+                                textBlocks: [], stickers: [], importedDocuments: [])],
+                links: [])],
+            notebookIndex: nil,
+            tombstones: []
+        )
+        try harness.writeJSON(legacy, to: "library.json")
+        let legacyBytes = try Data(contentsOf: harness.folderFile("library.json"))
+
+        let mac = try harness.makeDevice("Mac")
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertEqual(try mac.notebook(id: notebookID)?.title, "From the old format")
+        XCTAssertEqual(mac.ink(forPageID: pageID), ink)
+        XCTAssertTrue(harness.folderFileExists("index.json"), "the push should have written the new layout")
+        XCTAssertTrue(harness.folderFileExists("notebooks/\(notebookID.uuidString).json"))
+        XCTAssertEqual(try Data(contentsOf: harness.folderFile("library.json")), legacyBytes, "library.json is never rewritten or removed")
+    }
+
+    /// A folder from a newer build is refused, and nothing local changes.
+    func testNewerFormat_isRefusedAndTouchesNothing() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "Mine", pageCount: 1)
+        try FileManager.default.createDirectory(at: harness.workingDirectory, withIntermediateDirectories: true)
+        try Data("""
+        {"formatVersion": 99, "exportedAt": "2030-01-01T00:00:00.000Z", "deviceName": "Future",
+         "folders": [], "notebooks": [], "tombstones": [], "somethingNew": true}
+        """.utf8).write(to: harness.folderFile("index.json"))
+
+        XCTAssertThrowsError(try ipad.sync()) { error in
+            XCTAssertTrue(error is SyncRunner.SyncFormatError, "expected the format gate, got \(error)")
+        }
+        XCTAssertEqual(try ipad.notebook(id: notebook.id)?.title, "Mine")
+        XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.count, 1)
+        XCTAssertFalse(harness.folderFileExists("notebooks/\(notebook.id.uuidString).json"), "must not write into a newer folder")
+        XCTAssertNil(ipad.state.lastPulledExportDate)
+    }
+
+    /// Notebook settings merge on their own clock: a rename here survives a
+    /// later page edit there.
+    func testRenameOnOneDevice_survivesLaterPageEditOnTheOther() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 2).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance(); try ipad.rename(try XCTUnwrap(try ipad.notebook(id: notebookID)), to: "Physics 101")
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let macInk = Data("Mac wrote later".utf8)
+        harness.clock.advance(); try mac.edit(page: macPages[0], ink: macInk)
+
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+
+        for device in [ipad, mac] {
+            XCTAssertEqual(try device.notebook(id: notebookID)?.title, "Physics 101", "\(device.name) lost the rename")
+            XCTAssertEqual(device.ink(forPageID: macPages[0].id), macInk, "\(device.name) lost the page edit")
+        }
+    }
+
     // MARK: Page.modifiedAt (M0 task 4)
 
     func testMarkModified_datesPageAndLiftsNotebookButNeverLowersIt() throws {

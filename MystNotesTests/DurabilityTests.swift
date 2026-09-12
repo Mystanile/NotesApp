@@ -168,11 +168,14 @@ final class DurabilityTests: XCTestCase {
         let container = try ModelContainer(for: Self.schema, configurations: [
             ModelConfiguration("fixture", schema: Self.schema, url: storeURL, cloudKitDatabase: .none)
         ])
-        let pages = try ModelContext(container).fetch(FetchDescriptor<Page>())
+        let context = ModelContext(container)
+        let pages = try context.fetch(FetchDescriptor<Page>())
         XCTAssertEqual(pages.count, Self.fixturePageCount)
         for page in pages {
             XCTAssertNil(page.modifiedAt, "page \(page.index) from the pre-modifiedAt store should migrate to nil")
         }
+        let notebook = try XCTUnwrap(try context.fetch(FetchDescriptor<Notebook>()).first)
+        XCTAssertNil(notebook.settingsModifiedAt, "a pre-settingsModifiedAt notebook should migrate to nil")
     }
 
     /// Writes a fresh fixture with the *current* schema. Skipped unless

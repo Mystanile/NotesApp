@@ -334,6 +334,7 @@ struct LibraryView: View {
             ForEach(coverStyleOptions, id: \.name) { option in
                 Button(option.label) {
                     notebook.coverStyle = option.name
+                    notebook.markSettingsModified()
                     save()
                 }
             }
@@ -383,7 +384,7 @@ struct LibraryView: View {
             folder.name = trimmed
         case .notebook(let notebook):
             notebook.title = trimmed
-            notebook.modifiedAt = Date()
+            notebook.markSettingsModified()
         }
         save()
         itemToRename = nil
@@ -396,6 +397,7 @@ struct LibraryView: View {
             folder.parentFolder = destination
         case .notebook(let notebook):
             notebook.folder = destination
+            notebook.markSettingsModified()
         }
         save()
         itemToMove = nil

@@ -31,7 +31,15 @@ final class Notebook {
     var title: String = "Untitled Notebook"
     var coverStyle: String = "default"
     var createdAt: Date = Date()
+    // Lifted by every page edit (see Page.markModified) - the library's
+    // sort key, not a merge key.
     var modifiedAt: Date = Date()
+
+    // When the notebook's own settings - title, cover, folder - last
+    // changed. Sync compares this, not modifiedAt, so a rename here can't
+    // lose to a later page edit elsewhere. Optional so old rows migrate to
+    // nil. Set it through markSettingsModified(at:).
+    var settingsModifiedAt: Date?
 
     var folder: Folder?
 
@@ -44,7 +52,17 @@ final class Notebook {
         self.coverStyle = coverStyle
         self.createdAt = Date()
         self.modifiedAt = Date()
+        self.settingsModifiedAt = Date()
         self.folder = folder
+    }
+}
+
+extension Notebook {
+    /// Records a change to the notebook's own settings (title, cover,
+    /// folder). Also lifts `modifiedAt` for the library sort.
+    func markSettingsModified(at date: Date = Date()) {
+        settingsModifiedAt = date
+        if modifiedAt < date { modifiedAt = date }
     }
 }
 

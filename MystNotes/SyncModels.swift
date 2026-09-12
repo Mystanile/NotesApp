@@ -1,17 +1,31 @@
 import Foundation
+import CryptoKit
 
-/// Codable mirrors of the SwiftData models, plus the container written to the
-/// user's chosen sync folder as `Mystnotes/library.json`. The live `@Model`
-/// classes aren't `Codable`, and serializing SwiftData directly is fragile,
-/// so `SyncEngine` translates between these DTOs and the model graph.
+/// Codable mirrors of the SwiftData models, plus the files written to the
+/// user's chosen sync folder. The live `@Model` classes aren't `Codable`,
+/// and serializing SwiftData directly is fragile, so `SyncEngine`
+/// translates between these DTOs and the model graph.
 ///
-/// Merge granularity is the page: a `NotebookDTO` carries its pages, each
-/// with its own `modifiedAt`, and `SyncRunner` decides page by page which
-/// side is newer. Notebook scalars (title, cover, folder) are last-writer-
-/// wins on `Notebook.modifiedAt`. Folders are a flat upsert by id;
-/// deletions of folders, notebooks and pages travel as `Tombstone`s.
+/// On disk (format 2):
+///
+///     Mystnotes/
+///       index.json              LibraryIndex - folders, tombstones, and one
+///                               NotebookIndexEntry per notebook
+///       notebooks/<uuid>.json   NotebookDTO - that notebook's pages and links
+///       files/                  payloads
+///       library.json            format 1: the whole library in one file.
+///                               Read once when index.json is absent; never
+///                               written again, never deleted.
+///
+/// Merge granularity is the page: each `PageDTO` carries its own
+/// `modifiedAt` and `SyncRunner` decides page by page which side is newer.
+/// Notebook settings (title, cover, folder) merge on `settingsModifiedAt`.
+/// Folders are a flat upsert by id; deletions of folders, notebooks and
+/// pages travel as `Tombstone`s.
 
-let librarySnapshotFormatVersion = 1
+/// The newest format this build can read. A folder written by a newer
+/// build is refused, not guessed at.
+let librarySnapshotFormatVersion = 2
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
 /// `.iso8601` strategy) made two edits inside one second compare equal
@@ -40,49 +54,99 @@ enum SnapshotDates {
         throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
                                                 debugDescription: "Unreadable date \(string)"))
     }
+
+    static func stamp(_ date: Date?) -> String {
+        date.map { String($0.timeIntervalSince1970) } ?? "-"
+    }
 }
 
+// MARK: - index.json
+
+struct LibraryIndex: Codable {
+    var formatVersion: Int = librarySnapshotFormatVersion
+    var exportedAt: Date
+    var deviceName: String
+    var folders: [FolderDTO]
+    var notebooks: [NotebookIndexEntry]
+    var tombstones: [Tombstone]
+
+    /// A fingerprint of everything that matters for "has anything changed
+    /// since the last push". Computable from the index alone, so a puller
+    /// can compare its own library against a folder without opening a
+    /// single notebook file.
+    var signature: String {
+        Self.signature(folders: folders, notebooks: notebooks, tombstones: tombstones)
+    }
+
+    static func signature(folders: [FolderDTO], notebooks: [NotebookIndexEntry], tombstones: [Tombstone]) -> String {
+        var parts: [String] = []
+        for folder in folders.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            parts.append("F:\(folder.id):\(folder.name):\(folder.parentID?.uuidString ?? "-")")
+        }
+        for notebook in notebooks.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            parts.append("N:\(notebook.id):\(SnapshotDates.stamp(notebook.settingsModifiedAt)):\(notebook.contentSignature)")
+        }
+        for tombstone in tombstones.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            parts.append("T:\(tombstone.kind.rawValue):\(tombstone.id):\(tombstone.deletedAt.timeIntervalSince1970)")
+        }
+        return parts.joined(separator: "|")
+    }
+}
+
+/// What the index knows about a notebook: enough to list it, merge its
+/// settings, and decide whether `notebooks/<id>.json` needs reading.
+struct NotebookIndexEntry: Codable {
+    var id: UUID
+    var title: String
+    var coverStyle: String
+    var createdAt: Date
+    var modifiedAt: Date
+    var settingsModifiedAt: Date?
+    var folderID: UUID?
+    /// See `NotebookDTO.contentSignature`.
+    var contentSignature: String
+
+    init(_ notebook: NotebookDTO) {
+        id = notebook.id
+        title = notebook.title
+        coverStyle = notebook.coverStyle
+        createdAt = notebook.createdAt
+        modifiedAt = notebook.modifiedAt
+        settingsModifiedAt = notebook.settingsModifiedAt
+        folderID = notebook.folderID
+        contentSignature = notebook.contentSignature
+    }
+}
+
+// MARK: - In-memory library (and the format-1 library.json)
+
+/// A whole library as `SyncRunner` works with it. Built from the model
+/// graph for a push, or assembled from `index.json` plus whichever
+/// notebook files needed reading for a pull - in which case `notebooks`
+/// holds only those, and `notebookIndex` the full list.
+///
+/// Also the exact shape of the format-1 `library.json`, which is why it
+/// stays `Codable`: `notebookIndex` is absent there and derived.
 struct LibrarySnapshot: Codable {
     var formatVersion: Int = librarySnapshotFormatVersion
     var exportedAt: Date
     var deviceName: String
     var folders: [FolderDTO]
     var notebooks: [NotebookDTO]
+    var notebookIndex: [NotebookIndexEntry]?
     var tombstones: [Tombstone]
 
-    /// A cheap fingerprint of the meaningful contents, used to skip a push
-    /// when nothing has changed since the last one.
-    var signature: String {
-        var parts: [String] = []
-        for folder in folders.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            parts.append("F:\(folder.id):\(folder.name):\(folder.parentID?.uuidString ?? "-")")
-        }
-        for notebook in notebooks.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            parts.append("N:\(notebook.id):\(notebook.modifiedAt.timeIntervalSince1970)")
-            for page in notebook.pages.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-                parts.append("P:\(page.id):\(page.modifiedAt?.timeIntervalSince1970 ?? 0)")
-            }
-        }
-        for tombstone in tombstones.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            parts.append("T:\(tombstone.id):\(tombstone.deletedAt.timeIntervalSince1970)")
-        }
-        return parts.joined(separator: "|")
+    var index: [NotebookIndexEntry] {
+        notebookIndex ?? notebooks.map(NotebookIndexEntry.init)
     }
 
-    /// Every payload file (drawings, imported PDFs/images) referenced anywhere
-    /// in the snapshot - what `SyncEngine` copies alongside `library.json`.
-    var referencedFileNames: Set<String> {
-        var names: Set<String> = []
-        for notebook in notebooks {
-            for page in notebook.pages {
-                if let ref = page.drawingFileRef, !ref.isEmpty { names.insert(ref) }
-                if let ref = page.backgroundRef, !ref.isEmpty { names.insert(ref) }
-                for doc in page.importedDocuments where !doc.fileRef.isEmpty {
-                    names.insert(doc.fileRef)
-                }
-            }
-        }
-        return names
+    var signature: String {
+        LibraryIndex.signature(folders: folders, notebooks: index, tombstones: tombstones)
+    }
+
+    func makeIndex() -> LibraryIndex {
+        LibraryIndex(exportedAt: exportedAt, deviceName: deviceName,
+                     folders: folders, notebooks: index, tombstones: tombstones)
     }
 }
 
@@ -97,7 +161,7 @@ struct Tombstone: Codable, Hashable {
     var deletedAt: Date
 }
 
-/// Local record of folders/notebooks deleted on this device, kept in
+/// Local record of folders/notebooks/pages deleted on this device, kept in
 /// `UserDefaults` so the deletion survives until it has been pushed to the
 /// sync folder (and to guard against the item reappearing from another
 /// device's older snapshot). Remote tombstones seen during a pull are merged
@@ -140,15 +204,36 @@ struct FolderDTO: Codable {
     var parentID: UUID?
 }
 
+/// One notebook, complete: what `notebooks/<id>.json` holds.
 struct NotebookDTO: Codable {
+    /// Optional because notebooks embedded in a format-1 `library.json`
+    /// have no version of their own.
+    var formatVersion: Int? = librarySnapshotFormatVersion
     var id: UUID
     var title: String
     var coverStyle: String
     var createdAt: Date
     var modifiedAt: Date
+    /// Absent in older snapshots; nil loses to any date.
+    var settingsModifiedAt: Date?
     var folderID: UUID?
     var pages: [PageDTO]
     var links: [LinkDTO]
+
+    /// Fingerprint of the page set: which pages exist and when each was
+    /// last edited. Two libraries whose notebooks share a signature hold
+    /// the same page versions, so the notebook file needn't be read.
+    var contentSignature: String {
+        Self.contentSignature(of: pages.map { ($0.id, $0.modifiedAt) })
+    }
+
+    static func contentSignature(of pages: [(id: UUID, modifiedAt: Date?)]) -> String {
+        let lines = pages
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+            .map { "\($0.id.uuidString):\(SnapshotDates.stamp($0.modifiedAt))" }
+        let digest = SHA256.hash(data: Data(lines.joined(separator: "\n").utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 struct PageDTO: Codable {

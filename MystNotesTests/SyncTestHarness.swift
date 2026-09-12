@@ -116,6 +116,13 @@ final class SyncTestDevice {
         try context.save()
     }
 
+    /// Mirrors `LibraryView.applyRename`.
+    func rename(_ notebook: Notebook, to title: String) throws {
+        notebook.title = title
+        notebook.markSettingsModified(at: clock.now)
+        try context.save()
+    }
+
     /// Mirrors `MystNotesDetailView.deletePage`: drop the page, re-index
     /// the rest, record a page tombstone.
     func deletePage(_ page: Page) throws {
@@ -183,6 +190,35 @@ final class SyncTestHarness {
 
     func makeDevice(_ name: String) throws -> SyncTestDevice {
         try SyncTestDevice(name: name, syncFolder: syncFolder, clock: clock, root: root)
+    }
+
+    /// `<sync folder>/Mystnotes/`, where the engine writes.
+    var workingDirectory: URL {
+        syncFolder.appendingPathComponent("Mystnotes", isDirectory: true)
+    }
+
+    func folderFile(_ relativePath: String) -> URL {
+        workingDirectory.appendingPathComponent(relativePath)
+    }
+
+    func folderFileExists(_ relativePath: String) -> Bool {
+        FileManager.default.fileExists(atPath: folderFile(relativePath).path)
+    }
+
+    func readIndex() throws -> LibraryIndex {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
+        return try decoder.decode(LibraryIndex.self, from: Data(contentsOf: folderFile("index.json")))
+    }
+
+    /// Encodes the way the engine does, for planting files in the folder.
+    func writeJSON<T: Encodable>(_ value: T, to relativePath: String) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = SnapshotDates.encoding
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let url = folderFile(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(value).write(to: url)
     }
 
     /// Ink bytes for a page as they sit in the shared folder's `files/`.
