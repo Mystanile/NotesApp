@@ -9,9 +9,12 @@ import CryptoKit
 /// On disk (format 2):
 ///
 ///     Mystnotes/
-///       index.json              LibraryIndex - folders, tombstones, and one
+///       index.json              LibraryIndex - folders and one
 ///                               NotebookIndexEntry per notebook
+///       index-history/          the last N copies of index.json
 ///       notebooks/<uuid>.json   NotebookDTO - that notebook's pages and links
+///       tombstones.json         TombstoneFile - every deletion any device
+///                               has recorded, merged by union
 ///       files/                  payloads
 ///       library.json            format 1: the whole library in one file.
 ///                               Read once when index.json is absent; never
@@ -68,15 +71,24 @@ struct LibraryIndex: Codable {
     var deviceName: String
     var folders: [FolderDTO]
     var notebooks: [NotebookIndexEntry]
-    var tombstones: [Tombstone]
+    /// Only in indexes written before `tombstones.json` existed. Read,
+    /// never written.
+    var tombstones: [Tombstone]?
+}
 
+/// `tombstones.json`. Kept apart from the index because two versions of
+/// this file merge by plain union, which is what makes a conflicting pair
+/// of writes (task 8) safe to reconcile.
+struct TombstoneFile: Codable {
+    var formatVersion: Int = librarySnapshotFormatVersion
+    var tombstones: [Tombstone]
+}
+
+extension LibraryIndex {
     /// A fingerprint of everything that matters for "has anything changed
-    /// since the last push". Computable from the index alone, so a puller
-    /// can compare its own library against a folder without opening a
-    /// single notebook file.
-    var signature: String {
-        Self.signature(folders: folders, notebooks: notebooks, tombstones: tombstones)
-    }
+    /// since the last push". Computable from the index plus the tombstone
+    /// file, so a puller can compare its own library against a folder
+    /// without opening a single notebook file.
 
     static func signature(folders: [FolderDTO], notebooks: [NotebookIndexEntry], tombstones: [Tombstone]) -> String {
         var parts: [String] = []
@@ -146,7 +158,7 @@ struct LibrarySnapshot: Codable {
 
     func makeIndex() -> LibraryIndex {
         LibraryIndex(exportedAt: exportedAt, deviceName: deviceName,
-                     folders: folders, notebooks: index, tombstones: tombstones)
+                     folders: folders, notebooks: index, tombstones: nil)
     }
 }
 

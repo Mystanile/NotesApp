@@ -216,11 +216,18 @@ struct SyncRunner {
             try writeJSON(notebook, to: url)
         }
 
+        // Tombstones before the index: a reader that sees the new index
+        // but the old tombstone file only lacks deletions it will get next
+        // time, whereas the reverse could let a deleted notebook's entry
+        // linger with no tombstone to explain it.
+        try writeJSON(TombstoneFile(tombstones: snapshot.tombstones), to: Self.tombstonesURL(in: workingDir))
+
         var index = snapshot.makeIndex()
         index.notebooks = index.notebooks.map { entry in
             pending.contains(entry.id) ? (remoteEntries[entry.id] ?? entry) : entry
         }
         try writeJSON(index, to: Self.indexURL(in: workingDir))
+        keepHistory(of: index, workingDir: workingDir)
 
         environment.state.lastPushSignature = snapshot.signature
         // We authored this snapshot - don't turn around and re-apply it.
@@ -262,6 +269,14 @@ struct SyncRunner {
 
     private static func legacyLibraryURL(in workingDir: URL) -> URL {
         workingDir.appendingPathComponent("library.json")
+    }
+
+    private static func tombstonesURL(in workingDir: URL) -> URL {
+        workingDir.appendingPathComponent("tombstones.json")
+    }
+
+    private static func historyDirectory(in workingDir: URL) -> URL {
+        workingDir.appendingPathComponent("index-history", isDirectory: true)
     }
 
     static func notebookFileURL(for id: UUID, in workingDir: URL) -> URL {
@@ -325,9 +340,46 @@ struct SyncRunner {
             folders: index.folders,
             notebooks: notebooks,
             notebookIndex: index.notebooks,
-            tombstones: index.tombstones
+            tombstones: try readTombstones(workingDir: workingDir) + (index.tombstones ?? [])
         )
         return RemoteLibrary(snapshot: snapshot, pending: pending, index: index)
+    }
+
+    /// `tombstones.json`, or nothing if it isn't there yet. An unreadable
+    /// file is treated the same way - a deletion that can't be read this
+    /// round is applied next round; nothing is resurrected in between
+    /// because the local list still has everything this device knew.
+    private func readTombstones(workingDir: URL) throws -> [Tombstone] {
+        let url = Self.tombstonesURL(in: workingDir)
+        SyncFolder.ensureDownloaded(url)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let file: TombstoneFile? = try? readJSON(from: url)
+        return file?.tombstones ?? []
+    }
+
+    // MARK: Index history
+
+    /// Keeps the last `indexHistoryLimit` copies of `index.json` so a bad
+    /// write - ours or another device's - is never the only copy. Names
+    /// sort by time, so pruning is "drop the oldest by name". These are
+    /// this engine's own snapshots, not user payloads, so removing them
+    /// is fine.
+    private func keepHistory(of index: LibraryIndex, workingDir: URL) {
+        let fm = FileManager.default
+        let dir = Self.historyDirectory(in: workingDir)
+        guard (try? fm.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else { return }
+
+        let stamp = String(format: "%.3f", index.exportedAt.timeIntervalSince1970)
+        let device = index.deviceName.unicodeScalars
+            .map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "_" }
+        let name = "\(stamp)-\(String(device)).json"
+        try? writeJSON(index, to: dir.appendingPathComponent(name))
+
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+        let sorted = names.filter { $0.hasSuffix(".json") }.sorted()
+        for stale in sorted.dropLast(max(environment.indexHistoryLimit, 1)) {
+            try? fm.removeItem(at: dir.appendingPathComponent(stale))
+        }
     }
 
     // MARK: Coordinated JSON I/O

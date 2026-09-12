@@ -23,6 +23,8 @@ struct SyncEnvironment {
     var state: SyncStateStore
     var deviceName: String
     var now: () -> Date
+    /// How many past copies of `index.json` to keep in `index-history/`.
+    var indexHistoryLimit: Int = 50
 
     static var live: SyncEnvironment {
         SyncEnvironment(

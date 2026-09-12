@@ -43,6 +43,7 @@ final class SyncTestDevice {
     let context: ModelContext
     let filesDirectory: URL
     let state = InMemorySyncStateStore()
+    var indexHistoryLimit = 50
 
     private let syncFolder: URL
     private let clock: SyncTestClock
@@ -79,7 +80,8 @@ final class SyncTestDevice {
             localFilesDirectory: { [filesDirectory] in filesDirectory },
             state: state,
             deviceName: name,
-            now: { [clock] in clock.now }
+            now: { [clock] in clock.now },
+            indexHistoryLimit: indexHistoryLimit
         )
     }
 
@@ -113,6 +115,13 @@ final class SyncTestDevice {
     func edit(page: Page, ink: Data) throws {
         try writeInk(ink, to: page)
         page.markModified(at: clock.now)
+        try context.save()
+    }
+
+    /// Mirrors `LibraryView.deleteNotebook`.
+    func deleteNotebook(_ notebook: Notebook) throws {
+        SyncTombstones.merge([Tombstone(kind: .notebook, id: notebook.id, deletedAt: clock.now)], into: state)
+        context.delete(notebook)
         try context.save()
     }
 
@@ -188,8 +197,10 @@ final class SyncTestHarness {
         try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
     }
 
-    func makeDevice(_ name: String) throws -> SyncTestDevice {
-        try SyncTestDevice(name: name, syncFolder: syncFolder, clock: clock, root: root)
+    func makeDevice(_ name: String, indexHistoryLimit: Int = 50) throws -> SyncTestDevice {
+        let device = try SyncTestDevice(name: name, syncFolder: syncFolder, clock: clock, root: root)
+        device.indexHistoryLimit = indexHistoryLimit
+        return device
     }
 
     /// `<sync folder>/Mystnotes/`, where the engine writes.
@@ -203,6 +214,17 @@ final class SyncTestHarness {
 
     func folderFileExists(_ relativePath: String) -> Bool {
         FileManager.default.fileExists(atPath: folderFile(relativePath).path)
+    }
+
+    /// Names of the files in `index-history/`, oldest first.
+    func historyFileNames() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: folderFile("index-history").path)) ?? []).sorted()
+    }
+
+    func readTombstoneFile() throws -> TombstoneFile {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
+        return try decoder.decode(TombstoneFile.self, from: Data(contentsOf: folderFile("tombstones.json")))
     }
 
     func readIndex() throws -> LibraryIndex {

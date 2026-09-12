@@ -189,6 +189,75 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    // MARK: Index history (M0 task 7)
+
+    func testPush_keepsTheLastNIndexes_andTheNewestMatchesIndexJSON() throws {
+        let ipad = try harness.makeDevice("iPad", indexHistoryLimit: 3)
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+
+        for round in 1...5 {
+            harness.clock.advance(); try ipad.edit(page: page, ink: Data("round \(round)".utf8))
+            harness.clock.advance(); try ipad.sync()
+        }
+
+        let history = harness.historyFileNames()
+        XCTAssertEqual(history.count, 3, "history should be pruned to the limit, got \(history)")
+        let newest = try XCTUnwrap(history.last)
+        XCTAssertEqual(try Data(contentsOf: harness.folderFile("index-history/\(newest)")),
+                       try Data(contentsOf: harness.folderFile("index.json")),
+                       "the newest history entry is a copy of the current index")
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = SnapshotDates.decoding
+        let oldest = try decoder.decode(LibraryIndex.self, from: Data(contentsOf: harness.folderFile("index-history/\(history[0])")))
+        XCTAssertEqual(oldest.notebooks.first?.id, notebook.id, "older entries must still decode")
+    }
+
+    // MARK: Tombstones in the folder (M0 task 9)
+
+    /// A deletion is recorded in `tombstones.json`, not in the index, and
+    /// a device that had the notebook removes it on pull.
+    func testNotebookDeletion_travelsThroughTombstonesJSON() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let keep = try ipad.createNotebook(title: "Keep", pageCount: 1)
+        let gone = try ipad.createNotebook(title: "Gone", pageCount: 1)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotNil(try mac.notebook(id: gone.id), "precondition")
+
+        harness.clock.advance(); try ipad.deleteNotebook(try XCTUnwrap(try ipad.notebook(id: gone.id)))
+        harness.clock.advance(); try ipad.sync()
+
+        let file = try harness.readTombstoneFile()
+        XCTAssertTrue(file.tombstones.contains { $0.id == gone.id && $0.kind == .notebook })
+        XCTAssertNil(try harness.readIndex().tombstones, "the index no longer carries tombstones")
+        XCTAssertFalse(try harness.readIndex().notebooks.contains { $0.id == gone.id })
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNil(try mac.notebook(id: gone.id), "the Mac should have removed the deleted notebook")
+        XCTAssertNotNil(try mac.notebook(id: keep.id))
+        XCTAssertTrue(mac.trashedInk().count >= 1, "the deleted notebook's ink went to the Mac's trash, not away")
+    }
+
+    /// A fresh device (reinstall) that pulls a folder with a tombstone and
+    /// then pushes must re-broadcast it - the folder is the record.
+    func testTombstones_surviveAReinstallAndAreReBroadcast() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "Gone", pageCount: 1)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try ipad.deleteNotebook(try XCTUnwrap(try ipad.notebook(id: notebook.id)))
+        harness.clock.advance(); try ipad.sync()
+
+        let fresh = try harness.makeDevice("Reinstalled")
+        harness.clock.advance(); try fresh.sync()
+        XCTAssertTrue(SyncTombstones.load(from: fresh.state).contains { $0.id == notebook.id })
+
+        // Its own push must keep the tombstone in the folder.
+        _ = try fresh.createNotebook(title: "New here", pageCount: 1)
+        harness.clock.advance(); try fresh.sync()
+        XCTAssertTrue(try harness.readTombstoneFile().tombstones.contains { $0.id == notebook.id })
+    }
+
     // MARK: Page.modifiedAt (M0 task 4)
 
     func testMarkModified_datesPageAndLiftsNotebookButNeverLowersIt() throws {
