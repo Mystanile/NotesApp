@@ -70,7 +70,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 `Folder` → `Notebook` → `Page` → (`TypedTextBlock`, `Sticker`, `ImportedDocument`), plus `Link` (`sourcePageID`, `destinationPageID`, anchor rect). All relationships cascade-delete; all properties optional or defaulted.
 
-`Page` carries `drawingFileRef`, `backgroundRef`, `aspectRatio`, `recognizedTextCache`, `ocrUpdatedAt`. **It does not carry `modifiedAt`. Adding that is M0 task 4 and it unblocks the sync fix.**
+`Page` carries `drawingFileRef`, `backgroundRef`, `aspectRatio`, `recognizedTextCache`, `ocrUpdatedAt`, and `modifiedAt: Date?` (M0 task 4, done). Set `modifiedAt` only through `Page.markModified(at:)` — it also lifts the notebook's date, never lowers it. `nil` means the page predates the field and loses to any dated page. OCR fields never call it.
 
 `Link` is the seed of the graph in M2. Generalize it; don't start a parallel model.
 

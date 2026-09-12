@@ -641,8 +641,9 @@ struct NotebookDetailView: View {
         modelContext.delete(page) // cascades to its TypedTextBlocks/Stickers
 
         let remaining = sortedPages
-        for (newIndex, remainingPage) in remaining.enumerated() {
+        for (newIndex, remainingPage) in remaining.enumerated() where remainingPage.index != newIndex {
             remainingPage.index = newIndex
+            remainingPage.markModified()
         }
 
         notebook.modifiedAt = Date()
@@ -762,7 +763,7 @@ struct NotebookDetailView: View {
                 height: flipped.height
             )
         }
-        notebook.modifiedAt = Date()
+        page.markModified()
         saveMetadata("Failed to rotate image")
     }
 
@@ -803,7 +804,7 @@ struct NotebookDetailView: View {
         // to it - otherwise the remaining image would stretch to refill the
         // old frame.
         adjustingImageFrame = crop
-        notebook.modifiedAt = Date()
+        page.markModified()
         saveMetadata("Failed to crop image")
     }
 
@@ -815,7 +816,7 @@ struct NotebookDetailView: View {
         adjustingImageFrame = nil
         croppingRect = nil
         updateCanvasInteractionEnabled()
-        notebook.modifiedAt = Date()
+        page.markModified()
         saveMetadata("Failed to remove image")
     }
 
@@ -836,7 +837,7 @@ struct NotebookDetailView: View {
         doc.frameY = fractions.y
         doc.frameWidth = fractions.width
         doc.frameHeight = fractions.height
-        notebook.modifiedAt = Date()
+        page.markModified()
         saveMetadata("Failed to save image placement")
     }
     #else
@@ -886,7 +887,7 @@ struct NotebookDetailView: View {
         }
         modelContext.insert(importedDoc)
 
-        notebook.modifiedAt = Date()
+        page.markModified()
         saveMetadata("Failed to import onto the current page")
         return importedDoc
     }
@@ -1069,6 +1070,7 @@ struct NotebookDetailView: View {
         } else {
             page.textBlocks?.append(block)
         }
+        page.markModified()
         saveMetadata("Failed to save text block")
     }
 
@@ -1083,6 +1085,7 @@ struct NotebookDetailView: View {
         } else {
             page.stickers?.append(sticker)
         }
+        page.markModified()
         saveMetadata("Failed to save sticker")
     }
 
@@ -1095,6 +1098,7 @@ struct NotebookDetailView: View {
         link.anchorX = 40
         link.anchorY = 40
         modelContext.insert(link)
+        page.markModified()
         saveMetadata("Failed to save link")
         linkNeedingDestination = link
     }
@@ -1280,7 +1284,7 @@ struct NotebookDetailView: View {
     private func save(_ drawing: PKDrawing, to page: Page) {
         do {
             page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
-            notebook.modifiedAt = Date()
+            page.markModified()
             try modelContext.save()
         } catch {
             print("Failed to save drawing: \(error)")
@@ -1289,7 +1293,7 @@ struct NotebookDetailView: View {
 #else
     private func save(to page: Page) {
         page.drawingFileRef = DrawingStore.fileName(for: page.id)
-        notebook.modifiedAt = Date()
+        page.markModified()
         try? modelContext.save()
     }
 #endif

@@ -265,6 +265,7 @@ struct SyncRunner {
                     backgroundRef: page.backgroundRef,
                     recognizedTextCache: page.recognizedTextCache,
                     ocrUpdatedAt: page.ocrUpdatedAt,
+                    modifiedAt: page.modifiedAt,
                     textBlocks: (page.textBlocks ?? []).map {
                         TextBlockDTO(id: $0.id, content: $0.content,
                                      frameX: $0.frameX, frameY: $0.frameY,
@@ -409,6 +410,7 @@ struct SyncRunner {
             page.backgroundRef = pageDTO.backgroundRef
             page.recognizedTextCache = pageDTO.recognizedTextCache
             page.ocrUpdatedAt = pageDTO.ocrUpdatedAt
+            page.modifiedAt = pageDTO.modifiedAt
             context.insert(page)
             notebook.pages?.append(page)
 

@@ -29,6 +29,9 @@ struct LibrarySnapshot: Codable {
         }
         for notebook in notebooks.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             parts.append("N:\(notebook.id):\(notebook.modifiedAt.timeIntervalSince1970)")
+            for page in notebook.pages.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+                parts.append("P:\(page.id):\(page.modifiedAt?.timeIntervalSince1970 ?? 0)")
+            }
         }
         for tombstone in tombstones.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             parts.append("T:\(tombstone.id):\(tombstone.deletedAt.timeIntervalSince1970)")
@@ -125,6 +128,9 @@ struct PageDTO: Codable {
     var backgroundRef: String?
     var recognizedTextCache: String?
     var ocrUpdatedAt: Date?
+    /// Absent in snapshots written before this field existed; decodes as
+    /// nil, which merge treats as older than any date.
+    var modifiedAt: Date?
     var textBlocks: [TextBlockDTO]
     var stickers: [StickerDTO]
     var importedDocuments: [ImportedDocumentDTO]

@@ -47,6 +47,46 @@ final class SyncTests: XCTestCase {
         XCTAssertNotEqual(try ipad.context.fetchCount(FetchDescriptor<Page>()), 0)
     }
 
+    // MARK: Page.modifiedAt (M0 task 4)
+
+    func testMarkModified_datesPageAndLiftsNotebookButNeverLowersIt() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "Physics", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let start = harness.clock.now
+
+        let later = harness.clock.advance()
+        pages[0].markModified(at: later)
+        XCTAssertEqual(pages[0].modifiedAt, later)
+        XCTAssertEqual(notebook.modifiedAt, later, "an edited page lifts its notebook")
+        XCTAssertEqual(pages[1].modifiedAt, start, "the other page is untouched")
+
+        // A backdated edit (clock skew, a replayed change) must not pull
+        // the notebook back below its most recent page.
+        let earlier = start.addingTimeInterval(-3600)
+        pages[1].markModified(at: earlier)
+        XCTAssertEqual(pages[1].modifiedAt, earlier)
+        XCTAssertEqual(notebook.modifiedAt, later, "notebook.modifiedAt never goes backwards")
+    }
+
+    func testPageModifiedAt_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 3).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+        let editedAt = harness.clock.advance()
+        try ipad.edit(page: ipadPages[1], ink: Data("edit".utf8))
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        XCTAssertEqual(macPages[1].modifiedAt, editedAt, "the page's own date must travel with it")
+        XCTAssertNotEqual(macPages[0].modifiedAt, editedAt, "an unedited page keeps its date")
+    }
+
     // MARK: PROJECT_PLAN §1.2 - the blocker
 
     /// Offline, the iPad writes on page 3 and the Mac writes on page 7 of the

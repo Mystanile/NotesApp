@@ -77,6 +77,15 @@ final class Page {
     // every search (OCR is the slow part).
     var ocrUpdatedAt: Date?
 
+    // When the user last changed this page: ink, background, an element
+    // added, its index moved. This is what sync compares page against
+    // page, so it must move on every real edit and never on derived data
+    // (`recognizedTextCache` / `ocrUpdatedAt` are not edits). Optional
+    // without a default so pages from before the field migrate to nil,
+    // which merge treats as older than any date. Set it through
+    // `markModified(at:)`, not directly.
+    var modifiedAt: Date?
+
     var notebook: Notebook?
 
     @Relationship(deleteRule: .cascade, inverse: \TypedTextBlock.page)
@@ -90,7 +99,20 @@ final class Page {
         self.index = index
         self.type = type
         self.template = template
+        self.modifiedAt = Date()
         self.notebook = notebook
+    }
+}
+
+extension Page {
+    /// Records a user edit to this page. Also lifts the notebook's
+    /// `modifiedAt` so the library sorts it to the top, but never lowers
+    /// it - another page may have been edited more recently.
+    func markModified(at date: Date = Date()) {
+        modifiedAt = date
+        if let notebook, notebook.modifiedAt < date {
+            notebook.modifiedAt = date
+        }
     }
 }
 

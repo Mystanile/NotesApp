@@ -152,6 +152,29 @@ final class DurabilityTests: XCTestCase {
         }
     }
 
+    /// The fixture was written before `Page.modifiedAt` existed. After the
+    /// lightweight migration those pages must come back with `nil` - the
+    /// value merge treats as "older than anything dated" - not with a
+    /// backfilled date that would make every migrated page look freshly
+    /// edited on every device at once.
+    func testPreviousSchemaFixture_pagesWithoutModifiedAtMigrateToNil() throws {
+        let bundle = Bundle(for: DurabilityTests.self)
+        let fixtureStore = try XCTUnwrap(
+            bundle.url(forResource: Self.fixtureStoreName, withExtension: "sqlite", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: Self.fixtureStoreName, withExtension: "sqlite"))
+        let storeURL = directory.appendingPathComponent("store.sqlite")
+        try FileManager.default.copyItem(at: fixtureStore, to: storeURL)
+
+        let container = try ModelContainer(for: Self.schema, configurations: [
+            ModelConfiguration("fixture", schema: Self.schema, url: storeURL, cloudKitDatabase: .none)
+        ])
+        let pages = try ModelContext(container).fetch(FetchDescriptor<Page>())
+        XCTAssertEqual(pages.count, Self.fixturePageCount)
+        for page in pages {
+            XCTAssertNil(page.modifiedAt, "page \(page.index) from the pre-modifiedAt store should migrate to nil")
+        }
+    }
+
     /// Writes a fresh fixture with the *current* schema. Skipped unless
     /// `MYSTNOTES_GENERATE_FIXTURE` names an output directory.
     func testGenerateSchemaFixture() throws {

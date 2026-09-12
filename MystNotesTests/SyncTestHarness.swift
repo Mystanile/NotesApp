@@ -101,6 +101,7 @@ final class SyncTestDevice {
             context.insert(page)
             notebook.pages?.append(page)
             try writeInk(Data("\(title) page \(index + 1) original".utf8), to: page)
+            page.modifiedAt = clock.now
         }
         notebook.modifiedAt = clock.now
         try context.save()
@@ -108,10 +109,10 @@ final class SyncTestDevice {
     }
 
     /// Mirrors `MystNotesDetailView.save(_:to:)`: write the drawing file,
-    /// point the page at it, bump the notebook's `modifiedAt`, save.
+    /// point the page at it, mark the page modified, save.
     func edit(page: Page, ink: Data) throws {
         try writeInk(ink, to: page)
-        page.notebook?.modifiedAt = clock.now
+        page.markModified(at: clock.now)
         try context.save()
     }
 
