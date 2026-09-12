@@ -67,29 +67,33 @@ struct Tombstone: Codable, Hashable {
 /// sync folder (and to guard against the item reappearing from another
 /// device's older snapshot). Remote tombstones seen during a pull are merged
 /// in here too, so a later push re-broadcasts them.
+///
+/// The store defaults to the app's real one; `SyncRunner` passes its
+/// environment's store so each simulated device in the sync tests keeps its
+/// own list.
 enum SyncTombstones {
     private static let lock = NSLock()
     /// Tombstones older than this are pruned - long enough that every device
     /// has realistically synced, without the list growing forever.
     private static let retention: TimeInterval = 90 * 24 * 60 * 60
 
-    static func load() -> [Tombstone] {
-        guard let data = AppSettings.syncTombstonesData,
+    static func load(from store: SyncStateStore = LiveSyncStateStore.shared) -> [Tombstone] {
+        guard let data = store.tombstonesData,
               let decoded = try? JSONDecoder().decode([Tombstone].self, from: data)
         else { return [] }
         return decoded
     }
 
-    static func merge(_ incoming: [Tombstone]) {
+    static func merge(_ incoming: [Tombstone], into store: SyncStateStore = LiveSyncStateStore.shared) {
         lock.lock(); defer { lock.unlock() }
         var newestByID: [UUID: Tombstone] = [:]
-        for stone in load() + incoming {
+        for stone in load(from: store) + incoming {
             if let existing = newestByID[stone.id], existing.deletedAt >= stone.deletedAt { continue }
             newestByID[stone.id] = stone
         }
         let cutoff = Date().addingTimeInterval(-retention)
         let pruned = newestByID.values.filter { $0.deletedAt >= cutoff }
-        AppSettings.syncTombstonesData = try? JSONEncoder().encode(Array(pruned))
+        store.tombstonesData = try? JSONEncoder().encode(Array(pruned))
     }
 }
 

@@ -1,9 +1,6 @@
 import Foundation
 import Combine
 import SwiftData
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// Folder-based library sync - the free-account alternative to CloudKit.
 ///
@@ -75,10 +72,11 @@ final class SyncEngine: ObservableObject {
         isRunning = true
         status = .syncing
 
+        let environment = SyncEnvironment.live
         Task.detached(priority: .utility) {
             let outcome: Result<Void, Error>
             do {
-                try SyncRunner(container: container).run(pull: pull, push: push)
+                try SyncRunner(container: container, environment: environment).run(pull: pull, push: push)
                 outcome = .success(())
             } catch {
                 outcome = .failure(error)
@@ -101,8 +99,13 @@ final class SyncEngine: ObservableObject {
 /// Does the actual work on a background task with its own `ModelContext`.
 /// Saving here propagates to the app's `@Query`-backed views through the
 /// shared `ModelContainer`.
-private struct SyncRunner {
+///
+/// Every process-wide dependency (sync folder, local files directory, the
+/// pulled/pushed markers, tombstones, clock) comes through `environment` so
+/// the sync tests can run two independent libraries against one folder.
+struct SyncRunner {
     let container: ModelContainer
+    let environment: SyncEnvironment
 
     private var jsonEncoder: JSONEncoder {
         let encoder = JSONEncoder()
@@ -118,7 +121,7 @@ private struct SyncRunner {
 
     func run(pull: Bool, push: Bool) throws {
         let context = ModelContext(container)
-        try SyncFolder.withFolder { folder in
+        try environment.withFolder { folder in
             let workingDir = try SyncFolder.workingDirectory(in: folder)
             // A push always pulls first: it folds in whatever another device
             // wrote so the snapshot we're about to overwrite isn't stale.
@@ -132,23 +135,23 @@ private struct SyncRunner {
     private func performPull(context: ModelContext, workingDir: URL) throws {
         guard let remote = try readSnapshot(workingDir: workingDir) else { return }
 
-        if let lastPulled = AppSettings.lastPulledExportDate, remote.exportedAt <= lastPulled {
+        if let lastPulled = environment.state.lastPulledExportDate, remote.exportedAt <= lastPulled {
             return  // already applied this snapshot
         }
 
         copyFiles(remote.referencedFileNames,
                   from: workingDir.appendingPathComponent("files", isDirectory: true),
-                  to: FileStore.localBaseDirectory(),
+                  to: environment.localFilesDirectory(),
                   downloadFirst: true)
 
         try apply(remote, context: context)
 
-        SyncTombstones.merge(remote.tombstones)
-        AppSettings.lastPulledExportDate = remote.exportedAt
+        SyncTombstones.merge(remote.tombstones, into: environment.state)
+        environment.state.lastPulledExportDate = remote.exportedAt
         // Our library now matches this snapshot; only push again if something
         // actually diverges from it (e.g. a local tombstone not in `remote`).
-        if SyncTombstones.load().allSatisfy({ stone in remote.tombstones.contains(stone) }) {
-            AppSettings.lastPushSignature = remote.signature
+        if SyncTombstones.load(from: environment.state).allSatisfy({ stone in remote.tombstones.contains(stone) }) {
+            environment.state.lastPushSignature = remote.signature
         }
     }
 
@@ -156,18 +159,18 @@ private struct SyncRunner {
 
     private func performPush(context: ModelContext, workingDir: URL) throws {
         let snapshot = try buildSnapshot(context: context)
-        guard snapshot.signature != AppSettings.lastPushSignature else { return }
+        guard snapshot.signature != environment.state.lastPushSignature else { return }
 
         copyFiles(snapshot.referencedFileNames,
-                  from: FileStore.localBaseDirectory(),
+                  from: environment.localFilesDirectory(),
                   to: workingDir.appendingPathComponent("files", isDirectory: true),
                   downloadFirst: false)
 
         try writeSnapshot(snapshot, workingDir: workingDir)
 
-        AppSettings.lastPushSignature = snapshot.signature
+        environment.state.lastPushSignature = snapshot.signature
         // We authored this snapshot - don't turn around and re-apply it.
-        AppSettings.lastPulledExportDate = snapshot.exportedAt
+        environment.state.lastPulledExportDate = snapshot.exportedAt
     }
 
     // MARK: Snapshot <-> file
@@ -299,11 +302,11 @@ private struct SyncRunner {
         }
 
         return LibrarySnapshot(
-            exportedAt: Date(),
-            deviceName: Self.deviceName,
+            exportedAt: environment.now(),
+            deviceName: environment.deviceName,
             folders: folderDTOs,
             notebooks: notebookDTOs,
-            tombstones: SyncTombstones.load()
+            tombstones: SyncTombstones.load(from: environment.state)
         )
     }
 
@@ -466,17 +469,9 @@ private struct SyncRunner {
 
     private func deleteFiles(for notebook: Notebook) {
         let fm = FileManager.default
-        let base = FileStore.localBaseDirectory()
+        let base = environment.localFilesDirectory()
         for page in notebook.pages ?? [] {
             try? fm.removeItem(at: base.appendingPathComponent("\(page.id.uuidString).drawing"))
         }
-    }
-
-    private static var deviceName: String {
-        #if canImport(UIKit)
-        return UIDevice.current.name
-        #else
-        return Host.current().localizedName ?? "Mac"
-        #endif
     }
 }

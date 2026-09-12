@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
+		E8832430303B3D0000ACC8F5 /* MystnotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MystnotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E883240B303B3CCB00ACC8F5 /* Mystnotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mystnotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -21,6 +22,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		E8832431303B3D0000ACC8F5 /* MystNotesTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MystNotesTests;
+			sourceTree = "<group>";
+		};
 		E883240D303B3CCB00ACC8F5 /* MystNotes */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -31,7 +37,24 @@
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
+/* Begin PBXContainerItemProxy section */
+		E8832436303B3D0000ACC8F5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E8832403303B3CCB00ACC8F5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E883240A303B3CCB00ACC8F5;
+			remoteInfo = Mystnotes;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFrameworksBuildPhase section */
+		E8832434303B3D0000ACC8F5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E8832408303B3CCB00ACC8F5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -46,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				E883240D303B3CCB00ACC8F5 /* MystNotes */,
+				E8832431303B3D0000ACC8F5 /* MystNotesTests */,
 				E883240C303B3CCB00ACC8F5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				E883240B303B3CCB00ACC8F5 /* Mystnotes.app */,
+				E8832430303B3D0000ACC8F5 /* MystnotesTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -83,6 +108,29 @@
 			productReference = E883240B303B3CCB00ACC8F5 /* Mystnotes.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E8832432303B3D0000ACC8F5 /* MystnotesTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E883243A303B3D0000ACC8F5 /* Build configuration list for PBXNativeTarget "MystnotesTests" */;
+			buildPhases = (
+				E8832433303B3D0000ACC8F5 /* Sources */,
+				E8832434303B3D0000ACC8F5 /* Frameworks */,
+				E8832435303B3D0000ACC8F5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E8832437303B3D0000ACC8F5 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E8832431303B3D0000ACC8F5 /* MystNotesTests */,
+			);
+			name = MystnotesTests;
+			packageProductDependencies = (
+			);
+			productName = MystnotesTests;
+			productReference = E8832430303B3D0000ACC8F5 /* MystnotesTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -95,6 +143,10 @@
 				TargetAttributes = {
 					E883240A303B3CCB00ACC8F5 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					E8832432303B3D0000ACC8F5 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = E883240A303B3CCB00ACC8F5;
 					};
 				};
 			};
@@ -113,12 +165,20 @@
 			projectRoot = "";
 			targets = (
 				E883240A303B3CCB00ACC8F5 /* Mystnotes */,
+				E8832432303B3D0000ACC8F5 /* MystnotesTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E8832409303B3CCB00ACC8F5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E8832435303B3D0000ACC8F5 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -135,7 +195,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E8832433303B3D0000ACC8F5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E8832437303B3D0000ACC8F5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E883240A303B3CCB00ACC8F5 /* Mystnotes */;
+			targetProxy = E8832436303B3D0000ACC8F5 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		E883241A303B3CCC00ACC8F5 /* Debug */ = {
@@ -352,6 +427,60 @@
 			};
 			name = Release;
 		};
+		E8832438303B3D0000ACC8F5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 74784378R7;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mozynas.MystnotesTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mystnotes.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mystnotes";
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Debug;
+		};
+		E8832439303B3D0000ACC8F5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 74784378R7;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mozynas.MystnotesTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mystnotes.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mystnotes";
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -369,6 +498,15 @@
 			buildConfigurations = (
 				E883241A303B3CCC00ACC8F5 /* Debug */,
 				E883241B303B3CCC00ACC8F5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E883243A303B3D0000ACC8F5 /* Build configuration list for PBXNativeTarget "MystnotesTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E8832438303B3D0000ACC8F5 /* Debug */,
+				E8832439303B3D0000ACC8F5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
