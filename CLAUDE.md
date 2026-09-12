@@ -25,7 +25,7 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 **Three things block shipping. They are the current work.**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
-2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11), the 30 s debounced push (task 12), `NSFilePresenter` folder watching (task 13) and non-blocking downloads (task 14) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
+2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11), the 30 s debounced push (task 12), `NSFilePresenter` folder watching (task 13), non-blocking downloads (task 14) and the single storage root (task 15) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
 3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness and durability suite, both green. Run on the iPad simulator.
 
 ---
@@ -42,7 +42,7 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit's stroke ID API exists but is iOS 27+** — `PKStrokePath.id` and `init(controlPoints:creationDate:id:)` are both marked iOS/iPadOS/macOS 27.0+, so they are genuinely unavailable on the iOS 26.5 SDK. Verified against Apple's docs Sept 12, 2026. Adopt them when the deployment target can move; until then the neutral format (M0 task 16) owns the IDs.
 
 Two notes on the interim mapping. First, **you mostly don't need one**: when the neutral format is the source of truth, you build the `PKDrawing` yourself in a known order, so index position *is* the mapping. The problem only arises after PencilKit itself mutates the drawing, and then it's a diff. Second, for that diff key on **`path.creationDate` + `randomSeed` only**. Drop point count and order: the vector eraser modifies a stroke's `mask` rather than its path, so creationDate and randomSeed survive erasing while point count and array position do not.
-7. **One storage root.** `FileStore`'s iCloud ubiquity path is dead code in a free-account build and has already caused one shipped bug. Payloads live in one place.
+7. **One storage root.** Payloads live in the app's Documents directory and nowhere else. `FileStore`'s iCloud ubiquity path, the dual-location fallback and the `syncEnabled` preference are gone (M0 task 15); only a one-time, background adoption of anything an old build left in the container remains.
 8. **Local-first.** Fully functional with no sync folder chosen, an unreachable folder, or an evicted file. These are designed states with calm UI, not error dialogs.
 9. **The user can export everything, always.** Any feature that creates data is covered by export before it ships.
 10. **Ink latency is sacred.** Nothing synchronous on the main thread during drawing. Recognition, indexing, thumbnails, embeddings and sync all stay off the drawing path.
@@ -122,8 +122,8 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 ### Known gotchas — already paid for, don't rediscover
 
 - Vision returns nothing on transparent ink. `HandwritingRecognizer` composites onto opaque white first. Keep that.
-- `url(forUbiquityContainerIdentifier:)` blocks and is called on essentially every autosave; `FileStore` memoizes it. That whole path is scheduled for deletion in M0 anyway.
-- Flipping the sync toggle used to swing `baseDirectory()` and make every drawing invisible. `url(for:)`'s dual-location fallback exists solely to paper over that. Fix the cause, remove the patch.
+- `url(forUbiquityContainerIdentifier:)` blocks. It is now called at most once per install, off the main thread, by `FileStore.adoptLegacyCloudFilesOnce`. Don't reintroduce it on a hot path.
+- Flipping the old sync toggle used to swing `baseDirectory()` and make every drawing invisible. Deleted in task 15 along with the fallback that papered over it; there is one directory now.
 - Ink colors invert with system light/dark mode; fixed across three commits, don't regress it.
 - SwiftData's template-generated `Item.swift` causes duplicate schema conflicts. Delete it.
 - A missing iPad Air simulator destination makes UIKit / `UIViewRepresentable` types unavailable when building for Mac.

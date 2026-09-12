@@ -33,7 +33,7 @@ struct SyncEnvironment {
     static var live: SyncEnvironment {
         SyncEnvironment(
             withFolder: { body in try SyncFolder.withFolder(body) },
-            localFilesDirectory: { FileStore.localBaseDirectory() },
+            localFilesDirectory: { FileStore.baseDirectory() },
             state: LiveSyncStateStore.shared,
             deviceName: liveDeviceName,
             now: { Date() }

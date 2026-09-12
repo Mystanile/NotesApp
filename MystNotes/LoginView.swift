@@ -45,7 +45,6 @@ struct LoginView: View {
 
             VStack(spacing: 6) {
                 Button("Continue Without an Account") {
-                    AppSettings.syncEnabled = false
                     AppSettings.isGuestMode = true
                 }
                 .font(.subheadline)
@@ -86,9 +85,6 @@ struct LoginView: View {
                 }
             }
             errorMessage = nil
-            // Signing in for real always implies wanting sync — matters when
-            // this follows "Continue Without an Account", which turns it off.
-            AppSettings.syncEnabled = true
             AppSettings.isSignedIn = true
 
         case .failure(let error):

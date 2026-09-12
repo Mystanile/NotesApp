@@ -24,7 +24,6 @@ enum AppSettings {
         static let signedInUserID = "signedInAppleUserID"
         static let signedInDisplayName = "signedInDisplayName"
         static let isGuestMode = "isGuestMode"
-        static let syncEnabled = "syncEnabled"
         static let syncFolderBookmark = "syncFolderBookmark"
         static let syncFolderName = "syncFolderName"
         static let lastPulledExportDate = "syncLastPulledExportDate"
@@ -46,22 +45,10 @@ enum AppSettings {
 
     /// True once someone has chosen "Continue Without an Account" on the
     /// login screen — an alternative way past `ContentView`'s gate that
-    /// carries no Apple ID identity, and always pairs with `syncEnabled =
-    /// false` (see `LoginView`).
+    /// carries no Apple ID identity.
     static var isGuestMode: Bool {
         get { defaults.bool(forKey: Keys.isGuestMode) }
         set { defaults.set(newValue, forKey: Keys.isGuestMode) }
-    }
-
-    /// Whether SwiftData's CloudKit sync should be enabled at all. Read once
-    /// when `MystnotesApp` builds its `ModelConfiguration` — SwiftData can't
-    /// swap this on a container that's already running, so flipping it (from
-    /// the login screen or Settings) only takes effect the *next* launch.
-    /// `FileStore`, by contrast, checks this on every call and can honor a
-    /// "don't sync" choice immediately for actual drawings/imports.
-    static var syncEnabled: Bool {
-        get { defaults.object(forKey: Keys.syncEnabled) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Keys.syncEnabled) }
     }
 
     static func exitGuestMode() {
@@ -207,22 +194,5 @@ enum AppSettings {
         case "dark": return .dark
         default: return nil
         }
-    }
-
-    // MARK: Sync status (informational)
-
-    /// True when the user is signed into iCloud with this device.
-    static var isCloudAvailable: Bool {
-        FileManager.default.ubiquityIdentityToken != nil
-    }
-
-    /// True when payload files (drawings/imports) are actually being written
-    /// to the iCloud Drive container rather than the local sandbox. Note this
-    /// is currently expected to be false — file sync is deferred until the
-    /// user frees iCloud space (see Mystnotes.entitlements).
-    static var isUsingCloudStorage: Bool {
-        let cloud = FileStore.baseDirectory()
-        let local = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return cloud != local
     }
 }

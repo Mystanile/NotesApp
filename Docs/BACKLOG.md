@@ -9,7 +9,6 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 ## Found during the code read (Sept 12, 2026)
 
 - [M0] `MystNotesDetailView` is 1365 lines. Not urgent, but it will fight you during M2/M3. Split it as its own commit when it starts hurting, not as a side effect.
-- [M1] `AppSettings.syncEnabled` becomes partly meaningless once `FileStore`'s ubiquity path is deleted — audit what the toggle should actually mean afterwards
 - [M1] `copyFiles` is best-effort and silently skips a file that hasn't synced yet. Surface that as a visible "N files still downloading" state rather than a silent partial pull.
 - [M1] Export currently covers page and notebook. Add whole-library export as the trust feature.
 - [M2] `Link` has an anchor rect already — reuse it for graph edge anchors rather than inventing a second anchoring model
