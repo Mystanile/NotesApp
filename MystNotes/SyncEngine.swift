@@ -251,7 +251,8 @@ struct SyncRunner {
             let workingDir = try SyncFolder.workingDirectory(in: folder)
             // A push always pulls first: it folds in whatever another device
             // wrote so what we're about to write isn't stale.
-            let hashes = PayloadHashCache()
+            let hashes = PayloadHashCache(directory: environment.localFilesDirectory())
+            defer { hashes.persist() }
             let remote = try readRemote(workingDir: workingDir, context: context)
             var pending = remote?.pending ?? []
             if pull || push {
@@ -801,12 +802,41 @@ struct SyncRunner {
         return dataA != dataB
     }
 
-    /// Hashes computed during one run, so the two snapshot builds a sync
-    /// makes (post-merge check, push) read each payload once. Keyed by
-    /// name plus size and modification date, so a file rewritten between
-    /// the two is rehashed.
+    /// Content hashes of local payloads, so a push doesn't reread every
+    /// file in the library. Persisted as `.payload-hashes.json` beside the
+    /// payloads; each entry is validated against the file's current size
+    /// and modification date - the same stat-cache rule git's index uses.
+    /// This is a device checking its own files on its own filesystem, not
+    /// the cross-device mtime comparison the old `copyFiles` did.
+    ///
+    /// Without it a sync with nothing to do cost 0.45 s at 2,000 tiny
+    /// pages and grows with total payload bytes (PERFORMANCE_BASELINE).
     final class PayloadHashCache {
-        private var entries: [String: (size: Int, modified: Date, hash: String)] = [:]
+        struct Entry: Codable, Equatable {
+            var size: Int
+            var modified: Date
+            var hash: String
+        }
+
+        static let fileName = ".payload-hashes.json"
+
+        private var entries: [String: Entry] = [:]
+        private var dirty = false
+        private var directory: URL?
+
+        init() {}
+
+        /// Loads the persisted cache for `directory`, if any.
+        init(directory: URL) {
+            self.directory = directory
+            let url = directory.appendingPathComponent(Self.fileName)
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
+                entries = decoded
+            }
+        }
+
+        var count: Int { entries.count }
 
         func hash(of name: String, in directory: URL) -> String? {
             let url = directory.appendingPathComponent(name)
@@ -814,8 +844,23 @@ struct SyncRunner {
                   let size = values.fileSize, let modified = values.contentModificationDate else { return nil }
             if let entry = entries[name], entry.size == size, entry.modified == modified { return entry.hash }
             guard let hash = PayloadHash.sha256(of: url) else { return nil }
-            entries[name] = (size, modified, hash)
+            entries[name] = Entry(size: size, modified: modified, hash: hash)
+            dirty = true
             return hash
+        }
+
+        /// Drops entries for files that no longer exist and writes the
+        /// cache if anything changed this run.
+        func persist() {
+            guard let directory else { return }
+            let fm = FileManager.default
+            let live = entries.filter { fm.fileExists(atPath: directory.appendingPathComponent($0.key).path) }
+            guard dirty || live.count != entries.count else { return }
+            entries = live
+            if let data = try? JSONEncoder().encode(entries) {
+                try? data.write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
+            }
+            dirty = false
         }
     }
 

@@ -15,7 +15,7 @@
 | Sync with nothing to do | 0.45 s | 5 s |
 | Full index rebuild from the folder | 1.11 s | 30 s |
 
-**What to watch.** The incremental and no-op numbers should not depend on library size, and today they do, linearly in total payload bytes: every push hashes every local payload (`PayloadHashCache` only spans one run). At 2,000 tiny test payloads that's the 0.45 s. At 2,000 real pages averaging 100 KB it would be a few seconds per sync, all disk reads. The fix is on the backlog — persist the hash beside the model when `DrawingStore` writes the record — and this table is the trigger for it.
+**What to watch.** The incremental and no-op numbers should not depend on library size. Two terms did: hashing every local payload on every push (linear in total payload *bytes*), and fetching and encoding every page twice per sync (linear in page *count*). The first is gone — `PayloadHashCache` now persists as `.payload-hashes.json` beside the payloads, each entry validated by the file's size and modification date — but this fixture's payloads are tens of bytes, so the no-op number only moved from 0.45 s to 0.37 s; the remaining cost is the second term. At 2,000 pages that's fine. If it isn't at 10,000, the fix is an incremental snapshot: build DTOs only for notebooks whose pages changed since the last push, which the per-notebook content signature already makes possible.
 
 ## Library list — 200 notebooks
 

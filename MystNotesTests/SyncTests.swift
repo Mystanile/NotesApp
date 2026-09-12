@@ -405,6 +405,37 @@ final class SyncTests: XCTestCase {
         XCTAssertTrue(harness.folderTrashNames().contains { $0.hasPrefix(notebook.id.uuidString) })
     }
 
+    // MARK: Payload hashes are remembered between runs
+
+    func testPayloadHashes_arePersisted_validatedByStat_andPrunedForMissingFiles() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 3)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance(); try ipad.sync()
+
+        let cacheURL = ipad.filesDirectory.appendingPathComponent(SyncRunner.PayloadHashCache.fileName)
+        let first = try JSONDecoder().decode([String: SyncRunner.PayloadHashCache.Entry].self, from: Data(contentsOf: cacheURL))
+        XCTAssertEqual(first.count, 3, "one entry per payload after the first push")
+
+        // A rewritten payload is rehashed; the untouched ones are not.
+        let newInk = Data("rewritten".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[0], ink: newInk)
+        harness.clock.advance(); try ipad.sync()
+        let second = try JSONDecoder().decode([String: SyncRunner.PayloadHashCache.Entry].self, from: Data(contentsOf: cacheURL))
+        let name0 = try XCTUnwrap(pages[0].drawingFileRef), name1 = try XCTUnwrap(pages[1].drawingFileRef)
+        XCTAssertEqual(second[name0]?.hash, PayloadHash.sha256(of: newInk))
+        XCTAssertNotEqual(second[name0], first[name0])
+        XCTAssertEqual(second[name1], first[name1], "an untouched payload keeps its entry")
+        XCTAssertEqual(try XCTUnwrap(harness.pageInFolder(pages[0].id)).drawingHash, PayloadHash.sha256(of: newInk),
+                       "the folder sees the new hash, so the cache was not trusted blindly")
+
+        // A payload that disappears is dropped from the cache.
+        harness.clock.advance(); try ipad.deletePage(pages[2])
+        harness.clock.advance(); try ipad.sync()
+        let third = try JSONDecoder().decode([String: SyncRunner.PayloadHashCache.Entry].self, from: Data(contentsOf: cacheURL))
+        XCTAssertNil(third[try XCTUnwrap(pages[2].drawingFileRef)])
+    }
+
     // MARK: Content-addressed payloads (M0 task 10)
 
     func testPayloads_areNamedByContentHash_andIdenticalInkIsStoredOnce() throws {
