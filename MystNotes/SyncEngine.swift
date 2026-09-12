@@ -19,12 +19,18 @@ import SwiftData
 /// `Notebook.settingsModifiedAt`; folders are a flat upsert; deletions
 /// travel as `Tombstone`s.
 ///
-/// Triggers (wired in `ContentView`): pull when the app becomes active, push
-/// when it goes to the background, plus a manual "Sync Now" in Settings.
+/// Triggers: pull when the app becomes active and push when it goes to the
+/// background (wired in `ContentView`), a manual "Sync Now" in Settings,
+/// and a push about `debounceInterval` after the last save on the app's
+/// main `ModelContext` - so a long session, or one that crashes before it
+/// backgrounds, still reaches the folder.
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
     private init() {}
+
+    /// How long after the last edit the automatic push goes out.
+    static let debounceInterval: TimeInterval = 30
 
     enum Status: Equatable {
         case idle
@@ -37,9 +43,38 @@ final class SyncEngine: ObservableObject {
 
     private var container: ModelContainer?
     private var isRunning = false
+    /// A change arrived while a sync was running: run again when it ends.
+    private var pushAgainWhenDone = false
+    private var saveObserver: NSObjectProtocol?
+    private lazy var debouncer = SyncDebouncer(interval: Self.debounceInterval) { [weak self] in
+        self?.pushAfterEdits()
+    }
 
     func configure(container: ModelContainer) {
-        if self.container == nil { self.container = container }
+        guard self.container == nil else { return }
+        self.container = container
+
+        // Every user edit ends in a save on the main context (the views'
+        // @Environment(\.modelContext)). The runner saves on a context of
+        // its own, so a pull never schedules a push of itself.
+        let mainContext = container.mainContext
+        saveObserver = NotificationCenter.default.addObserver(
+            forName: ModelContext.didSave, object: mainContext, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.noteLocalChange() }
+        }
+    }
+
+    /// Something in the library changed on this device. Called for every
+    /// main-context save; harmless when no folder is chosen.
+    func noteLocalChange() {
+        guard SyncFolder.isConfigured else { return }
+        debouncer.noteChange()
+    }
+
+    private func pushAfterEdits() {
+        guard SyncFolder.isConfigured else { return }
+        start(pull: false, push: true)
     }
 
     /// Records the user's chosen folder and kicks off the first sync. Any
@@ -62,8 +97,10 @@ final class SyncEngine: ObservableObject {
         start(pull: true, push: false)
     }
 
+    /// Backgrounding doesn't wait for the debounce.
     func pushOnBackground() {
         guard SyncFolder.isConfigured else { return }
+        debouncer.cancel()
         start(pull: false, push: true)
     }
 
@@ -73,7 +110,12 @@ final class SyncEngine: ObservableObject {
             status = .failed(SyncFolder.SyncFolderError.notConfigured.localizedDescription)
             return
         }
-        guard !isRunning else { return }
+        guard !isRunning else {
+            // Don't lose the request: whatever changed will be in the
+            // snapshot the follow-up run builds.
+            if push { pushAgainWhenDone = true }
+            return
+        }
         isRunning = true
         status = .syncing
 
@@ -93,6 +135,10 @@ final class SyncEngine: ObservableObject {
                     self.status = .succeeded(Date())
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
+                }
+                if self.pushAgainWhenDone {
+                    self.pushAgainWhenDone = false
+                    self.start(pull: false, push: true)
                 }
             }
         }
