@@ -1,7 +1,7 @@
 # SPEC: The `.mystnote` Document Format
 
 **Format version:** 1
-**Status:** Draft — the Step 2 target. Step 1 (splitting `library.json`) lands first; see §0.
+**Status:** Draft — the Step 2 target. §5 (stroke format) is implemented and measured. Step 1 (splitting `library.json`) lands first; see §0.
 **Owner:** Myst
 
 This is a contract. Once frozen, changes require a version bump and a migration path. Read `PROJECT_PLAN.md` §3 for why this exists.
@@ -137,7 +137,7 @@ Notebook-<uuid>.mystnote/
 
 ## 5. Neutral stroke format (`ink/<uuid>.strokes`)
 
-The most important file in the system. Binary, little-endian, length-prefixed.
+The most important file in the system. Binary, little-endian. **Rewritten Sept 12, 2026 against the iOS 26.5 SDK and the fidelity harness; the earlier draft cited API that does not exist.** The implementation is `StrokeCodec`; this section describes what it writes.
 
 ### Header
 
@@ -145,72 +145,67 @@ The most important file in the system. Binary, little-endian, length-prefixed.
 |---|---|---|
 | magic | 4 bytes | `MYSK` |
 | version | uint16 | 1 |
+| flags | uint32 | reserved, 0 |
 | strokeCount | uint32 | |
-| flags | uint32 | bit 0: has timeline; bit 1: dual-write PKDrawing authoritative |
 
 ### Per stroke
 
 | Field | Type | Notes |
 |---|---|---|
-| strokeID | 16 bytes | UUID, stable across edits |
-| inkType | uint8 | enum, see below |
-| color | 4 bytes | RGBA8 |
-| baseWidth | float32 | |
-| transform | 6 × float32 | affine |
-| maskPathLen | uint32 | 0 if unmasked |
-| maskPath | bytes | serialized path, for lasso-erased strokes |
-| creationDate | float64 | seconds since reference date |
+| strokeID | 16 bytes | UUID. **Assigned by this format**, not by PencilKit — there is no `PKStrokePath.id`. See "Stroke identity". |
+| inkType | uint16 length + UTF-8 | `PKInk.InkType.rawValue`. Currently `com.apple.ink.{pen,pencil,marker,monoline,fountainpen,watercolor,crayon}`. A reader without PencilKit maps these itself; an unknown string decodes as pen. |
+| color | 4 × float64 | red, green, blue, alpha as `UIColor` reports them. Not RGBA8: quantizing colour is a guaranteed fidelity failure. |
+| randomSeed | uint32 | `PKStroke.randomSeed`. Seeds pencil, watercolor and crayon texture; without it no round trip is pixel-identical. |
+| transform | 6 × float64 | a b c d tx ty |
+| creationDate | float64 | seconds since 2001-01-01 (`PKStrokePath.creationDate`) |
+| mask | uint32 element count, then elements | `PKStroke.mask`, the lasso-erase clip, as `CGPath` elements: uint8 kind (0 move, 1 line, 2 quad, 3 cubic, 4 close) followed by 0/1/2/3 float64 point pairs. Count 0 = no mask. |
 | pointCount | uint32 | |
-| points | pointCount × 48 bytes | see below |
+| points | pointCount × 11 × float64 | see below |
 
-### Per point (12 × float32 = 48 bytes)
+There is no per-stroke width: `PKStroke` has none, width is per point.
 
-**These are cubic B-spline control points, not raw touch samples.** `PKStrokePath` is a collection of control points; iterating it gives you exactly what you need to reconstruct the path. Do not resample.
+### Per point (11 × float64 = 88 bytes)
 
-| Offset | Field | Source |
+**These are the B-spline control points `PKStrokePath` exposes, not raw touch samples. Never resample.** Stored at full `CGFloat` precision; halving it is a way to lose ink.
+
+| # | Field | Source |
 |---|---|---|
-| 0 | x | `PKStrokePoint.location.x` |
-| 4 | y | `.location.y` |
-| 8 | timeOffset | `.timeOffset` |
-| 12 | size.w | `.size.width` |
-| 16 | size.h | `.size.height` |
-| 20 | opacity | `.opacity` |
-| 24 | force | `.force` |
-| 28 | azimuth | `.azimuth` |
-| 32 | altitude | `.altitude` |
-| 36 | secondaryScale | `.secondaryScale` |
-| 40 | threshold | `.threshold` |
-| 44 | lateralJitter | `.lateralJitter` |
+| 0 | x | `location.x` |
+| 1 | y | `location.y` |
+| 2 | timeOffset | |
+| 3 | size.width | |
+| 4 | size.height | |
+| 5 | opacity | |
+| 6 | force | |
+| 7 | azimuth | |
+| 8 | altitude | |
+| 9 | secondaryScale | |
+| 10 | threshold | |
 
-The last three matter. `secondaryScale`, `threshold`, and `lateralJitter` drive the newer ink renderers (watercolor, crayon, and friends). Dropping them is the most likely cause of a failed fidelity test, so capture them from the start even though the older initializer doesn't take them.
+`lateralJitter` from the earlier draft does not exist in the SDK. Reconstruct with `PKStrokePoint(location:timeOffset:size:opacity:force:azimuth:altitude:secondaryScale:threshold:)` — the widest initializer there is. **`threshold` is not optional:** rebuilding crayon strokes without it (the 7- and 8-argument initializers) changes 28,011 pixels of a 260k-pixel render.
 
-Construct points with the widest initializer available:
-`PKStrokePoint(location:timeOffset:size:opacity:force:azimuth:altitude:secondaryScale:threshold:lateralJitter:)`, falling back to narrower overloads on older OS versions and recording which one was used.
+### Stroke identity
 
-### Ink type enum
+PencilKit has no stroke id. `StrokeIDMap` recognises a stroke by what survives every operation the canvas performs on it — `(creationDate, randomSeed, pointCount, first point, last point)` — and deliberately not by its transform (lasso move) or mask (partial erase). On save, a stroke matching a known fingerprint keeps its UUID; a new one is assigned. The file carries the ids, so a load restores the map and the next save keeps them. Strokes a shape tool creates in the same instant differ by their points. Tested across add, vector erase, move, partial erase, same-instant bursts, and save/load/save.
 
-Stable integers, append-only. Never renumber.
+### Fidelity (M0 task 17, measured)
 
-```
-0 pen        1 pencil     2 marker      3 monoline
-4 fountain   5 watercolor 6 crayon      7 highlighter
-8 eraserBitmap  9 eraserVector
-255 unknown  (preserve raw attributes in a sidecar)
-```
+`PKDrawing.image(from:scale:)` at 2×, original vs round trip, 3 strokes of 32 points, ~250k pixels:
 
-### Round trip
+| Ink | Differing pixels | Max channel Δ |
+|---|---|---|
+| pen, pencil, monoline, fountainPen, watercolor | **0** | 0 |
+| marker | 52 | 3 |
+| crayon | 182 | 28 |
+| mixed page (all types, masks, transforms) | 20 | 3 |
 
-```
-PKDrawing → [PKStroke] → [PKStrokePath control points] → neutral stream    (write)
-neutral stream → PKStrokePath(controlPoints:creationDate:id:)
-              → PKStroke(ink:path:transform:mask:) → PKDrawing              (read)
-```
+The marker and crayon differences are not information the format drops. `PKStrokePoint` quantizes azimuth, altitude and threshold on construction (0.2 reads back as 0.19998474 — a 16-bit grid; azimuth 0 reads back as −4.8e−5), and constructing a point from read-back values re-quantizes with rounding: one quantum of drift, once. **A second trip is pixel-identical to the first.** Apple's `dataRepresentation()` is exact only because it stores the internal representation the public API cannot reach. Recorded tolerances (with headroom): marker 150, crayon 400, mixed 100.
 
-Use the `id:` variant of the path initializer. Preserving `PKStrokePath.id` across a round trip is what lets the timeline, ink transclusion, and cloze regions keep pointing at the same stroke after a save/load cycle. Without it, every reload orphans every stroke reference.
+Two further facts the harness surfaced: `PKDrawing`'s `==` compares an internal drawing identity, not content (`PKDrawing() == PKDrawing()` is false), so content equality is checked stroke by stroke; and `PKDrawing(data:)` parses some short byte strings as an empty drawing rather than throwing, so `DrawingStore` checks the `wrd\xf0` archive header before trusting an empty result.
 
-All of the above is iOS 14+ / macOS 11+, so there is no availability problem.
+### Storage (16b, pending)
 
-**This round trip is unproven and must be validated before anything is built on it.** M0 task 3 renders the original and the reconstruction to bitmaps and compares them per ink type. If an ink type fails tolerance, set flag bit 1 for that stroke's document and dual-write the `PKDrawing` as authoritative for it. Document which types fall back and why.
+Because the drift is one-time and invisible, the plan is: `.strokes` is the source of truth for every ink type, and the `.drawing` file stays as a render cache that is used when its recorded hash matches the `.strokes` file — so the user's own device never even sees the one-quantum drift, while every other reader gets the neutral file. No per-type dual-write flags.
 
 ---
 

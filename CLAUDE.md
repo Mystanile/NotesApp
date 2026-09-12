@@ -60,7 +60,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Library:** `LibraryView` (516), `LibraryCells`, `FolderPickerView`, `TutorialNotebookFactory` (303)
 
-**Data:** `MystNotesModels` (210), `FileStore` (131), `DrawingStore`, `AppSettings` (227)
+**Data:** `MystNotesModels`, `FileStore`, `DrawingStore`, `StrokeCodec` (neutral ink format + `StrokeIDMap`), `AppSettings`
 
 **Sync:** `SyncEngine`, `SyncEnvironment`, `SyncFolder`, `SyncModels`, `SyncDebouncer`, `SyncFolderWatcher`, `SyncDiagnostics` (debug) — folder layout is documented at the top of `SyncModels.swift`
 
@@ -133,6 +133,8 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
+- `PKDrawing`'s `==` compares an internal drawing identity, not content: `PKDrawing() == PKDrawing()` is **false**. Compare strokes structurally (`assertStrokesEqual` in the tests). `PKDrawing(data:)` preserves the identity, which is why a data round trip *looks* equal.
+- `PKStrokePoint` quantizes `azimuth`, `altitude` and `threshold` on construction (16-bit grid; 0.2 → 0.19998474). Rebuilding a point from read-back values drifts by one quantum, once; marker and crayon texture can see it (≤0.07% of pixels), the other inks can't. Measured in `InkFidelityTests`; don't chase it, it isn't the codec.
 - `PKDrawing(data:)` is not a corruption check. It throws on truncation and most garbage (`NSCocoaErrorDomain 3`), but short arbitrary byte strings can parse as a zero-stroke drawing. `DrawingStore.load` also checks the archive header (`wrd\xf0`, read from `PKDrawing().dataRepresentation()` at runtime) before trusting an empty result.
 
 ---
@@ -178,8 +180,9 @@ In order. Each gates the next.
 15. Delete the iCloud ubiquity path from `FileStore`. One storage root. Remove the dual-location fallback in `url(for:)`.
 
 **Ink format**
-16. Neutral stroke codec: `PKDrawing` → neutral → `PKDrawing`, preserving stroke IDs.
-17. Pixel-diff fidelity harness per ink type. Dual-write any type that fails tolerance.
+16. ~~Neutral stroke codec~~ done — `StrokeCodec` + `StrokeIDMap`, spec §5 rewritten against the SDK.
+17. ~~Pixel-diff fidelity harness per ink type~~ done — 5 of 7 inks exact, marker/crayon within a one-time quantization drift; numbers in spec §5.
+16b. Storage flip: `.strokes` becomes the source of truth, `.drawing` a hash-checked render cache. Touches every reader; fixture migration test required.
 
 **Proof**
 18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.
