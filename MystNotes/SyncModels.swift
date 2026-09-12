@@ -15,7 +15,8 @@ import CryptoKit
 ///       notebooks/<uuid>.json   NotebookDTO - that notebook's pages and links
 ///       tombstones.json         TombstoneFile - every deletion any device
 ///                               has recorded, merged by union
-///       files/                  payloads
+///       files/<sha256>.<ext>    payloads, named by content. Immutable:
+///                               a different version is a different file
 ///       library.json            format 1: the whole library in one file.
 ///                               Read once when index.json is absent; never
 ///                               written again, never deleted.
@@ -162,6 +163,29 @@ struct LibrarySnapshot: Codable {
     }
 }
 
+// MARK: - Payload hashing
+
+/// Content addressing for `files/`. A payload's folder name is its
+/// SHA-256 plus the original extension, so a file that hasn't finished
+/// downloading (or was damaged) is detectable by rehashing it, and two
+/// pages with identical ink share one file.
+enum PayloadHash {
+    static func sha256(of url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return sha256(of: data)
+    }
+
+    static func sha256(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `files/<hash>.<ext>` for a payload whose local name is `localName`.
+    static func folderName(hash: String, localName: String) -> String {
+        let ext = (localName as NSString).pathExtension
+        return ext.isEmpty ? hash : "\(hash).\(ext)"
+    }
+}
+
 // MARK: - Tombstone
 
 struct Tombstone: Codable, Hashable {
@@ -262,6 +286,12 @@ struct PageDTO: Codable {
     var modifiedAt: Date?
     /// Absent in older snapshots. See `Page.aspectRatio`.
     var aspectRatio: Double?
+    /// SHA-256 of the payload behind `drawingFileRef` / `backgroundRef`,
+    /// which is also its file name in the folder (`files/<hash>.<ext>`).
+    /// Absent in snapshots from before content addressing, whose payloads
+    /// sit in the folder under their local names.
+    var drawingHash: String?
+    var backgroundHash: String?
     var textBlocks: [TextBlockDTO]
     var stickers: [StickerDTO]
     var importedDocuments: [ImportedDocumentDTO]
@@ -290,6 +320,8 @@ struct ImportedDocumentDTO: Codable {
     var id: UUID
     var sourceType: String
     var fileRef: String
+    /// See `PageDTO.drawingHash`.
+    var fileHash: String?
     var pdfPageIndex: Int
     var frameX: Double?
     var frameY: Double?

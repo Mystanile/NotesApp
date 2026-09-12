@@ -19,6 +19,8 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 ## Found while building the sync harness (Sept 12, 2026)
 
 - [M0] A notebook whose `notebooks/<id>.json` never arrives (deleted by hand, lost by the provider) stays pending forever on the puller: its settings show, its pages don't, and the puller never publishes its own copy of it. Needs a designed state ("waiting for 1 notebook") and eventually a way out. Fits task 8/13.
+- [M0] Every push hashes every local payload (cached within one run, not across runs). Fine at today's library size; at 200 notebooks with imported PDFs it's seconds of reading per push. Persist the hash next to the model (`Page.drawingHash` set by `DrawingStore.save`, likewise for imports) when it starts to show in task 20's baseline.
+- [M0] Superseded payload versions accumulate in `files/` by design (content addressing never overwrites). Task 11's pruning must keep anything referenced by *any* notebook file present in the folder, plus a grace period, so a notebook file that hasn't arrived yet can't lose its ink.
 - [M0] A tombstoned notebook's `notebooks/<id>.json` is left in the folder. Move it to folder-side `trash/` in task 11 with the payloads.
 - [M0] A build from before task 5 can't decode a snapshot containing a `kind: "page"` tombstone (enum decode fails, whole `library.json` rejected). Only matters while a pre-task-5 build is still installed anywhere; the format split in task 6 should carry a real version gate.
 - [M0] `pushPayloads` replaces the folder's copy of a drawing file in place when the local page won. Folder-side history of superseded versions is task 7/11 territory; the loser device keeps its own copy in its local `trash/`.

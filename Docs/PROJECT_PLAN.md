@@ -119,6 +119,27 @@ Smaller than the old draft claimed, because so much is already built.
 | **No Math Notes equivalent** | Apple Notes (with 3D graphs in iOS 26) | Medium — high personal value for engineering coursework |
 | **No collaboration or share links** | Both, incl. real-time | Deferred, see §5 |
 
+### 1.4 Shipped but broken
+
+Two tools are in the toolbar and neither works well enough to keep as-is. Full diagnosis in `Docs/TOOL_FIXES.md`.
+
+**Shape tool.** Produces only ovals and straight lines, at a fixed thickness, behind a separate armed mode. Four independent bugs in `ShapeRecognizer.swift`:
+
+1. `isRoughlyCircular` uses a threshold of `stdDev / avgRadius < 0.28`. A square's coefficient of variation is about 0.10, so **squares classify as circles**. This one threshold explains the whole "only ovals" symptom.
+2. `PKStrokePath(controlPoints:)` takes **cubic B-spline control points**, so five rectangle corners get smoothed into a rounded, shrunken blob. The ellipse only survives because it's sampled at 72 points. Sharp corners need control-point multiplicity 3.
+3. `size: CGSize(width: 4, height: 4)` is hardcoded — the same bug class as the tool-colour one already fixed once. Width lives on `PKInkingTool`, not `PKInk`, so it never reaches the recognizer.
+4. The closed-shape test is too strict; anything failing it becomes a straight line from first point to last, which is where the stray diagonals come from.
+
+It also only handles axis-aligned rectangles, and has no triangle, arrow, or polygon support at all.
+
+The interaction changes too: **hold the stroke to snap**, the way GoodNotes and Apple Notes do it, instead of arming a toolbar button. That deletes `ShapeDrawingOverlay` and a mode, and means the freehand phase uses real ink with real pressure instead of a 2px `DragGesture` preview.
+
+**Fill tool.** Doesn't work, and has been fixed twice already. The design is sound — rasterize, scanline flood fill, synthesize horizontal `PKStroke`s so the fill is erasable ink rather than a bolted-on image layer — and the scanline implementation looks correct. The leading hypothesis is that HEAD's "real page zoom" commit broke the coordinate-space assumption the function documents: the tap overlay's space is no longer identical to the canvas's local space, so the tap resolves to the wrong pixel and the function returns `nil` silently.
+
+Because it's been rewritten twice on hypothesis, the third attempt starts with instrumentation, not a rewrite. If the fix isn't quick, hide the tool rather than ship a visible button that does nothing.
+
+---
+
 ---
 
 ## 2. Strategy: what MystNotes is actually for
@@ -206,7 +227,7 @@ With `Page.modifiedAt` added, merge becomes per page, and the Blocker-1 failure 
 
 Unchanged, and the folder design makes it *more* important: the user-visible folder full of open files currently contains one file type nobody but Apple can read. `PKDrawing` is opaque. If ink only exists in that form, there's no web or Android renderer, ever.
 
-`PKStroke` exposes `PKStrokePath` as a spline over `PKStrokePoint`s, and `PKStrokePath(controlPoints:creationDate:id:)` rebuilds it, so a faithful round trip is reachable. **Still unproven — it needs the pixel-diff harness in M0.** If an ink type fails tolerance, dual-write the `PKDrawing` for that type and document it.
+`PKStroke` exposes `PKStrokePath` as a spline over `PKStrokePoint`s, and `PKStrokePath(controlPoints:creationDate:)` rebuilds it, so a faithful round trip is reachable. (The `id:` variant that would preserve stroke identity for free is iOS 27+, so until the deployment target can move, the neutral format owns the IDs.) **Still unproven — it needs the pixel-diff harness in M0.** If an ink type fails tolerance, dual-write the `PKDrawing` for that type and document it.
 
 ### 3.5 SwiftData gets demoted
 
@@ -278,6 +299,8 @@ Fix the three blockers. Nothing else matters until these are done.
 Smaller than it was, because the toolbar, export, image editing, settings and onboarding are already done.
 
 - **Real PDF annotation.** Replace `ImportedArtwork`'s rasterize-to-JPEG with a live `PDFKit` layer: selectable text, PDF text in the search index, annotations as a separate layer over the real page. Highest-value item in the milestone.
+- **Rebuild the shape tool** (`Docs/TOOL_FIXES.md` Part 1): proper classifier with corner detection, sharp corners via control-point multiplicity, width and colour from the active `PKInkingTool`, rotated rectangles, triangles and arrows, and hold-to-snap replacing the armed mode. Delete `ShapeDrawingOverlay`.
+- **Fix or hide the fill tool** (`Docs/TOOL_FIXES.md` Part 2): instrument first to find where the tap coordinate goes wrong under page zoom, then fix. If it isn't quick, remove it from the toolbar until it works.
 - Lasso upgrades: cross-page move, **convert to text** (the Vision pipeline already exists), resize, recolor, copy as image
 - Per-page templates, custom page sizes, imported templates, a starting template library. `Page.aspectRatio` means the model is half done.
 - Favorites, bookmarks, page outline / jump bar
@@ -382,6 +405,7 @@ Shorter than planned — onboarding, settings, tutorial notebook and export alre
 | No paid membership until late | 7-day expiry makes week-long soak testing impossible; M6 blocked outright | Buy before M0's soak test; check the UofT institutional waiver first |
 | Graph view becomes a slow hairball at 1000+ nodes | Flagship feature feels broken | Level-of-detail, clustering, filtering; benchmark at 5000 synthetic nodes |
 | Competitor importers unreachable | Weakens adoption | Timeboxed spike; PDF + markdown fallback is already solid |
+| Fill tool gets rewritten a third time on a guess | Weeks lost on a tool that's already failed twice | Instrument before touching it; hide it if the measured fix isn't small |
 | Scope creep from the parity checklist | Never ships | §5 is binding. Anything outside the current milestone goes to `BACKLOG.md`. |
 | First year of engineering eats all available time | Slips | Milestones ship independently; stopping after M1 still leaves a real app |
 

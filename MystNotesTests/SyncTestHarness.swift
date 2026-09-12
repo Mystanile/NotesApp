@@ -243,13 +243,35 @@ final class SyncTestHarness {
         try encoder.encode(value).write(to: url)
     }
 
-    /// Ink bytes for a page as they sit in the shared folder's `files/`.
+    /// The page as the folder currently describes it, from whichever
+    /// `notebooks/*.json` contains it.
+    func pageInFolder(_ pageID: UUID) -> PageDTO? {
+        let dir = folderFile("notebooks")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasSuffix(".json") {
+            if let data = try? Data(contentsOf: dir.appendingPathComponent(name)),
+               let notebook = try? decoder.decode(NotebookDTO.self, from: data),
+               let page = notebook.pages.first(where: { $0.id == pageID }) {
+                return page
+            }
+        }
+        return nil
+    }
+
+    /// Ink bytes for a page as the folder's notebook file points at them
+    /// (`files/<hash>.drawing`), falling back to the pre-content-addressing
+    /// name.
     func inkInFolder(forPageID pageID: UUID) -> Data? {
-        let url = syncFolder
-            .appendingPathComponent("Mystnotes", isDirectory: true)
-            .appendingPathComponent("files", isDirectory: true)
-            .appendingPathComponent("\(pageID.uuidString).drawing")
-        return try? Data(contentsOf: url)
+        if let page = pageInFolder(pageID), let hash = page.drawingHash, let ref = page.drawingFileRef {
+            return try? Data(contentsOf: folderFile("files/\(PayloadHash.folderName(hash: hash, localName: ref))"))
+        }
+        return try? Data(contentsOf: folderFile("files/\(pageID.uuidString).drawing"))
+    }
+
+    func folderPayloadNames() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: folderFile("files").path)) ?? [])
+            .filter { !$0.hasPrefix(".") && $0 != "trash" }.sorted()
     }
 
     func tearDown() {

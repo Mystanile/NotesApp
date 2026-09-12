@@ -130,9 +130,15 @@ struct SyncRunner {
             let workingDir = try SyncFolder.workingDirectory(in: folder)
             // A push always pulls first: it folds in whatever another device
             // wrote so what we're about to write isn't stale.
+            let hashes = PayloadHashCache()
             let remote = try readRemote(workingDir: workingDir, context: context)
-            if pull || push { try performPull(remote, context: context, workingDir: workingDir) }
-            if push { try performPush(against: remote, context: context, workingDir: workingDir) }
+            var pending = remote?.pending ?? []
+            if pull || push {
+                pending.formUnion(try performPull(remote, context: context, workingDir: workingDir, hashes: hashes))
+            }
+            if push {
+                try performPush(against: remote, pending: pending, context: context, workingDir: workingDir, hashes: hashes)
+            }
         }
     }
 
@@ -143,28 +149,42 @@ struct SyncRunner {
     /// same decisions and copies the same bytes again. Killed after the
     /// model save but before the "pulled" marker, the next pull finds every
     /// page tied and changes nothing.
-    private func performPull(_ remote: RemoteLibrary?, context: ModelContext, workingDir: URL) throws {
-        guard let remote else { return }
+    ///
+    /// Returns the notebooks that could not be fully applied because a
+    /// page's payload hasn't arrived (or arrived damaged). Those pages keep
+    /// their local state and the notebook is treated as pending.
+    @discardableResult
+    private func performPull(_ remote: RemoteLibrary?, context: ModelContext, workingDir: URL,
+                             hashes: PayloadHashCache) throws -> Set<UUID> {
+        guard let remote else { return [] }
 
         if let lastPulled = environment.state.lastPulledExportDate, remote.snapshot.exportedAt <= lastPulled {
-            return  // already applied this snapshot
+            return []  // already applied this snapshot
         }
 
-        let plan = try planMerge(of: remote.snapshot, context: context)
+        var plan = try planMerge(of: remote.snapshot, context: context)
 
-        pullPayloads(for: remote.snapshot, plan: plan,
-                     from: workingDir.appendingPathComponent("files", isDirectory: true),
-                     to: environment.localFilesDirectory())
+        let deferredPages = pullPayloads(for: remote.snapshot, plan: plan,
+                                         from: workingDir.appendingPathComponent("files", isDirectory: true),
+                                         to: environment.localFilesDirectory())
+        var deferredNotebooks: Set<UUID> = []
+        for notebook in remote.snapshot.notebooks {
+            for page in notebook.pages where deferredPages.contains(page.id) {
+                plan.pages[page.id] = .deferred
+                deferredNotebooks.insert(notebook.id)
+            }
+        }
 
         try apply(remote.snapshot, plan: plan, context: context)
 
         SyncTombstones.merge(remote.snapshot.tombstones, into: environment.state)
-        // A notebook file the index promised but that hasn't arrived yet
-        // (iCloud delivers files in no particular order) means this
-        // snapshot isn't fully applied: leave the marker so the next pull
-        // tries again. Nothing that did arrive is undone - the merge is
-        // safe to repeat.
-        if remote.isComplete {
+        // A notebook file or payload the index promised but that hasn't
+        // arrived yet (iCloud delivers files in no particular order) means
+        // this snapshot isn't fully applied: leave the marker so the next
+        // pull tries again. Nothing that did arrive is undone - the merge
+        // is safe to repeat.
+        let isComplete = remote.isComplete && deferredNotebooks.isEmpty
+        if isComplete {
             environment.state.lastPulledExportDate = remote.snapshot.exportedAt
         }
 
@@ -173,9 +193,10 @@ struct SyncRunner {
         // tombstone isn't in the folder yet - the next push must go out, so
         // the marker is left alone. (It used to be set unconditionally,
         // which is how a device's own edits went unpushed.)
-        if remote.isComplete, try buildSnapshot(context: context).signature == remote.snapshot.signature {
+        if isComplete, try buildSnapshot(context: context, hashes: hashes).signature == remote.snapshot.signature {
             environment.state.lastPushSignature = remote.snapshot.signature
         }
+        return deferredNotebooks
     }
 
     // MARK: Push
@@ -189,13 +210,13 @@ struct SyncRunner {
     /// is not written - this library only has its settings, and publishing
     /// it with no pages would overwrite the real content when it lands.
     /// The index keeps the folder's own entry for it.
-    private func performPush(against remote: RemoteLibrary?, context: ModelContext, workingDir: URL) throws {
-        let snapshot = try buildSnapshot(context: context)
+    private func performPush(against remote: RemoteLibrary?, pending: Set<UUID>, context: ModelContext,
+                             workingDir: URL, hashes: PayloadHashCache) throws {
+        let snapshot = try buildSnapshot(context: context, hashes: hashes)
         let remoteIndex = remote?.index
         // A folder without index.json yet (empty, or format 1) always gets
         // one, even when nothing else changed - that's the migration.
         guard snapshot.signature != environment.state.lastPushSignature || remoteIndex == nil else { return }
-        let pending = remote?.pending ?? []
 
         pushPayloads(for: snapshot,
                      from: environment.localFilesDirectory(),
@@ -429,6 +450,9 @@ struct SyncRunner {
             case localWins
             /// A tombstone covers it; it must not come (back) in.
             case skip
+            /// The remote copy would win, but its payload hasn't arrived.
+            /// Nothing changes this round; the notebook is pending.
+            case deferred
         }
         var pages: [UUID: PageOutcome] = [:]
         /// Local pages a page tombstone removes.
@@ -479,87 +503,114 @@ struct SyncRunner {
 
     // MARK: Payload files
 
-    /// Brings in the files the merge is going to need. Imported PDFs and
-    /// images are immutable and uniquely named, so "copy if missing" is
-    /// exact. Drawing files change in place, so one is copied only when the
-    /// merge decided its page comes from the folder - and if the local copy
-    /// differs, that's the same-page conflict: the local ink goes to
-    /// `trash/` first, never overwritten.
-    private func pullPayloads(for remote: LibrarySnapshot, plan: MergePlan, from source: URL, to destination: URL) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+    /// One payload a page needs: its local name, and its content hash when
+    /// the snapshot knows it (snapshots from before content addressing
+    /// don't; their files sit in the folder under the local name).
+    private struct PayloadRef {
+        var localName: String
+        var hash: String?
+        /// Whether a local copy may legitimately differ from the folder's
+        /// (ink is rewritten in place; imports never change).
+        var isMutable: Bool
 
-        for notebookDTO in remote.notebooks {
-            for pageDTO in notebookDTO.pages {
-                for name in Self.immutableFileNames(of: pageDTO) {
-                    copyIfMissing(name, from: source, to: destination, downloadFirst: true)
-                }
-                guard let name = pageDTO.drawingFileRef, !name.isEmpty else { continue }
-                switch plan.pages[pageDTO.id] {
-                case .insert?, .remoteWins?:
-                    let src = source.appendingPathComponent(name)
-                    SyncFolder.ensureDownloaded(src)
-                    guard fm.fileExists(atPath: src.path) else { continue }
-                    let dst = destination.appendingPathComponent(name)
-                    if fm.fileExists(atPath: dst.path) {
-                        guard Self.filesDiffer(src, dst) else { continue }
-                        DrawingStore.moveToTrash(dst, tag: "conflict")
-                    }
-                    try? fm.copyItem(at: src, to: dst)
-                case .localWins?, .skip?, nil:
-                    continue
-                }
-            }
+        var folderName: String {
+            hash.map { PayloadHash.folderName(hash: $0, localName: localName) } ?? localName
         }
     }
 
-    /// Puts this library's files in the folder. Immutable payloads are
-    /// copied if missing; a drawing file replaces the folder's copy when it
-    /// differs. Because a push always pulls first, a differing folder copy
-    /// is one this device's page has already won against.
+    private static func payloads(of page: PageDTO) -> [PayloadRef] {
+        var refs: [PayloadRef] = []
+        if let name = page.drawingFileRef, !name.isEmpty {
+            refs.append(PayloadRef(localName: name, hash: page.drawingHash, isMutable: true))
+        }
+        if let name = page.backgroundRef, !name.isEmpty {
+            refs.append(PayloadRef(localName: name, hash: page.backgroundHash, isMutable: false))
+        }
+        for doc in page.importedDocuments where !doc.fileRef.isEmpty {
+            refs.append(PayloadRef(localName: doc.fileRef, hash: doc.fileHash, isMutable: false))
+        }
+        return refs
+    }
+
+    /// Brings in the payloads the merge is going to need, for the pages
+    /// the plan says come from the folder. A payload is copied only once
+    /// it rehashes to its own name - a file still downloading, or damaged,
+    /// doesn't match and the page is deferred. If the local copy of a
+    /// drawing differs from what's coming, that's the same-page conflict:
+    /// the local ink goes to `trash/` first, never overwritten.
+    ///
+    /// Returns the pages whose payloads are not all here yet.
+    private func pullPayloads(for remote: LibrarySnapshot, plan: MergePlan, from source: URL, to destination: URL) -> Set<UUID> {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        var deferred: Set<UUID> = []
+
+        for notebookDTO in remote.notebooks {
+            for pageDTO in notebookDTO.pages {
+                switch plan.pages[pageDTO.id] {
+                case .insert?, .remoteWins?: break
+                default: continue
+                }
+                for ref in Self.payloads(of: pageDTO) where !fetch(ref, from: source, to: destination) {
+                    deferred.insert(pageDTO.id)
+                }
+            }
+        }
+        return deferred
+    }
+
+    /// Copies one payload from the folder to the local directory. False if
+    /// it isn't there yet or doesn't match its hash.
+    private func fetch(_ ref: PayloadRef, from source: URL, to destination: URL) -> Bool {
+        let fm = FileManager.default
+        let dst = destination.appendingPathComponent(ref.localName)
+
+        // Already have exactly this content? Nothing to do.
+        if fm.fileExists(atPath: dst.path) {
+            if let hash = ref.hash {
+                if PayloadHash.sha256(of: dst) == hash { return true }
+            } else if !ref.isMutable {
+                return true   // immutable and unversioned: whatever is here is it
+            }
+        }
+
+        let src = source.appendingPathComponent(ref.folderName)
+        SyncFolder.ensureDownloaded(src)
+        guard fm.fileExists(atPath: src.path) else { return false }
+        if let hash = ref.hash, PayloadHash.sha256(of: src) != hash {
+            return false   // partial download or damaged: not this content
+        }
+
+        if fm.fileExists(atPath: dst.path) {
+            if ref.hash == nil, !Self.filesDiffer(src, dst) { return true }
+            DrawingStore.moveToTrash(dst, tag: ref.isMutable ? "conflict" : "replaced")
+        }
+        return (try? fm.copyItem(at: src, to: dst)) != nil
+    }
+
+    /// Puts this library's payloads in the folder under their content
+    /// names. A file that already exists there is by definition identical,
+    /// so nothing in `files/` is ever overwritten.
     private func pushPayloads(for snapshot: LibrarySnapshot, from source: URL, to destination: URL) {
         let fm = FileManager.default
         try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
 
         for notebookDTO in snapshot.notebooks {
             for pageDTO in notebookDTO.pages {
-                for name in Self.immutableFileNames(of: pageDTO) {
-                    copyIfMissing(name, from: source, to: destination, downloadFirst: false)
-                }
-                guard let name = pageDTO.drawingFileRef, !name.isEmpty else { continue }
-                let src = source.appendingPathComponent(name)
-                guard fm.fileExists(atPath: src.path) else { continue }
-                let dst = destination.appendingPathComponent(name)
-                if fm.fileExists(atPath: dst.path) {
-                    guard Self.filesDiffer(src, dst) else { continue }
-                    // Same discipline as DrawingStore.save: never leave the
-                    // folder's copy half-written.
-                    let staging = dst.appendingPathExtension("tmp")
+                for ref in Self.payloads(of: pageDTO) where ref.hash != nil {
+                    let dst = destination.appendingPathComponent(ref.folderName)
+                    guard !fm.fileExists(atPath: dst.path) else { continue }
+                    let src = source.appendingPathComponent(ref.localName)
+                    guard fm.fileExists(atPath: src.path) else { continue }
+                    // Stage then rename, so a reader never sees a partial
+                    // file under a name that promises complete content.
+                    let staging = destination.appendingPathComponent(".\(ref.folderName).tmp")
                     try? fm.removeItem(at: staging)
                     guard (try? fm.copyItem(at: src, to: staging)) != nil else { continue }
-                    _ = try? fm.replaceItemAt(dst, withItemAt: staging)
-                } else {
-                    try? fm.copyItem(at: src, to: dst)
+                    if (try? fm.moveItem(at: staging, to: dst)) == nil { try? fm.removeItem(at: staging) }
                 }
             }
         }
-    }
-
-    private func copyIfMissing(_ name: String, from source: URL, to destination: URL, downloadFirst: Bool) {
-        let fm = FileManager.default
-        let dst = destination.appendingPathComponent(name)
-        guard !fm.fileExists(atPath: dst.path) else { return }
-        let src = source.appendingPathComponent(name)
-        if downloadFirst { SyncFolder.ensureDownloaded(src) }
-        guard fm.fileExists(atPath: src.path) else { return }
-        try? fm.copyItem(at: src, to: dst)
-    }
-
-    private static func immutableFileNames(of page: PageDTO) -> [String] {
-        var names: [String] = []
-        if let ref = page.backgroundRef, !ref.isEmpty { names.append(ref) }
-        for doc in page.importedDocuments where !doc.fileRef.isEmpty { names.append(doc.fileRef) }
-        return names
     }
 
     private static func filesDiffer(_ a: URL, _ b: URL) -> Bool {
@@ -567,9 +618,28 @@ struct SyncRunner {
         return dataA != dataB
     }
 
+    /// Hashes computed during one run, so the two snapshot builds a sync
+    /// makes (post-merge check, push) read each payload once. Keyed by
+    /// name plus size and modification date, so a file rewritten between
+    /// the two is rehashed.
+    final class PayloadHashCache {
+        private var entries: [String: (size: Int, modified: Date, hash: String)] = [:]
+
+        func hash(of name: String, in directory: URL) -> String? {
+            let url = directory.appendingPathComponent(name)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize, let modified = values.contentModificationDate else { return nil }
+            if let entry = entries[name], entry.size == size, entry.modified == modified { return entry.hash }
+            guard let hash = PayloadHash.sha256(of: url) else { return nil }
+            entries[name] = (size, modified, hash)
+            return hash
+        }
+    }
+
     // MARK: Build snapshot from the model graph
 
-    private func buildSnapshot(context: ModelContext) throws -> LibrarySnapshot {
+    private func buildSnapshot(context: ModelContext, hashes: PayloadHashCache) throws -> LibrarySnapshot {
+        let local = environment.localFilesDirectory()
         let folders = try context.fetch(FetchDescriptor<Folder>())
         let notebooks = try context.fetch(FetchDescriptor<Notebook>())
         let allLinks = try context.fetch(FetchDescriptor<Link>())
@@ -596,6 +666,8 @@ struct SyncRunner {
                     ocrUpdatedAt: page.ocrUpdatedAt,
                     modifiedAt: page.modifiedAt,
                     aspectRatio: page.aspectRatio,
+                    drawingHash: page.drawingFileRef.flatMap { hashes.hash(of: $0, in: local) },
+                    backgroundHash: page.backgroundRef.flatMap { hashes.hash(of: $0, in: local) },
                     textBlocks: (page.textBlocks ?? []).map {
                         TextBlockDTO(id: $0.id, content: $0.content,
                                      frameX: $0.frameX, frameY: $0.frameY,
@@ -609,6 +681,7 @@ struct SyncRunner {
                     },
                     importedDocuments: (docsByPage[page.id] ?? []).map {
                         ImportedDocumentDTO(id: $0.id, sourceType: $0.sourceType, fileRef: $0.fileRef,
+                                            fileHash: hashes.hash(of: $0.fileRef, in: local),
                                             pdfPageIndex: $0.pdfPageIndex,
                                             frameX: $0.frameX, frameY: $0.frameY,
                                             frameWidth: $0.frameWidth, frameHeight: $0.frameHeight,
@@ -754,7 +827,7 @@ struct SyncRunner {
                     guard let page = pageByID[pageDTO.id] else { continue }
                     mergeRecognizedText(into: page, from: pageDTO)
 
-                case .skip?, nil:
+                case .skip?, .deferred?, nil:
                     continue
                 }
             }

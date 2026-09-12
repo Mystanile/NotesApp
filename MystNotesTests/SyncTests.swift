@@ -189,6 +189,59 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    // MARK: Content-addressed payloads (M0 task 10)
+
+    func testPayloads_areNamedByContentHash_andIdenticalInkIsStoredOnce() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("same ink on both pages".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[0], ink: ink)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+
+        let expected = "\(PayloadHash.sha256(of: ink)).drawing"
+        XCTAssertEqual(harness.folderPayloadNames(), [expected], "one file, named by its hash")
+        for page in pages {
+            let dto = try XCTUnwrap(harness.pageInFolder(page.id))
+            XCTAssertEqual(dto.drawingHash, PayloadHash.sha256(of: ink))
+            XCTAssertEqual(dto.drawingFileRef, "\(page.id.uuidString).drawing", "local name is unchanged")
+        }
+        XCTAssertEqual(harness.inkInFolder(forPageID: pages[0].id), ink)
+    }
+
+    /// A payload still downloading rehashes to something other than its
+    /// name. That page must not be applied, the notebook must not be
+    /// republished from the incomplete side, and the next pull finishes.
+    func testPull_partialPayload_defersThePage_andCompletesLater() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("this ink takes a while to download".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+
+        // Simulate iCloud mid-download: the file exists but is truncated.
+        let payload = harness.folderFile("files/\(PayloadHash.sha256(of: ink)).drawing")
+        let complete = try Data(contentsOf: payload)
+        try complete.prefix(complete.count / 2).write(to: payload)
+        let notebookFileBefore = try Data(contentsOf: harness.folderFile("notebooks/\(notebook.id.uuidString).json"))
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 1, "the page whose ink is incomplete is not applied yet")
+        XCTAssertNil(mac.ink(forPageID: pages[1].id), "no half-downloaded ink may land locally")
+        XCTAssertNil(mac.state.lastPulledExportDate, "an incomplete pull is not marked done")
+        XCTAssertEqual(try Data(contentsOf: harness.folderFile("notebooks/\(notebook.id.uuidString).json")), notebookFileBefore,
+                       "the incomplete side must not republish the notebook")
+
+        try complete.write(to: payload)
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 2)
+        XCTAssertEqual(mac.ink(forPageID: pages[1].id), ink)
+        XCTAssertNotNil(mac.state.lastPulledExportDate)
+    }
+
     // MARK: Index history (M0 task 7)
 
     func testPush_keepsTheLastNIndexes_andTheNewestMatchesIndexJSON() throws {
