@@ -35,6 +35,19 @@ final class InMemorySyncStateStore: SyncStateStore {
     var tombstonesData: Data?
 }
 
+/// The mirror's markers, sharing the device's tombstones - as
+/// `MirrorSyncStateStore` does in the app.
+final class InMemoryMirrorStateStore: SyncStateStore {
+    private let device: InMemorySyncStateStore
+    init(sharingTombstonesWith device: InMemorySyncStateStore) { self.device = device }
+    var lastPulledExportDate: Date?
+    var lastPushSignature: String = ""
+    var tombstonesData: Data? {
+        get { device.tombstonesData }
+        set { device.tombstonesData = newValue }
+    }
+}
+
 /// One simulated device: its own SwiftData store, its own payload files
 /// directory and its own sync bookkeeping, sharing a sync folder with the
 /// other devices in the test. Drives `SyncRunner` exactly the way the app
@@ -76,6 +89,30 @@ final class SyncTestDevice {
         container = try ModelContainer(for: schema, configurations: [configuration])
         context = ModelContext(container)
         context.autosaveEnabled = false
+    }
+
+    /// This device's local mirror (`Documents/Library/` in the app).
+    lazy var mirrorState = InMemoryMirrorStateStore(sharingTombstonesWith: state)
+    var mirrorDirectory: URL { filesDirectory.appendingPathComponent("Library", isDirectory: true) }
+
+    var mirrorEnvironment: SyncEnvironment {
+        SyncEnvironment(
+            withFolder: { [mirrorDirectory] body in
+                try FileManager.default.createDirectory(at: mirrorDirectory, withIntermediateDirectories: true)
+                try body(mirrorDirectory)
+            },
+            localFilesDirectory: { [filesDirectory] in filesDirectory },
+            state: mirrorState,
+            deviceName: name,
+            now: { [clock] in clock.now },
+            indexHistoryLimit: 20,
+            payloadsAreLocal: true
+        )
+    }
+
+    /// What the app does after every debounced push, folder or not.
+    func writeMirror() throws {
+        try SyncRunner(container: container, environment: mirrorEnvironment).run(pull: false, push: true)
     }
 
     var environment: SyncEnvironment {

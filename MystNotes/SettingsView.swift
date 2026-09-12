@@ -81,17 +81,6 @@ struct SettingsView: View {
                     Button("Sync Now") { SyncEngine.shared.syncNow() }
                         .disabled(sync.status == .syncing)
                     Button("Choose a Different Folder…") { showingFolderPicker = true }
-                    Button("Rebuild Index from Folder…") { confirmingRebuild = true }
-                        .disabled(sync.status == .syncing)
-                        .confirmationDialog(
-                            "Rebuild the library index from the sync folder?",
-                            isPresented: $confirmingRebuild, titleVisibility: .visible
-                        ) {
-                            Button("Rebuild", role: .destructive) { SyncEngine.shared.rebuildIndex() }
-                            Button("Cancel", role: .cancel) {}
-                        } message: {
-                            Text("Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
-                        }
                     Button("Turn Off Folder Sync", role: .destructive) { SyncEngine.shared.clearFolder() }
                     #if DEBUG
                     // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md, and the
@@ -108,6 +97,19 @@ struct SettingsView: View {
                     }
                     #endif
                 }
+                Button(syncFolderName.isEmpty ? "Rebuild Index…" : "Rebuild Index from Folder…") { confirmingRebuild = true }
+                    .disabled(sync.status == .syncing)
+                    .confirmationDialog(
+                        syncFolderName.isEmpty ? "Rebuild the library index from the local copy?" : "Rebuild the library index from the sync folder?",
+                        isPresented: $confirmingRebuild, titleVisibility: .visible
+                    ) {
+                        Button("Rebuild", role: .destructive) { SyncEngine.shared.rebuildIndex() }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text(syncFolderName.isEmpty
+                             ? "Use this if notebooks or pages look wrong or missing. The library is reconstructed from the copy Mystnotes keeps on this device."
+                             : "Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
+                    }
                 Button("Export Diagnostics…") {
                     do {
                         diagnosticsArchive = try DiagnosticsExport.makeArchive()

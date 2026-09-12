@@ -72,15 +72,32 @@ final class SyncEngine: ObservableObject {
     }
 
     /// Something in the library changed on this device. Called for every
-    /// main-context save; harmless when no folder is chosen.
+    /// main-context save. The mirror is written whether or not a sync
+    /// folder is chosen.
     func noteLocalChange() {
-        guard SyncFolder.isConfigured else { return }
         debouncer.noteChange()
     }
 
     private func pushAfterEdits() {
+        writeMirror()
         guard SyncFolder.isConfigured else { return }
         start(pull: false, push: true)
+    }
+
+    /// Writes `Documents/Library/` - the local, metadata-only copy of the
+    /// folder layout that a rebuild can use when no sync folder exists.
+    /// Cheap, off main, and never contends with a folder sync: it has its
+    /// own environment and state.
+    private func writeMirror() {
+        guard let container else { return }
+        let environment = SyncEnvironment.mirror
+        Task.detached(priority: .utility) {
+            do {
+                try SyncRunner(container: container, environment: environment).run(pull: false, push: true)
+            } catch {
+                AppLog.note("mirror", "write failed: \(error)")
+            }
+        }
     }
 
     /// Records the user's chosen folder and kicks off the first sync. Any
@@ -106,13 +123,14 @@ final class SyncEngine: ObservableObject {
         status = .idle
     }
 
-    /// Settings → "Rebuild Index from Folder". See `LibraryRebuild`.
+    /// Settings → "Rebuild Index". From the sync folder when one is chosen,
+    /// otherwise from the local mirror. See `LibraryRebuild`.
     func rebuildIndex() {
-        guard let container, SyncFolder.isConfigured, !isRunning else { return }
+        guard let container, !isRunning else { return }
         isRunning = true
         status = .syncing
         debouncer.cancel()
-        let environment = SyncEnvironment.live
+        let environment = SyncFolder.isConfigured ? SyncEnvironment.live : SyncEnvironment.mirror
         Task.detached(priority: .userInitiated) {
             let outcome: Result<Void, Error>
             do {
@@ -171,8 +189,9 @@ final class SyncEngine: ObservableObject {
 
     /// Backgrounding doesn't wait for the debounce.
     func pushOnBackground() {
-        guard SyncFolder.isConfigured else { return }
         debouncer.cancel()
+        writeMirror()
+        guard SyncFolder.isConfigured else { return }
         start(pull: false, push: true)
     }
 
@@ -253,9 +272,11 @@ struct SyncRunner {
             // wrote so what we're about to write isn't stale.
             let hashes = PayloadHashCache(directory: environment.localFilesDirectory())
             defer { hashes.persist() }
+            // A push always pulls first, folding in what another device
+            // wrote - except into the mirror, which only this device writes.
             let remote = try readRemote(workingDir: workingDir, context: context)
             var pending = remote?.pending ?? []
-            if pull || push {
+            if pull || (push && !environment.payloadsAreLocal) {
                 pending.formUnion(try performPull(remote, context: context, workingDir: workingDir, hashes: hashes))
             }
             if push {
@@ -535,8 +556,8 @@ struct SyncRunner {
 
         // Known to be missing notebook files this round: their payloads
         // would all look unreferenced. Don't prune until the folder is
-        // whole.
-        guard pending.isEmpty else { return }
+        // whole. The mirror has no payloads of its own to prune.
+        guard pending.isEmpty, !environment.payloadsAreLocal else { return }
 
         // Everything any notebook file still points at, under the name it
         // has in the folder. An unreadable notebook file (still
@@ -726,6 +747,9 @@ struct SyncRunner {
     ///
     /// Returns the pages whose payloads are not all here yet.
     private func pullPayloads(for remote: LibrarySnapshot, plan: MergePlan, from source: URL, to destination: URL) -> Set<UUID> {
+        // The mirror references the local files themselves; there is
+        // nothing to bring in.
+        guard !environment.payloadsAreLocal else { return [] }
         let fm = FileManager.default
         try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
         var deferred: Set<UUID> = []
@@ -776,6 +800,7 @@ struct SyncRunner {
     /// names. A file that already exists there is by definition identical,
     /// so nothing in `files/` is ever overwritten.
     private func pushPayloads(for snapshot: LibrarySnapshot, from source: URL, to destination: URL) {
+        guard !environment.payloadsAreLocal else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
 

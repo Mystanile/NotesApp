@@ -11,9 +11,10 @@ import SwiftData
 /// files or payloads that haven't arrived yet leave the pull incomplete,
 /// and the folder watcher finishes it when they land.
 ///
-/// Only the sync folder can be rebuilt from. A library with no folder
-/// chosen has no on-disk copy of its structure to rebuild from - see
-/// BACKLOG for the local mirror that would close that.
+/// With no sync folder chosen, the local mirror (`SyncEnvironment.mirror`,
+/// `Documents/Library/`) is rebuilt from instead: the same layout, kept
+/// on this device by every push, referencing the local payloads in
+/// place.
 enum LibraryRebuild {
     static func rebuild(container: ModelContainer, environment: SyncEnvironment) throws {
         let context = ModelContext(container)

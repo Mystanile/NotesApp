@@ -29,6 +29,10 @@ struct SyncEnvironment {
     /// this long before it's moved to `trash/` - a notebook file that
     /// hasn't arrived yet may still be about to reference it.
     var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
+    /// True for the local mirror: the "folder" is on this device, the
+    /// payloads it references are the local files themselves (nothing is
+    /// copied in or out), and nothing else writes it (no pull before push).
+    var payloadsAreLocal: Bool = false
 
     static var live: SyncEnvironment {
         SyncEnvironment(
@@ -38,6 +42,30 @@ struct SyncEnvironment {
             deviceName: liveDeviceName,
             now: { Date() }
         )
+    }
+
+    /// `Documents/Library/`: a copy of the folder layout, metadata only,
+    /// kept on this device so the index can be rebuilt even when no sync
+    /// folder was ever chosen (invariant 4). Written by the same debounced
+    /// push as the sync folder.
+    static var mirror: SyncEnvironment {
+        let directory = mirrorDirectory
+        return SyncEnvironment(
+            withFolder: { body in
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try body(directory)
+            },
+            localFilesDirectory: { FileStore.baseDirectory() },
+            state: MirrorSyncStateStore.shared,
+            deviceName: liveDeviceName,
+            now: { Date() },
+            indexHistoryLimit: 20,
+            payloadsAreLocal: true
+        )
+    }
+
+    static var mirrorDirectory: URL {
+        FileStore.baseDirectory().appendingPathComponent("Library", isDirectory: true)
     }
 
     private static var liveDeviceName: String {
@@ -58,6 +86,28 @@ protocol SyncStateStore: AnyObject {
     var lastPushSignature: String { get set }
     /// JSON-encoded `[Tombstone]`, see `SyncTombstones`.
     var tombstonesData: Data? { get set }
+}
+
+/// The local mirror's markers. Tombstones are shared with the live store:
+/// a deletion recorded on this device must apply when the mirror is read
+/// back, or a rebuild would resurrect it.
+final class MirrorSyncStateStore: SyncStateStore {
+    static let shared = MirrorSyncStateStore()
+    private init() {}
+    private let defaults = UserDefaults.standard
+
+    var lastPulledExportDate: Date? {
+        get { defaults.object(forKey: "mirror.lastPulledExportDate") as? Date }
+        set { defaults.set(newValue, forKey: "mirror.lastPulledExportDate") }
+    }
+    var lastPushSignature: String {
+        get { defaults.string(forKey: "mirror.lastPushSignature") ?? "" }
+        set { defaults.set(newValue, forKey: "mirror.lastPushSignature") }
+    }
+    var tombstonesData: Data? {
+        get { AppSettings.syncTombstonesData }
+        set { AppSettings.syncTombstonesData = newValue }
+    }
 }
 
 /// The app's real store: `UserDefaults` through `AppSettings`.

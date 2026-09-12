@@ -226,6 +226,58 @@ final class SyncTests: XCTestCase {
         XCTAssertNotNil(ipad.state.lastPulledExportDate, "the rebuild is a complete pull")
     }
 
+    /// No sync folder was ever chosen. The local mirror is enough to
+    /// rebuild from, and it copies no payloads - the ink is already here.
+    func testRebuild_fromTheLocalMirror_whenNoSyncFolderExists() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let school = try ipad.createFolder(name: "School")
+        let notebook = try ipad.createNotebook(title: "Mechanics", pageCount: 3)
+        notebook.folder = school
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance(); try ipad.addTextBlock(to: pages[0], content: "F = ma")
+        let store = DrawingStore.inDirectory(ipad.filesDirectory)
+        harness.clock.advance()
+        pages[1].drawingFileRef = try store.save(InkFixtures.drawing(inkType: .pen, strokes: 2), pageID: pages[1].id)
+        pages[1].markModified(at: harness.clock.now)
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.writeMirror()
+        let before = try ipad.shape()
+        let mirrorFiles = ipad.mirrorDirectory.appendingPathComponent("Mystnotes/files")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ipad.mirrorDirectory.appendingPathComponent("Mystnotes/index.json").path))
+        XCTAssertTrue(((try? FileManager.default.contentsOfDirectory(atPath: mirrorFiles.path)) ?? []).isEmpty,
+                      "the mirror is metadata only; payloads are not duplicated")
+
+        try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.mirrorEnvironment)
+
+        XCTAssertEqual(try ipad.shape(), before)
+        XCTAssertEqual(DrawingStore.inDirectory(ipad.filesDirectory).load(pageID: pages[1].id)?.strokes.count, 2, "ink in place, untouched")
+        XCTAssertNotNil(ipad.ink(forPageID: pages[0].id))
+    }
+
+    /// A page deleted after the mirror was last written must not come back
+    /// from it: the mirror shares the device's tombstones.
+    func testRebuild_fromTheMirror_doesNotResurrectADeletedPage() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 3)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance(); try ipad.writeMirror()
+
+        harness.clock.advance(); try ipad.deletePage(pages[1])
+        harness.clock.advance(); try ipad.writeMirror()   // the app writes it after every change
+        try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.mirrorEnvironment)
+        XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.map(\.id), [pages[0].id, pages[2].id])
+
+        // Even a mirror written *before* the deletion can't bring it back.
+        try FileManager.default.removeItem(at: ipad.mirrorDirectory)
+        // (Simulate: the older mirror is what's on disk, the tombstone is in state.)
+        ipad.mirrorState.lastPushSignature = ""
+        ipad.mirrorState.lastPulledExportDate = nil
+        harness.clock.advance(); try ipad.writeMirror()
+        try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.mirrorEnvironment)
+        XCTAssertFalse(try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).contains { $0.id == pages[1].id })
+    }
+
     /// A rebuild is a repair, not a merge: it must not push anything, and
     /// an edit that never reached the folder ends up in trash, not gone.
     func testRebuild_neverPushes_andKeepsUnpushedInkInTrash() throws {
