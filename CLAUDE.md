@@ -10,7 +10,7 @@ MystNotes is a handwriting-first note app for iPad and Mac (Mac Catalyst), built
 
 Long-term thesis: notes are a **connected graph you can draw on**, with **stroke-level time travel** and **recall built in**. Not a filing cabinet.
 
-Full context: `Docs/PROJECT_PLAN.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Open spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (decides task 8).
+Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASELINE.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Open spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (decides task 8).
 
 ---
 
@@ -187,7 +187,7 @@ In order. Each gates the next.
 **Proof**
 18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.
 19. ~~SwiftData index rebuild~~ done — `LibraryRebuild`, two tests (shape equality after rebuild; a rebuild never pushes and trashes unpushed ink).
-20. Performance baseline (ink latency on ProMotion, 500-page PDF memory, cold launch with 200 notebooks). Record as regression thresholds.
+20. ~~Performance baseline~~ done except ink latency (needs the iPad) — numbers and thresholds in `Docs/PERFORMANCE_BASELINE.md`, tests in `PerformanceTests`. Two findings feed the backlog: the record is ~6× PencilKit's size (compress before M1) and no-op sync cost is linear in payload bytes (persist hashes).
 21. Crash reporting.
 
 **M0 exit:** the task-3 scenario passes, no known path to data loss, index proven rebuildable, durability suite green.
