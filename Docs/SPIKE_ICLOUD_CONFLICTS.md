@@ -139,7 +139,13 @@ From the two `diagnostics/*.txt` files written after the 2-minute wait. For `ind
 
 ## 5.5 While you have the iPad: crash-report verification (task 21)
 
-MetricKit only delivers on a real device, not under the debugger. Build from Xcode, then **stop the debugger** and launch the app from the home screen. Draw something, then force a crash — the simplest is Settings → Rebuild Index with no folder chosen… no, that's guarded; instead kill it hard: swipe up on the app switcher does *not* count. Use Xcode → Debug → Simulate Memory Warning while running detached? Also no. The honest way: temporarily add `fatalError()` behind a Debug-only button, build, detach, tap it. Relaunch the app (MetricKit delivers within ~24 h at most, usually on the next launch), then Settings → *Export Diagnostics…* and confirm a `diagnostic-*.json` is in the zip. Record: ______ (arrived on launch N / after how long).
+MetricKit only delivers on a real device and never under the debugger.
+
+- [ ] Build to the iPad from Xcode, then **stop** the run and launch the app from the home screen.
+- [ ] Settings → Sync → *Simulate Crash (Debug)*. The app dies.
+- [ ] Relaunch it. MetricKit usually delivers on the next launch, at most within 24 h.
+- [ ] Settings → *Export Diagnostics…* → save the zip to Files. It should contain `app.log` (with the "simulated crash requested" line) and a `diagnostic-*.json` whose call stack names `SettingsView`.
+- [ ] Record: arrived on launch ______ / after ______.
 
 ## 6. Cleanup
 

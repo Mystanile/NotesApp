@@ -94,7 +94,12 @@ struct SettingsView: View {
                         }
                     Button("Turn Off Folder Sync", role: .destructive) { SyncEngine.shared.clearFolder() }
                     #if DEBUG
-                    // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md.
+                    // Spike tooling for Docs/SPIKE_ICLOUD_CONFLICTS.md, and the
+                    // one honest way to verify MetricKit delivers on device.
+                    Button("Simulate Crash (Debug)", role: .destructive) {
+                        AppLog.note("crash", "simulated crash requested from Settings")
+                        fatalError("Simulated crash for MetricKit verification")
+                    }
                     Button("Write Sync Diagnostics") {
                         switch SyncDiagnostics.write() {
                         case .success(let url): diagnosticsMessage = "Wrote \(url.lastPathComponent)"
