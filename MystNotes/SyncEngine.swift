@@ -124,9 +124,14 @@ final class SyncEngine: ObservableObject {
             await MainActor.run {
                 self.isRunning = false
                 switch outcome {
-                case .success: self.status = .succeeded(Date())
-                case .failure(let error as SyncRunner.Waiting): self.status = .waiting(error.localizedDescription)
-                case .failure(let error): self.status = .failed(error.localizedDescription)
+                case .success:
+                    self.status = .succeeded(Date())
+                    AppLog.note("rebuild", "index rebuilt from the folder")
+                case .failure(let error as SyncRunner.Waiting):
+                    self.status = .waiting(error.localizedDescription)
+                case .failure(let error):
+                    self.status = .failed(error.localizedDescription)
+                    AppLog.note("rebuild", "failed: \(error)")
                 }
             }
         }
@@ -204,6 +209,7 @@ final class SyncEngine: ObservableObject {
                     self.status = .waiting(error.localizedDescription)
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
+                    AppLog.note("sync", "failed (pull=\(pull) push=\(push)): \(error)")
                 }
                 if self.pushAgainWhenDone {
                     self.pushAgainWhenDone = false

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var showingFolderPicker = false
     @State private var diagnosticsMessage: String?
     @State private var confirmingRebuild = false
+    @State private var diagnosticsArchive: URL?
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -100,10 +101,17 @@ struct SettingsView: View {
                         case .failure(let error): diagnosticsMessage = error.localizedDescription
                         }
                     }
-                    if let diagnosticsMessage {
-                        Text(diagnosticsMessage).font(.footnote).foregroundStyle(.secondary)
-                    }
                     #endif
+                }
+                Button("Export Diagnostics…") {
+                    do {
+                        diagnosticsArchive = try DiagnosticsExport.makeArchive()
+                    } catch {
+                        diagnosticsMessage = error.localizedDescription
+                    }
+                }
+                if let diagnosticsMessage {
+                    Text(diagnosticsMessage).font(.footnote).foregroundStyle(.secondary)
                 }
                 LabeledContent("Status") {
                     Text(syncStatusText)
@@ -140,6 +148,9 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .sheet(item: $diagnosticsArchive) { url in
+            ShareSheet(items: [url])
+        }
         .fileImporter(isPresented: $showingFolderPicker, allowedContentTypes: [.folder]) { result in
             guard case .success(let url) = result else { return }
             SyncEngine.shared.chooseFolder(url)
@@ -180,4 +191,7 @@ struct SettingsView: View {
             ?? Bundle.main.infoDictionary?["CFBundleVersion"] as? String
             ?? "1.0"
     }
+}
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }

@@ -66,7 +66,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Search:** `HandwritingRecognizer` (133), `SearchIndex`, `SearchResultsView` (132)
 
-**App shell:** `MystnotesApp`, `ContentView`, `MystnotesWindowView`, `SettingsView` (155), `OnboardingView`, `LoginView`, `ShareSheet`, `Color+Hex`
+**App shell:** `MystnotesApp`, `ContentView`, `MystnotesWindowView`, `SettingsView`, `OnboardingView`, `LoginView`, `ShareSheet`, `Color+Hex`, `Diagnostics` (crash reports, log, export)
 
 **Tests:** `MystNotesTests/` — `SyncTestHarness` + `SyncTests` (two-library sync harness), `DurabilityTests` (+ `Fixtures/` schema fixture). Seams the tests drive: `SyncEnvironment` (sync), `DrawingStore` (ink file I/O). Run on the iPad simulator.
 
@@ -188,7 +188,7 @@ In order. Each gates the next.
 18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.
 19. ~~SwiftData index rebuild~~ done — `LibraryRebuild`, two tests (shape equality after rebuild; a rebuild never pushes and trashes unpushed ink).
 20. ~~Performance baseline~~ done except ink latency (needs the iPad) — numbers and thresholds in `Docs/PERFORMANCE_BASELINE.md`, tests in `PerformanceTests`. Two findings feed the backlog: the record is ~6× PencilKit's size (compress before M1) and no-op sync cost is linear in payload bytes (persist hashes).
-21. Crash reporting.
+21. ~~Crash reporting~~ done — MetricKit subscriber + `AppLog` + Settings → Export Diagnostics (`Diagnostics.swift`). **Device verification still owed:** MetricKit payloads never arrive on the simulator or under the debugger; crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in the export.
 
 **M0 exit:** the task-3 scenario passes, no known path to data loss, index proven rebuildable, durability suite green.
 

@@ -211,6 +211,7 @@ struct DrawingStore {
     static func moveToTrash(_ file: URL, tag: String) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: file.path) else { return }
+        if tag != "deleted" { AppLog.note("trash", "\(tag): \(file.lastPathComponent)") }
         let trash = file.deletingLastPathComponent().appendingPathComponent("trash", isDirectory: true)
         try? fm.createDirectory(at: trash, withIntermediateDirectories: true)
         let stamp = Int(Date().timeIntervalSince1970 * 1000)
