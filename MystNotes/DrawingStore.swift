@@ -5,14 +5,20 @@ import PencilKit
 
 /// Reads and writes a page's ink file, `<page-id>.drawing`.
 ///
-/// This is the one place `.drawing` bytes touch disk. `MystNotesDetailView`
-/// used to do this inline; it was pulled out so the durability tests can
-/// drive the exact save and load path the app uses, against a temp
-/// directory, and interrupt a write the way a kill would.
+/// This is the one place `.drawing` bytes touch disk, and it carries
+/// invariant 1 - never lose ink - for that file:
 ///
-/// Behaviour is exactly what the view did: `load` answers `nil` for a
-/// missing *or* undecodable file and the caller shows a blank page; `save`
-/// writes the bytes straight to the target URL.
+/// - **Saves are atomic.** Bytes go to a sibling `.tmp` file and are
+///   renamed into place, so the committed file is never partially
+///   written. A kill mid-save leaves the previous drawing intact and a
+///   stray `.tmp` the loader ignores.
+/// - **Unreadable files are quarantined, never overwritten.** A file that
+///   exists but doesn't decode (a payload copied before it finished
+///   downloading, a bad sector) is moved to `trash/` next to it before the
+///   page is shown blank, so the next autosave can't destroy the only copy.
+///
+/// `MystNotesDetailView` used to do this inline; `DurabilityTests` drives
+/// this exact path against a temp directory.
 struct DrawingStore {
     /// Resolves a payload file name to its on-disk URL. The app uses
     /// `FileStore.url(for:)`, which still carries the dual-location
@@ -38,19 +44,65 @@ struct DrawingStore {
     }
 
 #if canImport(UIKit)
-    /// The page's saved ink, or `nil` if there is no readable file.
+    /// The page's saved ink, or `nil` if there is none. A file that exists
+    /// but isn't a readable drawing is moved to `trash/` and also answers
+    /// `nil`.
+    ///
+    /// "Readable" needs two checks. `PKDrawing(data:)` throws on
+    /// truncation and most garbage, but a short run of arbitrary bytes can
+    /// parse as a drawing with zero strokes - indistinguishable from a
+    /// genuinely blank page. So a zero-stroke result is trusted only if the
+    /// bytes start the way PencilKit's own archives do. Anything with
+    /// strokes in it is kept no matter what.
     func load(pageID: UUID) -> PKDrawing? {
-        guard let data = try? Data(contentsOf: fileURL(for: pageID)) else { return nil }
-        return try? PKDrawing(data: data)
+        let target = fileURL(for: pageID)
+        guard let data = try? Data(contentsOf: target) else { return nil }
+        if let drawing = try? PKDrawing(data: data),
+           !drawing.strokes.isEmpty || data.starts(with: Self.archiveHeader) {
+            return drawing
+        }
+        Self.quarantine(target)
+        return nil
     }
 
-    /// Writes the drawing and returns the file name to keep in
+    /// The leading bytes of a PencilKit archive, taken from the framework
+    /// itself so the check tracks whatever version is running.
+    private static let archiveHeader: Data = PKDrawing().dataRepresentation().prefix(4)
+
+    /// Atomically writes the drawing and returns the file name to keep in
     /// `Page.drawingFileRef`.
     @discardableResult
     func save(_ drawing: PKDrawing, pageID: UUID) throws -> String {
         let target = fileURL(for: pageID)
-        try write(drawing.dataRepresentation(), target)
+        let staging = target.appendingPathExtension("tmp")
+        let fm = FileManager.default
+        try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        do {
+            try write(drawing.dataRepresentation(), staging)
+            if fm.fileExists(atPath: target.path) {
+                _ = try fm.replaceItemAt(target, withItemAt: staging)
+            } else {
+                try fm.moveItem(at: staging, to: target)
+            }
+        } catch {
+            // Only the never-committed fragment is discarded; the target
+            // was not touched.
+            try? fm.removeItem(at: staging)
+            throw error
+        }
         return target.lastPathComponent
     }
 #endif
+
+    /// Moves a damaged payload into `trash/` beside it, under a name that
+    /// can't collide with a later copy of the same page.
+    private static func quarantine(_ file: URL) {
+        let fm = FileManager.default
+        let trash = file.deletingLastPathComponent().appendingPathComponent("trash", isDirectory: true)
+        try? fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let name = file.deletingPathExtension().lastPathComponent + "-\(stamp)-unreadable." + file.pathExtension
+        try? fm.moveItem(at: file, to: trash.appendingPathComponent(name))
+    }
 }

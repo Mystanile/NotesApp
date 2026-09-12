@@ -126,6 +126,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
+- `PKDrawing(data:)` is not a corruption check. It throws on truncation and most garbage (`NSCocoaErrorDomain 3`), but short arbitrary byte strings can parse as a zero-stroke drawing. `DrawingStore.load` also checks the archive header (`wrd\xf0`, read from `PKDrawing().dataRepresentation()` at runtime) before trusting an empty result.
 
 ---
 
