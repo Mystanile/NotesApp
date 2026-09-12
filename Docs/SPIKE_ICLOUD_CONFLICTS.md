@@ -26,10 +26,19 @@ Secondary questions worth answering on the same run because they gate tasks 13 a
 
 ---
 
+## 1.5 Already checked from the Mac (Sept 12, 2026, unsandboxed Swift process)
+
+Run before the two-device experiment, against `iCloud Drive/MystSpike/probe/` (since removed). It narrows the question but does not answer it:
+
+- A file written into a user folder under iCloud Drive **is** a ubiquitous item (`isUbiquitousItem=true`, status `current`), and `NSFileVersion.currentVersionOfItem(at:)` answers for it. `otherVersionsOfItem` and `unresolvedConflictVersionsOfItem` return empty arrays, not nil — so the API is live for user-folder files, at least outside the sandbox. Outcome B is *possible*; whether iCloud actually produces conflict versions here is still the open question.
+- A second write from the same Mac records **no** local "other version": iCloud Drive keeps no per-write history for plain files. Any version that shows up during the experiment is a genuine cross-device conflict.
+- `isUploaded` went `true` between 16 and 30 s after the write, with `brctl status` showing the daemon `caught-up`. Expect roughly that latency per hop.
+- Not checked, because it needs the folder picker: whether all of the above holds **inside the Mac Catalyst sandbox through the security-scoped bookmark**, and anything on the iPad. §2's baseline diagnostics table is where that gets answered.
+
 ## 2. Setup (once, ~10 min)
 
 - [ ] Both devices signed into the **same** iCloud account, iCloud Drive on, Wi-Fi on.
-- [ ] In Files (iPad) or Finder (Mac), create a **new, empty** folder `iCloud Drive/MystSpike`. Do not use your real notes folder.
+- [ ] `iCloud Drive/MystSpike` already exists and is empty (left from §1.5). Use it. Do not use your real notes folder.
 - [ ] Build and run the app on the **iPad** from Xcode (Debug). Settings → Sync → *Choose Sync Folder…* → `MystSpike`. Status should read "synced" (or similar) within a few seconds.
 - [ ] Create one notebook, title `Spike`, with **4 pages**. Draw a distinct mark on each page (write the page number). Settings → *Sync Now*.
 - [ ] On the **Mac** (Finder → iCloud Drive → MystSpike → Mystnotes), confirm you see `index.json`, `tombstones.json`, `notebooks/`, `files/`, `index-history/`. Note how long they took to appear: ______ s.
