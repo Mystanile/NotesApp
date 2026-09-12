@@ -16,7 +16,7 @@ Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASEL
 
 ## Current state (read this before proposing anything)
 
-**~10,200 lines of Swift in 50 app files, plus ~2,300 lines of tests in 10 files (73 tests, all green). 50 commits; M0 lives on `m0-correctness`, 24 commits past `main`. Far more is built than a phase list suggests.**
+**~10,200 lines of Swift in 50 app files, plus ~2,300 lines of tests in 10 files (73 tests, all green). `m0-correctness` carries M0 (26 commits) on top of `custom-drawing-toolbar`, which itself was never merged; `main` is 48 commits behind. Merge both, in order, when M0 exits. Far more is built than a phase list suggests.**
 
 Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, lasso, shape recognition, fill/bucket tool, per-page canvas with real zoom, PDF and photo import with crop/rotate/resize, nested folders, notebook covers, thumbnail strip, four templates, whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
 
