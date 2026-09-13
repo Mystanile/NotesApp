@@ -114,10 +114,12 @@ struct SettingsView: View {
                              : "Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
                     }
                 Button("Export Diagnostics…") {
-                    do {
-                        diagnosticsArchive = try DiagnosticsExport.makeArchive()
-                    } catch {
-                        diagnosticsMessage = error.localizedDescription
+                    Task {
+                        let result = await Task.detached { Result { try DiagnosticsExport.makeArchive() } }.value
+                        switch result {
+                        case .success(let url): diagnosticsArchive = url
+                        case .failure(let error): diagnosticsMessage = error.localizedDescription
+                        }
                     }
                 }
                 if let diagnosticsMessage {

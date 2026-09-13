@@ -106,13 +106,20 @@ final class SyncEngine: ObservableObject {
     /// failure (typically the Mac sandbox refusing a persistent bookmark)
     /// lands in `status` so the Settings screen can show it.
     func chooseFolder(_ url: URL) {
-        do {
-            try SyncFolder.setFolder(url)
-            objectWillChange.send()
-            startWatchingFolder()
-            syncNow()
-        } catch {
-            status = .failed(error.localizedDescription)
+        status = .syncing
+        // Creating and test-resolving a security-scoped bookmark to an
+        // iCloud folder goes through the file provider; not on main.
+        let work = Self.detached(priority: .userInitiated) { try SyncFolder.setFolder(url) }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            switch await work.value {
+            case .success:
+                self.objectWillChange.send()
+                self.startWatchingFolder()
+                self.syncNow()
+            case .failure(let error):
+                self.status = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -191,20 +198,24 @@ final class SyncEngine: ObservableObject {
         MainThreadWatchdog.checkpoint("SyncEngine.startWatchingFolder")
         guard watcher == nil, !isStartingWatcher, SyncFolder.isConfigured else { return }
         isStartingWatcher = true
-        Task.detached(priority: .utility) { [weak self] in
+        let onChange: @MainActor @Sendable () -> Void = { [weak self] in self?.folderDidChange() }
+        let work = Self.makeWatcher(onChange: onChange)
+        Task { @MainActor [weak self] in
+            let watcher = await work.value
+            guard let self else { watcher?.stop(); return }
+            self.isStartingWatcher = false
+            guard let watcher, self.watcher == nil, SyncFolder.isConfigured else { watcher?.stop(); return }
+            self.watcher = watcher
+        }
+    }
+
+    /// Capture-free, like `runDetached`: the closure knows only the
+    /// `onChange` value it is given.
+    nonisolated static func makeWatcher(onChange: @escaping @MainActor @Sendable () -> Void) -> Task<SyncFolderWatcher?, Never> {
+        Task.detached(priority: .utility) {
             guard let folder = try? SyncFolder.openFolder(),
-                  let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else {
-                await MainActor.run { self?.isStartingWatcher = false }
-                return
-            }
-            let watcher = SyncFolderWatcher(url: workingDir, stopAccess: folder.stop) { [weak self] in
-                self?.folderDidChange()
-            }
-            await MainActor.run {
-                guard let self, self.watcher == nil, SyncFolder.isConfigured else { watcher.stop(); return }
-                self.watcher = watcher
-                self.isStartingWatcher = false
-            }
+                  let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else { return nil }
+            return SyncFolderWatcher(url: workingDir, stopAccess: folder.stop, onChange: onChange)
         }
     }
 
@@ -282,6 +293,7 @@ final class SyncEngine: ObservableObject {
                 self.status = .succeeded(Date())
             case .failure(let error as SyncRunner.Waiting):
                 self.status = .waiting(error.localizedDescription)
+                AppLog.note("sync", "waiting (pull=\(pull) push=\(push)): \(error.localizedDescription)")
             case .failure(let error):
                 self.status = .failed(error.localizedDescription)
                 AppLog.note("sync", "failed (pull=\(pull) push=\(push)): \(error)")
@@ -321,8 +333,18 @@ nonisolated struct SyncRunner {
 
     func run(pull: Bool, push: Bool) throws {
         let context = ModelContext(container)
+        let started = Date()
+        var phases: [String] = []
+        func mark(_ name: String, since: Date) { phases.append("\(name) \(String(format: "%.2f", Date().timeIntervalSince(since)))s") }
+        defer {
+            if !environment.payloadsAreLocal {
+                AppLog.note("sync", "run pull=\(pull) push=\(push) on \(Thread.isMainThread ? "MAIN" : "bg") thread: \(phases.joined(separator: ", ")) total \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
+            }
+        }
         try environment.withFolder { folder in
+            let t0 = Date()
             let workingDir = try SyncFolder.workingDirectory(in: folder)
+            mark("open", since: t0)
             // A push always pulls first: it folds in whatever another device
             // wrote so what we're about to write isn't stale.
             let hashes = PayloadHashCache(directory: environment.localFilesDirectory())
@@ -333,10 +355,14 @@ nonisolated struct SyncRunner {
             // iCloud kept - each applied as its own snapshot so every page
             // is compared against what's local *now*, not what was local
             // before the previous version was merged.
+            let t1 = Date()
             let versions = try readRemoteVersions(workingDir: workingDir, context: context)
+            mark("read \(versions.count) version(s)", since: t1)
             let remote = versions.first
             var pending = remote?.pending ?? []
             if pull || (push && !environment.payloadsAreLocal) {
+                let t2 = Date()
+                defer { mark("pull", since: t2) }
                 var allComplete = true
                 for version in versions {
                     let deferred = try performPull(version, context: context, workingDir: workingDir, hashes: hashes)
@@ -360,7 +386,9 @@ nonisolated struct SyncRunner {
                 }
             }
             if push {
+                let t3 = Date()
                 try performPush(against: remote, pending: pending, context: context, workingDir: workingDir, hashes: hashes)
+                mark("push", since: t3)
             }
         }
     }
