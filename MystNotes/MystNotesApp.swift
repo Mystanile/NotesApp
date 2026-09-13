@@ -4,19 +4,13 @@ import SwiftData
 @main
 struct NotebookApp: App {
     init() {
-        // Copy any payload files written before iCloud storage was in play up
-        // into the iCloud container, so existing notebooks' drawings follow
-        // them to other devices. The container isn't mounted at this point, so
-        // also re-run once iCloud actually becomes available.
-        FileStore.migrateLegacyFilesIfNeeded()
-        NotificationCenter.default.addObserver(
-            forName: .NSUbiquityIdentityDidChange,
-            object: nil,
-            queue: .main
-        ) { _ in
-            FileStore.invalidateCachedBaseDirectory()
-            FileStore.migrateLegacyFilesIfNeeded()
-        }
+        // One storage root now. Anything an earlier build left in the iCloud
+        // container comes home once; see FileStore.
+        FileStore.adoptLegacyCloudFilesOnce()
+        // Crash, hang and disk-write diagnostics arrive from MetricKit on
+        // the launch after they happen; see Diagnostics.swift.
+        CrashReporter.shared.start()
+        MainThreadWatchdog.checkpoint("App.init")
     }
 
     var sharedModelContainer: ModelContainer = {
@@ -30,35 +24,22 @@ struct NotebookApp: App {
             Sticker.self
         ])
 
-        // Read once, at container-build time — SwiftData can't swap a
-        // ModelConfiguration on an already-running container, so a sync
-        // preference change (login screen or Settings) only takes effect
-        // the next time the app launches.
+        // SwiftData is a local, rebuildable index over the sync folder
+        // (invariant 4). Never CloudKit: folder sync is the architecture,
+        // not a stopgap, and CloudKit needs an entitlement this build
+        // doesn't carry.
         let modelConfiguration = ModelConfiguration(
             schema: schema,
             isStoredInMemoryOnly: false,
-            cloudKitDatabase: AppSettings.syncEnabled ? .automatic : .none
+            cloudKitDatabase: .none
         )
-
+        MainThreadWatchdog.checkpoint("App.sharedModelContainer")
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            MainThreadWatchdog.checkpoint("App.sharedModelContainer done")
+            return container
         } catch {
-            // Don't take the whole app down over sync. Requesting
-            // .automatic CloudKit without the matching entitlement - which
-            // is exactly the state this app is in while it's signed with a
-            // free developer account - can fail here, and crashing on
-            // launch is a far worse outcome than running without sync.
-            print("CloudKit-backed store unavailable (\(error)); falling back to local-only storage.")
-            let localConfiguration = ModelConfiguration(
-                schema: schema,
-                isStoredInMemoryOnly: false,
-                cloudKitDatabase: .none
-            )
-            do {
-                return try ModelContainer(for: schema, configurations: [localConfiguration])
-            } catch {
-                fatalError("Could not create ModelContainer: \(error)")
-            }
+            fatalError("Could not create ModelContainer: \(error)")
         }
     }()
 

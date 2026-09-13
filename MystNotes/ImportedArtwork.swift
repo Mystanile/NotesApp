@@ -8,7 +8,7 @@ import PDFKit
 /// overlay that lets you move/resize it, so both agree on exactly where the
 /// image sits - which is what lets the selection handles hug the artwork
 /// itself rather than some larger box around it.
-enum ImportedArtwork {
+nonisolated enum ImportedArtwork {
     /// The artwork's rect in `container`'s coordinates, from the fractional
     /// frame stored on the document - or nil when it has never been placed.
     ///

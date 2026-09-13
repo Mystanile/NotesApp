@@ -93,6 +93,7 @@ struct LibraryView: View {
         }
         #endif
         .task(id: parentFolder?.id) {
+            MainThreadWatchdog.checkpoint("LibraryView.task")
             seedTutorialNotebookIfNeeded()
         }
     }

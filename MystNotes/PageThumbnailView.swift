@@ -66,7 +66,8 @@ struct PageThumbnailView: View {
         }
         .frame(width: 60, height: 80)
         .task(id: contentKey) {
-            loadThumbnail()
+            MainThreadWatchdog.checkpoint("Thumbnail.task")
+            await loadThumbnail()
         }
     }
 
@@ -84,60 +85,84 @@ struct PageThumbnailView: View {
         return CGSize(width: max((nominal.width * scale).rounded(), 1), height: 160)
     }
 
-    private func loadThumbnail() {
-        let drawing = loadDrawing()
+    /// Everything the render needs, copied out of the model on the main
+    /// actor so the work itself can leave it. Decoding a page's record,
+    /// rasterizing a PDF background and drawing the composite took seconds
+    /// on the main thread at launch for a real library (iPad log,
+    /// checkpoint "(none)") - invariant 10.
+    nonisolated struct Inputs: Sendable {
+        var pageID: UUID
+        var backgroundRef: String?
+        var pdfPageIndex: Int
+        var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
+        var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
+        var rotationDegrees: Double?
+        var nominal: CGSize
+        var output: CGSize
+    }
 
-        guard let backgroundImage = loadBackgroundImage() else {
-            // Ink only: keep fitting to the ink's own bounds, which frames a
-            // small sketch legibly instead of shrinking it into a mostly
-            // empty page.
-            guard let drawing else { thumbnail = nil; return }
-            let bounds = drawing.bounds.isEmpty
-                ? CGRect(x: 0, y: 0, width: 300, height: 400)
-                : drawing.bounds.insetBy(dx: -10, dy: -10)
-            thumbnail = drawing.image(from: bounds, scale: 0.5)
-            return
-        }
-
-        // With a background, both layers must share one coordinate space, so
-        // render the whole page area rather than cropping to the ink.
-        let nominal = nominalPageSize
+    private func loadThumbnail() async {
         let doc = importedDocument
-        let artworkRect = ImportedArtwork.placedRect(
-            x: doc?.frameX, y: doc?.frameY, width: doc?.frameWidth, height: doc?.frameHeight, in: nominal
-        ) ?? ImportedArtwork.fittedRect(for: backgroundImage, in: nominal)
-
-        let inkImage = drawing.map { $0.image(from: CGRect(origin: .zero, size: nominal), scale: 1) }
-
-        let output = renderSize
-        let renderer = UIGraphicsImageRenderer(size: output)
-        thumbnail = renderer.image { context in
-            UIColor.white.setFill()
-            context.fill(CGRect(origin: .zero, size: output))
-
-            let scaleX = output.width / nominal.width
-            let scaleY = output.height / nominal.height
-            context.cgContext.scaleBy(x: scaleX, y: scaleY)
-
-            backgroundImage.draw(in: artworkRect)
-            inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
-        }
-    }
-
-    private func loadDrawing() -> PKDrawing? {
-        DrawingStore.live.load(pageID: page.id)
-    }
-
-    private func loadBackgroundImage() -> UIImage? {
-        guard let ref = page.backgroundRef else { return nil }
-        return ImportedArtwork.displayImage(
-            fileRef: ref,
-            document: importedDocument,
-            targetSize: nominalPageSize
+        let inputs = Inputs(
+            pageID: page.id, backgroundRef: page.backgroundRef, pdfPageIndex: doc?.pdfPageIndex ?? 0,
+            frameX: doc?.frameX, frameY: doc?.frameY, frameWidth: doc?.frameWidth, frameHeight: doc?.frameHeight,
+            cropX: doc?.cropX, cropY: doc?.cropY, cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
+            rotationDegrees: doc?.rotationDegrees,
+            nominal: nominalPageSize, output: renderSize
         )
+        let image = await Self.render(inputs).value
+        if !Task.isCancelled { thumbnail = image }
+    }
+
+    /// Capture-free: takes only the Sendable inputs.
+    nonisolated static func render(_ inputs: Inputs) -> Task<UIImage?, Never> {
+        Task.detached(priority: .userInitiated) {
+            let drawing = DrawingStore.live.load(pageID: inputs.pageID)
+
+            let backgroundImage: UIImage? = inputs.backgroundRef.flatMap { ref in
+                ImportedArtwork.rasterized(fileRef: ref, pdfPageIndex: inputs.pdfPageIndex, targetSize: inputs.nominal)
+                    .map { ImportedArtwork.transformed($0, cropX: inputs.cropX, cropY: inputs.cropY,
+                                                       cropWidth: inputs.cropWidth, cropHeight: inputs.cropHeight,
+                                                       rotationDegrees: inputs.rotationDegrees) }
+            }
+
+            guard let backgroundImage else {
+                // Ink only: keep fitting to the ink's own bounds, which frames a
+                // small sketch legibly instead of shrinking it into a mostly
+                // empty page.
+                guard let drawing else { return nil }
+                let bounds = drawing.bounds.isEmpty
+                    ? CGRect(x: 0, y: 0, width: 300, height: 400)
+                    : drawing.bounds.insetBy(dx: -10, dy: -10)
+                return drawing.image(from: bounds, scale: 0.5)
+            }
+
+            // With a background, both layers must share one coordinate space, so
+            // render the whole page area rather than cropping to the ink.
+            let nominal = inputs.nominal
+            let artworkRect = ImportedArtwork.placedRect(
+                x: inputs.frameX, y: inputs.frameY, width: inputs.frameWidth, height: inputs.frameHeight, in: nominal
+            ) ?? ImportedArtwork.fittedRect(for: backgroundImage, in: nominal)
+
+            let inkImage = drawing.map { $0.image(from: CGRect(origin: .zero, size: nominal), scale: 1) }
+
+            let output = inputs.output
+            let renderer = UIGraphicsImageRenderer(size: output)
+            return renderer.image { context in
+                UIColor.white.setFill()
+                context.fill(CGRect(origin: .zero, size: output))
+
+                let scaleX = output.width / nominal.width
+                let scaleY = output.height / nominal.height
+                context.cgContext.scaleBy(x: scaleX, y: scaleY)
+
+                backgroundImage.draw(in: artworkRect)
+                inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
+            }
+        }
     }
 #else
-    private func loadThumbnail() {
+    private func loadThumbnail() async {
         // Not available on native macOS (no PencilKit/UIKit rendering).
         thumbnail = nil
     }

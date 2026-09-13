@@ -47,6 +47,7 @@ struct ContentView: View {
         }
         .preferredColorScheme(scheme)
         .task {
+            MainThreadWatchdog.checkpoint("ContentView.task")
             validateAppleIDCredentialState()
             SyncEngine.shared.configure(container: modelContext.container)
             SyncEngine.shared.pullOnForeground()
