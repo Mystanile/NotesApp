@@ -198,8 +198,14 @@ final class SyncEngine: ObservableObject {
         MainThreadWatchdog.checkpoint("SyncEngine.startWatchingFolder")
         guard watcher == nil, !isStartingWatcher, SyncFolder.isConfigured else { return }
         isStartingWatcher = true
-        let onChange: @MainActor @Sendable () -> Void = { [weak self] in self?.folderDidChange() }
-        let work = Self.makeWatcher(onChange: onChange)
+        // Plain @Sendable, deliberately not @MainActor: a detached closure
+        // that captures a main-actor-typed closure value is inferred
+        // main-actor and runs the whole six-second setup on main (iPad log,
+        // 03:17). The hop to the main actor happens inside, per event.
+        let notify: @Sendable () -> Void = {
+            Task { @MainActor in SyncEngine.shared.folderDidChange() }
+        }
+        let work = Self.makeWatcher(notify: notify)
         Task { @MainActor [weak self] in
             let watcher = await work.value
             guard let self else { watcher?.stop(); return }
@@ -211,11 +217,14 @@ final class SyncEngine: ObservableObject {
 
     /// Capture-free, like `runDetached`: the closure knows only the
     /// `onChange` value it is given.
-    nonisolated static func makeWatcher(onChange: @escaping @MainActor @Sendable () -> Void) -> Task<SyncFolderWatcher?, Never> {
+    nonisolated static func makeWatcher(notify: @escaping @Sendable () -> Void) -> Task<SyncFolderWatcher?, Never> {
         Task.detached(priority: .utility) {
+            let started = Date()
+            let onMain = Thread.isMainThread
+            defer { AppLog.note("watch", "folder watcher set up on \(onMain ? "MAIN" : "bg") thread in \(String(format: "%.2f", Date().timeIntervalSince(started)))s") }
             guard let folder = try? SyncFolder.openFolder(),
                   let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else { return nil }
-            return SyncFolderWatcher(url: workingDir, stopAccess: folder.stop, onChange: onChange)
+            return SyncFolderWatcher(url: workingDir, stopAccess: folder.stop, onChange: { notify() })
         }
     }
 
@@ -227,7 +236,7 @@ final class SyncEngine: ObservableObject {
         Task.detached(priority: .utility) { watcher.stop() }
     }
 
-    private func folderDidChange() {
+    func folderDidChange() {
         MainThreadWatchdog.checkpoint("SyncEngine.folderDidChange")
         guard SyncFolder.isConfigured, !isRunning else { return }
         start(pull: true, push: false)

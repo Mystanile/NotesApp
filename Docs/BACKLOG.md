@@ -32,6 +32,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Typed text blocks: no font, size, bold/italic, colour controls - only typing and moving.
 - [M1] Stickers: no resize or rotate - only move.
 - ~~[M0, open] iPad freezes on entering Airplane Mode~~ **Found and fixed Sept 12, 2026**: the sync engine was running on the main thread (default MainActor isolation defeated `Task.detached`); a coordinated iCloud read blocked when the device went offline and the watchdog killed the app. All sync types are `nonisolated` now, with a test.
+- [M1] `FillTool` computes its flood fill in a `Task.detached` formed inside a main-actor view, so under default MainActor isolation it runs on the main thread. A hitch on large fills, same species as the sync engine bug; move the computation into a `nonisolated` static.
 - [M1] PencilKit crash in undo on the whiteboard canvas (`-[PKTiledView updateTilesForVisibleRect…]` under `WhiteboardCanvasView` undo, Sept 10 crash log). Reproduce: draw on a whiteboard, undo via the shortcut. Likely undoing across a canvas swap.
 
 ## Parked from planning (Sept 12, 2026)
