@@ -43,6 +43,8 @@ enum SyncDiagnostics {
         lines.append("folder: \(workingDir.path)")
         lines.append("ubiquityIdentityToken: \(FileManager.default.ubiquityIdentityToken == nil ? "nil" : "present")")
         lines.append("")
+        lines.append(contentsOf: localLibraryReport())
+        lines.append("")
 
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(at: workingDir, includingPropertiesForKeys: nil) else {
@@ -62,6 +64,33 @@ enum SyncDiagnostics {
             lines.append(describe(url, relativeTo: workingDir))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// This device's own library as the sync engine sees it: every
+    /// notebook's pages with their dates and the hash of the local ink
+    /// file. Read from the local mirror (written on every push) plus the
+    /// files themselves, so it can be compared with the folder.
+    private static func localLibraryReport() -> [String] {
+        var lines = ["## this device's library (from Documents/Library mirror + local files)"]
+        let mirror = SyncEnvironment.mirrorDirectory.appendingPathComponent("Mystnotes/notebooks", isDirectory: true)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
+        let base = FileStore.baseDirectory()
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: mirror.path)) ?? []).filter { $0.hasSuffix(".json") }.sorted()
+        for name in names {
+            guard let data = try? Data(contentsOf: mirror.appendingPathComponent(name)),
+                  let notebook = try? decoder.decode(NotebookDTO.self, from: data) else { continue }
+            lines.append("notebook \(notebook.title) [\(notebook.id.uuidString.prefix(8))] modifiedAt=\(notebook.modifiedAt) settings=\(notebook.settingsModifiedAt.map { "\($0)" } ?? "-") sig=\(notebook.contentSignature.prefix(8))")
+            for page in notebook.pages.sorted(by: { $0.index < $1.index }) {
+                var ink = "no file"
+                if let ref = page.drawingFileRef, let d = try? Data(contentsOf: base.appendingPathComponent(ref)) {
+                    ink = "\(d.count)B sha=\(PayloadHash.sha256(of: d).prefix(8))"
+                }
+                lines.append("   page \(page.index + 1) [\(page.id.uuidString.prefix(8))] modifiedAt=\(page.modifiedAt.map { "\($0)" } ?? "nil") ref=\(page.drawingFileRef ?? "-") mirrorHash=\((page.drawingHash ?? "-").prefix(8)) local=\(ink)")
+            }
+        }
+        if names.isEmpty { lines.append("(no mirror yet - nothing has been pushed from this device)") }
+        return lines
     }
 
     private static func describe(_ url: URL, relativeTo root: URL) -> String {
