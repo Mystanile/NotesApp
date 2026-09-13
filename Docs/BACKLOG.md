@@ -26,6 +26,13 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M0] `pushPayloads` replaces the folder's copy of a drawing file in place when the local page won. Folder-side history of superseded versions is task 7/11 territory; the loser device keeps its own copy in its local `trash/`.
 - [M0] `LibrarySnapshot.referencedFileNames` derives from `drawingFileRef`, so a page whose file was written but whose `context.save()` never ran (kill between the two) has ink on disk that never syncs. Derive the drawing file name from `page.id` instead; the ref is redundant with the id. Fold into task 6/10.
 
+## Reported during the first two-device run (Sept 12, 2026)
+
+- [M1] Pen on Mac: reported as not usable. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
+- [M1] Typed text blocks: no font, size, bold/italic, colour controls - only typing and moving.
+- [M1] Stickers: no resize or rotate - only move.
+- [M0, open] **iPad freezes on entering Airplane Mode**, is killed after ~a minute, and after relaunch sync does nothing until the app is relaunched from Xcode. The watchdog in `SyncEngine` (120 s) bounds the second half; the freeze itself needs the iPad's MetricKit hang/crash payload, which *Write Sync Diagnostics* now copies into the folder.
+
 ## Parked from planning (Sept 12, 2026)
 
 - [M1] Scanned document capture with `VisionKit` + Live Text — Apple Notes parity, cheap

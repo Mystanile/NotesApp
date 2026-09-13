@@ -47,6 +47,10 @@ final class SyncEngine: ObservableObject {
 
     private var container: ModelContainer?
     private var isRunning = false
+    private var currentRunID: UUID?
+    /// How long a single sync run may take before the engine stops waiting
+    /// for it. Generous: a first pull of a large library is legitimately slow.
+    static let runWatchdogInterval: TimeInterval = 120
     /// A change arrived while a sync was running: run again when it ends.
     private var pushAgainWhenDone = false
     private var saveObserver: NSObjectProtocol?
@@ -211,6 +215,23 @@ final class SyncEngine: ObservableObject {
         status = .syncing
 
         let environment = SyncEnvironment.live
+        let runID = UUID()
+        currentRunID = runID
+        // A coordinated read or write on an iCloud file can block for as
+        // long as the file provider takes - which, the moment a device
+        // goes offline, can be indefinitely. That run can't be cancelled,
+        // but it must not hold every later sync hostage: after the
+        // watchdog interval the engine stops waiting for it. If it ever
+        // finishes it is discarded (its outcome no longer matches
+        // currentRunID). Seen on the iPad on entering Airplane Mode.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.runWatchdogInterval * 1_000_000_000))
+            guard let self, self.isRunning, self.currentRunID == runID else { return }
+            AppLog.note("sync", "run did not finish within \(Int(Self.runWatchdogInterval)) s; no longer waiting for it")
+            self.isRunning = false
+            self.currentRunID = nil
+            self.status = .waiting("Sync is taking longer than expected. It will retry.")
+        }
         Task.detached(priority: .utility) {
             let outcome: Result<Void, Error>
             do {
@@ -220,6 +241,8 @@ final class SyncEngine: ObservableObject {
                 outcome = .failure(error)
             }
             await MainActor.run {
+                guard self.currentRunID == runID else { return }   // the watchdog gave up on this run
+                self.currentRunID = nil
                 self.isRunning = false
                 switch outcome {
                 case .success:

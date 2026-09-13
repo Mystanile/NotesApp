@@ -304,7 +304,8 @@ Smaller than it was, because the toolbar, export, image editing, settings and on
 - Lasso upgrades: cross-page move, **convert to text** (the Vision pipeline already exists), resize, recolor, copy as image
 - Per-page templates, custom page sizes, imported templates, a starting template library. `Page.aspectRatio` means the model is half done.
 - Favorites, bookmarks, page outline / jump bar
-- Text formatting in typed blocks: bold/italic, headings, bullets, checklists
+- Text formatting in typed blocks: bold/italic, headings, bullets, checklists — **and font, size, colour; reported Sept 12, 2026: today a text block can only be typed into and moved**
+- Stickers: resize (and rotate) — **reported Sept 12, 2026: today they can only be moved**
 - Scribble-to-erase; toolbar customization; pen presets
 - Export additions: layered PDF, markdown for typed content, whole-library zip
 - Note lock via Face ID
@@ -352,7 +353,7 @@ Smaller than it was, because the toolbar, export, image editing, settings and on
 
 - **Importers.** GoodNotes and Notability formats are proprietary and undocumented; this is a **timeboxed research spike**, not a promised deliverable. Guaranteed fallback: excellent PDF-with-annotations import (which M1 enables) plus Apple Notes markdown import.
 - iPhone target: quick capture into a graph inbox node, plus read and review
-- Mac Catalyst polish: menu bar, keyboard shortcuts, trackpad, drag and drop
+- Mac Catalyst polish: menu bar, keyboard shortcuts, trackpad, drag and drop. **Reported Sept 12, 2026: "can't actually use the pen on Mac" — some drawing works on Mac (strokes were made during the sync test), so establish which tool/input fails (pen ink type? trackpad vs mouse? `drawingPolicy = .pencilOnly` on Catalyst?) and fix in M1 rather than here if it turns out to be a bug — "full editing on Mac" is a locked decision.**
 - App Intents / Shortcuts, Spotlight indexing, Quick Look thumbnails
 - Handoff
 - Apple Pencil Pro: squeeze, barrel roll, double-tap, hover preview

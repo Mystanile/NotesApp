@@ -28,6 +28,16 @@ enum SyncDiagnostics {
                 let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
                 let url = dir.appendingPathComponent("\(deviceName)-\(stamp).txt")
                 try report.write(to: url, atomically: true, encoding: .utf8)
+                // This device's own log and MetricKit payloads too, so a hang
+                // or crash on the iPad can be read from the Mac.
+                let mine = dir.appendingPathComponent(deviceName, isDirectory: true)
+                try? FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+                for name in (try? FileManager.default.contentsOfDirectory(atPath: Diagnostics.directory.path)) ?? [] {
+                    let src = Diagnostics.directory.appendingPathComponent(name)
+                    let dst = mine.appendingPathComponent(name)
+                    try? FileManager.default.removeItem(at: dst)
+                    try? FileManager.default.copyItem(at: src, to: dst)
+                }
                 return url
             })
         } catch {
