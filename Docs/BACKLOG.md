@@ -26,6 +26,12 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M0] `pushPayloads` replaces the folder's copy of a drawing file in place when the local page won. Folder-side history of superseded versions is task 7/11 territory; the loser device keeps its own copy in its local `trash/`.
 - [M0] `LibrarySnapshot.referencedFileNames` derives from `drawingFileRef`, so a page whose file was written but whose `context.save()` never ran (kill between the two) has ink on disk that never syncs. Derive the drawing file name from `page.id` instead; the ref is redundant with the id. Fold into task 6/10.
 
+## Open on the morning of Sept 13, 2026
+
+- [M0] **One launch-time main-thread hang remains on the iPad**, 6–8 s, consistent, not reproducible in the simulator (200 ms launch against the same library). Timing: main stops answering ~1 s after launch and resumes within 20 ms of the first background sync run finishing — it is waiting on something the run holds for its whole duration: security-scoped access to the iCloud folder, or the runner's second SwiftData context on the shared store. The build on the iPad (`a4d585b`) captures the main thread's real stack on the next hang (`[hang] main thread stack:` in `Documents/diagnostics/app.log`, readable from the Mac via `devicectl device copy from`). Read it, then either release folder access per phase or keep the runner's SwiftData work to short windows.
+- [M0] `Write Sync Diagnostics` names the device by `UIDevice.name` ("iPad"), unlike sync's install-id naming. Cosmetic; align.
+- [M0] The spike checklist §3 (clean offline round: `X` on page 3 from the iPad, `O` on page 2 from the Mac) has still not been run on a build free of both the old-build saves and the launch hangs. `a4d585b` is that build. Wait 20 s after launch before going offline.
+
 ## Reported during the first two-device run (Sept 12, 2026)
 
 - [M1] Pen on Mac: reported as not usable. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
