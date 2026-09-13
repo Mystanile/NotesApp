@@ -26,7 +26,8 @@ enum AppSettings {
         static let isGuestMode = "isGuestMode"
         static let syncFolderBookmark = "syncFolderBookmark"
         static let syncFolderName = "syncFolderName"
-        static let lastPulledExportDate = "syncLastPulledExportDate"
+        static let lastAppliedRemoteSignature = "syncLastAppliedRemoteSignature"
+        static let installID = "installID"
         static let lastPushSignature = "syncLastPushSignature"
         static let syncTombstones = "syncTombstones"
     }
@@ -70,11 +71,21 @@ enum AppSettings {
         set { defaults.set(newValue, forKey: Keys.syncFolderName) }
     }
 
-    /// `exportedAt` of the last remote snapshot this device successfully
-    /// pulled, so an unchanged snapshot isn't re-applied every foreground.
-    static var lastPulledExportDate: Date? {
-        get { defaults.object(forKey: Keys.lastPulledExportDate) as? Date }
-        set { defaults.set(newValue, forKey: Keys.lastPulledExportDate) }
+    /// Signature of the last remote snapshot this device fully applied or
+    /// authored, so an unchanged folder isn't re-applied every foreground.
+    static var lastAppliedRemoteSignature: String? {
+        get { defaults.string(forKey: Keys.lastAppliedRemoteSignature) }
+        set { defaults.set(newValue, forKey: Keys.lastAppliedRemoteSignature) }
+    }
+
+    /// A random id made once per install; the sync engine's device name
+    /// carries its first characters so two devices' pushes can be told
+    /// apart in the folder.
+    static var installID: String {
+        if let id = defaults.string(forKey: Keys.installID) { return id }
+        let id = UUID().uuidString
+        defaults.set(id, forKey: Keys.installID)
+        return id
     }
 
     /// `LibrarySnapshot.signature` of the last snapshot this device pushed,

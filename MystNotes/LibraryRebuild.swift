@@ -34,7 +34,7 @@ enum LibraryRebuild {
         try context.save()
 
         // The folder is the record now; nothing has been pulled or pushed.
-        environment.state.lastPulledExportDate = nil
+        environment.state.lastAppliedRemoteSignature = nil
         environment.state.lastPushSignature = ""
 
         try SyncRunner(container: container, environment: environment).run(pull: true, push: false)

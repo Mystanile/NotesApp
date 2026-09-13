@@ -48,6 +48,71 @@ final class SyncTests: XCTestCase {
         XCTAssertNotEqual(try ipad.context.fetchCount(FetchDescriptor<Page>()), 0)
     }
 
+    // MARK: What the first real two-device run found (Sept 12, 2026)
+
+    /// `Date()` has microseconds; the file has milliseconds. The content
+    /// signature must be computed from what the file says, or every
+    /// notebook file "doesn't match its index entry" after one round trip
+    /// and stays pending on every device forever - which is exactly what
+    /// happened on the iPad and the Mac.
+    func testSubMillisecondDates_doNotLeaveNotebooksPendingForever() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Spike", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+
+        // A real-clock edit: 0.4567 ms past the second.
+        let realClock = harness.clock.advance().addingTimeInterval(0.0004567)
+        try ipad.edit(page: pages[0], ink: Data("1".utf8))
+        pages[0].markModified(at: realClock)
+        try XCTUnwrap(try ipad.notebook(id: notebook.id)).markSettingsModified(at: realClock)
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotNil(mac.state.lastAppliedRemoteSignature, "the Mac's pull must be complete, not pending")
+
+        // And the Mac can now publish its own edit - the part that never
+        // happened on the real devices.
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+        let macInk = Data("M".utf8)
+        harness.clock.advance(); try mac.edit(page: macPages[1], ink: macInk)
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        XCTAssertEqual(ipad.ink(forPageID: pages[1].id), macInk, "the Mac's edit reached the iPad")
+        XCTAssertEqual(harness.pageInFolder(pages[1].id)?.drawingHash, PayloadHash.sha256(of: macInk))
+    }
+
+    /// iCloud delivers files in its own time. An index another device wrote
+    /// *before* our last push can land *after* it. It must still be read:
+    /// "already applied" is a matter of content, not of timestamps.
+    func testIndexArrivingOutOfOrder_isStillApplied() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+
+        // Mac edits page 2 and pushes - but its index is "in transit".
+        let macInk = Data("Mac page 2".utf8)
+        harness.clock.advance(); try mac.edit(page: macPages[1], ink: macInk)
+        harness.clock.advance(); try mac.sync()
+        let inTransit = try Data(contentsOf: harness.folderFile("index.json"))
+
+        // iPad edits page 1 and pushes later; its index is now the file.
+        harness.clock.advance(); try ipad.edit(page: ipadPages[0], ink: Data("iPad page 1".utf8))
+        harness.clock.advance(); try ipad.sync()
+
+        // Now the Mac's older index lands over it.
+        try inTransit.write(to: harness.folderFile("index.json"))
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertEqual(ipad.ink(forPageID: macPages[1].id), macInk, "the older-but-newly-arrived index must be applied")
+        XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.count, 2)
+    }
+
     // MARK: Folder layout (M0 task 6)
 
     func testPush_writesIndexAndOneFilePerNotebook_neverLibraryJSON() throws {
@@ -102,12 +167,12 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(try mac.pages(ofNotebook: a.id)?.count, 2)
         XCTAssertNotNil(try mac.notebook(id: b.id), "B's settings are in the index; the notebook should exist")
         XCTAssertEqual(try mac.pages(ofNotebook: b.id)?.count, 0, "B's pages can't exist yet")
-        XCTAssertNil(mac.state.lastPulledExportDate, "an incomplete pull must not be marked done")
+        XCTAssertNil(mac.state.lastAppliedRemoteSignature, "an incomplete pull must not be marked done")
 
         try FileManager.default.moveItem(at: parked, to: bFile)
         harness.clock.advance(); try mac.sync()
         XCTAssertEqual(try mac.pages(ofNotebook: b.id)?.count, 2, "B's pages must land once the file is here")
-        XCTAssertNotNil(mac.state.lastPulledExportDate)
+        XCTAssertNotNil(mac.state.lastAppliedRemoteSignature)
     }
 
     /// A folder written by the format-1 engine (one `library.json`) is read
@@ -162,7 +227,7 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(try ipad.notebook(id: notebook.id)?.title, "Mine")
         XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.count, 1)
         XCTAssertFalse(harness.folderFileExists("notebooks/\(notebook.id.uuidString).json"), "must not write into a newer folder")
-        XCTAssertNil(ipad.state.lastPulledExportDate)
+        XCTAssertNil(ipad.state.lastAppliedRemoteSignature)
     }
 
     /// Notebook settings merge on their own clock: a rename here survives a
@@ -223,7 +288,7 @@ final class SyncTests: XCTestCase {
         let rebuiltStore = DrawingStore.inDirectory(ipad.filesDirectory)
         assertStrokesEqual(try XCTUnwrap(rebuiltStore.load(pageID: mPages[2].id)), inkBefore, "ink after rebuild")
         for page in lPages { XCTAssertNotNil(ipad.ink(forPageID: page.id), "raw ink for \(page.index) survived") }
-        XCTAssertNotNil(ipad.state.lastPulledExportDate, "the rebuild is a complete pull")
+        XCTAssertNotNil(ipad.state.lastAppliedRemoteSignature, "the rebuild is a complete pull")
     }
 
     /// No sync folder was ever chosen. The local mirror is enough to
@@ -272,7 +337,7 @@ final class SyncTests: XCTestCase {
         try FileManager.default.removeItem(at: ipad.mirrorDirectory)
         // (Simulate: the older mirror is what's on disk, the tombstone is in state.)
         ipad.mirrorState.lastPushSignature = ""
-        ipad.mirrorState.lastPulledExportDate = nil
+        ipad.mirrorState.lastAppliedRemoteSignature = nil
         harness.clock.advance(); try ipad.writeMirror()
         try LibraryRebuild.rebuild(container: ipad.container, environment: ipad.mirrorEnvironment)
         XCTAssertFalse(try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).contains { $0.id == pages[1].id })
@@ -367,7 +432,7 @@ final class SyncTests: XCTestCase {
         harness.clock.advance(); try mac.sync()
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "a missing download must not be waited for")
         XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 1)
-        XCTAssertNil(mac.state.lastPulledExportDate)
+        XCTAssertNil(mac.state.lastAppliedRemoteSignature)
 
         // It downloads.
         try FileManager.default.moveItem(at: harness.folderFile("files/.\(name).icloud"), to: payload)
@@ -530,7 +595,7 @@ final class SyncTests: XCTestCase {
         harness.clock.advance(); try mac.sync()
         XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 1, "the page whose ink is incomplete is not applied yet")
         XCTAssertNil(mac.ink(forPageID: pages[1].id), "no half-downloaded ink may land locally")
-        XCTAssertNil(mac.state.lastPulledExportDate, "an incomplete pull is not marked done")
+        XCTAssertNil(mac.state.lastAppliedRemoteSignature, "an incomplete pull is not marked done")
         XCTAssertEqual(try Data(contentsOf: harness.folderFile("notebooks/\(notebook.id.uuidString).json")), notebookFileBefore,
                        "the incomplete side must not republish the notebook")
 
@@ -538,7 +603,7 @@ final class SyncTests: XCTestCase {
         harness.clock.advance(); try mac.sync()
         XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 2)
         XCTAssertEqual(mac.ink(forPageID: pages[1].id), ink)
-        XCTAssertNotNil(mac.state.lastPulledExportDate)
+        XCTAssertNotNil(mac.state.lastAppliedRemoteSignature)
     }
 
     // MARK: Index history (M0 task 7)

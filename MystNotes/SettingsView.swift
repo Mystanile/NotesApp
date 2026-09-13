@@ -90,9 +90,12 @@ struct SettingsView: View {
                         fatalError("Simulated crash for MetricKit verification")
                     }
                     Button("Write Sync Diagnostics") {
-                        switch SyncDiagnostics.write() {
-                        case .success(let url): diagnosticsMessage = "Wrote \(url.lastPathComponent)"
-                        case .failure(let error): diagnosticsMessage = error.localizedDescription
+                        diagnosticsMessage = "Writing…"
+                        Task {
+                            switch await SyncDiagnostics.write() {
+                            case .success(let url): diagnosticsMessage = "Wrote \(url.lastPathComponent)"
+                            case .failure(let error): diagnosticsMessage = error.localizedDescription
+                            }
                         }
                     }
                     #endif

@@ -59,8 +59,15 @@ enum SnapshotDates {
                                                 debugDescription: "Unreadable date \(string)"))
     }
 
+    /// A date as it will read back from a snapshot: the encoded string
+    /// itself. Signatures are built from this and nothing else, so the
+    /// device that wrote a file and the device that reads it compute the
+    /// same hash. (They didn't: `Date()` carries microseconds, the file
+    /// carries milliseconds, and hashing the raw `timeIntervalSince1970`
+    /// made every notebook file "not match its index entry" after one
+    /// round trip - pending forever, on every device.)
     static func stamp(_ date: Date?) -> String {
-        date.map { String($0.timeIntervalSince1970) } ?? "-"
+        date.map { fractional.string(from: $0) } ?? "-"
     }
 }
 
@@ -100,7 +107,7 @@ extension LibraryIndex {
             parts.append("N:\(notebook.id):\(SnapshotDates.stamp(notebook.settingsModifiedAt)):\(notebook.contentSignature)")
         }
         for tombstone in tombstones.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            parts.append("T:\(tombstone.kind.rawValue):\(tombstone.id):\(tombstone.deletedAt.timeIntervalSince1970)")
+            parts.append("T:\(tombstone.kind.rawValue):\(tombstone.id):\(SnapshotDates.stamp(tombstone.deletedAt))")
         }
         return parts.joined(separator: "|")
     }

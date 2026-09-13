@@ -35,6 +35,10 @@ Run before the two-device experiment, against `iCloud Drive/MystSpike/probe/` (s
 - `isUploaded` went `true` between 16 and 30 s after the write, with `brctl status` showing the daemon `caught-up`. Expect roughly that latency per hop.
 - Not checked, because it needs the folder picker: whether all of the above holds **inside the Mac Catalyst sandbox through the security-scoped bookmark**, and anything on the iPad. §2's baseline diagnostics table is where that gets answered.
 
+## 1.6 First run, Sept 12, 2026 — what it found instead
+
+The conflict was never created, because both devices were stuck before it: `contentSignature` was computed from microsecond dates and compared against millisecond ones, so every notebook file read from the folder "didn't match its index entry" → pending forever → never republished. Meanwhile the Mac had paged through Spike while page 1's ink was still arriving, and the page-switch save wrote a **blank** record for it with a newer date. Both fixed (commit after `4c1c2b9`), with regression tests. Also: `UIDevice.current.name` is "iPad" on Catalyst, so device attribution in `index-history/` was meaningless until the install-id naming landed; and `Write Sync Diagnostics` hung the Mac on the main thread (MetricKit caught it) — now off main. Re-run §3 on the fixed build.
+
 ## 2. Setup (once, ~10 min)
 
 - [ ] Both devices signed into the **same** iCloud account, iCloud Drive on, Wi-Fi on.

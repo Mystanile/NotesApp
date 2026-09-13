@@ -68,20 +68,30 @@ struct SyncEnvironment {
         FileStore.baseDirectory().appendingPathComponent("Library", isDirectory: true)
     }
 
+    /// Platform plus a stable per-install id - "Mac-3F2A", "iPad-9C1B".
+    /// `UIDevice.current.name` answers "iPad" on both iPad and Mac
+    /// Catalyst (the real name is behind an entitlement), which made every
+    /// index-history entry from either device indistinguishable.
     private static var liveDeviceName: String {
-        #if canImport(UIKit)
-        return UIDevice.current.name
+        #if targetEnvironment(macCatalyst)
+        let platform = "Mac"
+        #elseif canImport(UIKit)
+        let platform = UIDevice.current.model.replacingOccurrences(of: " ", with: "")
         #else
-        return Host.current().localizedName ?? "Mac"
+        let platform = "Mac"
         #endif
+        return "\(platform)-\(AppSettings.installID.prefix(4))"
     }
 }
 
 /// Per-device sync bookkeeping. Class-bound so a store can be shared by
 /// value (inside `SyncEnvironment`) while its setters still take effect.
 protocol SyncStateStore: AnyObject {
-    /// `exportedAt` of the last remote snapshot this device applied.
-    var lastPulledExportDate: Date? { get set }
+    /// Signature of the last remote snapshot this device fully applied, or
+    /// authored. A pull whose remote signature equals it has nothing new.
+    /// Content, not time: two devices pushing every 30 s can each write an
+    /// index the other would have skipped as "older than my last push".
+    var lastAppliedRemoteSignature: String? { get set }
     /// `LibrarySnapshot.signature` of the last snapshot this device pushed.
     var lastPushSignature: String { get set }
     /// JSON-encoded `[Tombstone]`, see `SyncTombstones`.
@@ -96,9 +106,9 @@ final class MirrorSyncStateStore: SyncStateStore {
     private init() {}
     private let defaults = UserDefaults.standard
 
-    var lastPulledExportDate: Date? {
-        get { defaults.object(forKey: "mirror.lastPulledExportDate") as? Date }
-        set { defaults.set(newValue, forKey: "mirror.lastPulledExportDate") }
+    var lastAppliedRemoteSignature: String? {
+        get { defaults.string(forKey: "mirror.lastAppliedRemoteSignature") }
+        set { defaults.set(newValue, forKey: "mirror.lastAppliedRemoteSignature") }
     }
     var lastPushSignature: String {
         get { defaults.string(forKey: "mirror.lastPushSignature") ?? "" }
@@ -115,9 +125,9 @@ final class LiveSyncStateStore: SyncStateStore {
     static let shared = LiveSyncStateStore()
     private init() {}
 
-    var lastPulledExportDate: Date? {
-        get { AppSettings.lastPulledExportDate }
-        set { AppSettings.lastPulledExportDate = newValue }
+    var lastAppliedRemoteSignature: String? {
+        get { AppSettings.lastAppliedRemoteSignature }
+        set { AppSettings.lastAppliedRemoteSignature = newValue }
     }
     var lastPushSignature: String {
         get { AppSettings.lastPushSignature }

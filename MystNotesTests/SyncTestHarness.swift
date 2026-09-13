@@ -30,7 +30,7 @@ final class SyncTestClock {
 /// In-memory stand-in for `UserDefaults`-backed sync bookkeeping. One per
 /// simulated device.
 final class InMemorySyncStateStore: SyncStateStore {
-    var lastPulledExportDate: Date?
+    var lastAppliedRemoteSignature: String?
     var lastPushSignature: String = ""
     var tombstonesData: Data?
 }
@@ -40,7 +40,7 @@ final class InMemorySyncStateStore: SyncStateStore {
 final class InMemoryMirrorStateStore: SyncStateStore {
     private let device: InMemorySyncStateStore
     init(sharingTombstonesWith device: InMemorySyncStateStore) { self.device = device }
-    var lastPulledExportDate: Date?
+    var lastAppliedRemoteSignature: String?
     var lastPushSignature: String = ""
     var tombstonesData: Data? {
         get { device.tombstonesData }

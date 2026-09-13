@@ -64,6 +64,18 @@ struct NotebookDetailView: View {
     @State private var canRedo = false
     @State private var autosaveTask: Task<Void, Never>?
     private let drawingStore = DrawingStore.live
+
+    // Which page's ink the canvas currently holds, and whether the user has
+    // changed it since it was loaded. Every save goes to `canvasPageID`,
+    // and only when `canvasIsDirty`. Two real incidents behind this: a
+    // page switch used to save the canvas unconditionally, so paging
+    // through a notebook whose ink hadn't finished arriving from another
+    // device wrote *blank* records over it; and a sync inserting a page
+    // under an open notebook shifted `currentPage` without the canvas
+    // following, so the next save would have written one page's ink into
+    // another's file.
+    @State private var canvasPageID: UUID?
+    @State private var canvasIsDirty = false
     @State private var drawingNeedsOCR = false
     @State private var showingPageStrip = true
 
@@ -220,6 +232,14 @@ struct NotebookDetailView: View {
                 saveCurrentPage()
             }
         }
+        // A pull can insert or remove pages while this notebook is open,
+        // which changes which page sits at `currentPageIndex`. The canvas
+        // must follow the page, never the index.
+        .onChange(of: currentPage?.id) { _, newID in
+            guard newID != canvasPageID else { return }
+            saveCurrentPage()
+            loadCurrentPageDrawing()
+        }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
@@ -300,7 +320,7 @@ struct NotebookDetailView: View {
 
                 Menu {
                     Button("Save Now") {
-                        saveCurrentPage()
+                        saveCurrentPage(force: true)
                         showSaveConfirmation()
                     }
                     Section("Export This Page") {
@@ -601,7 +621,7 @@ struct NotebookDetailView: View {
 
         currentPageIndex = newIndex
         viewport.reset(for: page.id)
-        installFreshCanvas()
+        installFreshCanvas(forPageID: page.id)
     }
 
     /// Removes a page and everything tied to it: the saved drawing file on
@@ -1001,7 +1021,7 @@ struct NotebookDetailView: View {
         guard document.pageCount > 0 else { return }
         currentPageIndex = max(sortedPages.count - document.pageCount, 0)
         viewport.reset(for: currentPage?.id)
-        installFreshCanvas()
+        installFreshCanvas(forPageID: currentPage?.id)
     }
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1050,7 +1070,7 @@ struct NotebookDetailView: View {
 
         currentPageIndex = newIndex
         viewport.reset(for: page.id)
-        installFreshCanvas()
+        installFreshCanvas(forPageID: page.id)
         selectedPhotoItem = nil
     }
     #else
@@ -1195,7 +1215,7 @@ struct NotebookDetailView: View {
 
     private func loadCurrentPageDrawing() {
         guard let page = currentPage else {
-            installFreshCanvas()
+            installFreshCanvas(forPageID: nil)
             return
         }
         // A different page means a different sheet: the canvas refits it, so
@@ -1208,9 +1228,9 @@ struct NotebookDetailView: View {
         if let saved = drawingStore.load(pageID: page.id) {
             drawing = fittingWithinPage(saved, on: page)
         }
-        installFreshCanvas(with: drawing)
+        installFreshCanvas(with: drawing, forPageID: page.id)
 #else
-        installFreshCanvas()
+        installFreshCanvas(forPageID: page.id)
 #endif
     }
 
@@ -1224,7 +1244,10 @@ struct NotebookDetailView: View {
     /// left the next one waiting. A page that starts from a new view has
     /// nothing to inherit: its drawing is exactly what's passed in, its
     /// undo history is empty, and its scroll view has never been anywhere.
-    private func installFreshCanvas(with drawing: PKDrawing = PKDrawing()) {
+    private func installFreshCanvas(with drawing: PKDrawing = PKDrawing(), forPageID pageID: UUID?) {
+        canvasPageID = pageID
+        canvasIsDirty = false
+        autosaveTask?.cancel()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         let fresh = PageCanvasView()
         fresh.drawing = drawing
@@ -1264,13 +1287,20 @@ struct NotebookDetailView: View {
     }
 #endif
 
-    private func saveCurrentPage() {
-        guard let page = currentPage else { return }
+    /// Saves the canvas to the page it was loaded for - if the user changed
+    /// it. A canvas nobody drew on is never written: it may be blank only
+    /// because its ink hasn't arrived yet, and writing it would replace
+    /// that ink with nothing.
+    private func saveCurrentPage(force: Bool = false) {
+        guard canvasIsDirty || force,
+              let pageID = canvasPageID,
+              let page = sortedPages.first(where: { $0.id == pageID }) else { return }
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         save(canvasView.drawing, to: page)
 #else
         save(to: page)
 #endif
+        canvasIsDirty = false
     }
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1299,7 +1329,10 @@ struct NotebookDetailView: View {
         refreshUndoRedoState()
         // A stroke changed the canvas, so this page's OCR cache is stale.
         drawingNeedsOCR = true
-        guard let pageToIndex = currentPage else { return }
+        // Only a user change reaches here (strokes, shapes, elements). The
+        // canvas is now worth saving - and only to the page it was loaded for.
+        canvasIsDirty = true
+        guard let pageToIndex = currentPage, pageToIndex.id == canvasPageID else { return }
         // Pin down which page's canvas this is for now. By the time the
         // delay is up the user may be on another page with another canvas,
         // and this must never write one page's ink into another's file.
@@ -1315,6 +1348,7 @@ struct NotebookDetailView: View {
 #else
             save(to: pageToIndex)
 #endif
+            if canvasPageID == pageToIndex.id { canvasIsDirty = false }
             // Re-recognize handwriting in the background (skips if the file
             // hasn't changed since the last pass) so search stays up to date.
             if drawingNeedsOCR {

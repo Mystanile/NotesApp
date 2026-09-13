@@ -301,8 +301,8 @@ struct SyncRunner {
                              hashes: PayloadHashCache) throws -> Set<UUID> {
         guard let remote else { return [] }
 
-        if let lastPulled = environment.state.lastPulledExportDate, remote.snapshot.exportedAt <= lastPulled {
-            return []  // already applied this snapshot
+        if remote.snapshot.signature == environment.state.lastAppliedRemoteSignature {
+            return []  // already applied exactly this
         }
 
         var plan = try planMerge(of: remote.snapshot, context: context)
@@ -328,7 +328,7 @@ struct SyncRunner {
         // is safe to repeat.
         let isComplete = remote.isComplete && deferredNotebooks.isEmpty
         if isComplete {
-            environment.state.lastPulledExportDate = remote.snapshot.exportedAt
+            environment.state.lastAppliedRemoteSignature = remote.snapshot.signature
         }
 
         // If the merge left this library identical to the snapshot, there's
@@ -398,7 +398,9 @@ struct SyncRunner {
         // We authored this snapshot - don't turn around and re-apply it.
         // Unless something is still pending: then the next pull must look
         // again, and re-reading our own index is cheap and harmless.
-        environment.state.lastPulledExportDate = pending.isEmpty ? snapshot.exportedAt : nil
+        environment.state.lastAppliedRemoteSignature = pending.isEmpty
+            ? LibraryIndex.signature(folders: index.folders, notebooks: index.notebooks, tombstones: snapshot.tombstones)
+            : nil
     }
 
     // MARK: Reading the folder

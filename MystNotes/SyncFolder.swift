@@ -76,14 +76,14 @@ enum SyncFolder {
         AppSettings.syncFolderName = url.lastPathComponent
         // A fresh folder choice invalidates the "already pulled / pushed"
         // markers - the new location's state is unknown.
-        AppSettings.lastPulledExportDate = nil
+        AppSettings.lastAppliedRemoteSignature = nil
         AppSettings.lastPushSignature = ""
     }
 
     static func clear() {
         AppSettings.syncFolderBookmark = nil
         AppSettings.syncFolderName = ""
-        AppSettings.lastPulledExportDate = nil
+        AppSettings.lastAppliedRemoteSignature = nil
         AppSettings.lastPushSignature = ""
     }
 
