@@ -82,15 +82,17 @@ nonisolated enum AppLog {
 // MARK: - Main-thread watchdog
 
 /// Notices when the main thread stops responding and writes what it was
-/// last known to be doing. Suspect entry points call
-/// `MainThreadWatchdog.checkpoint(_:)` (a store, no I/O); a background
-/// thread pings the main queue every half second and, if a ping goes
-/// unanswered for `threshold`, logs the last checkpoint. It can't take
-/// the main thread's stack - nothing public can - but it says which of
-/// our functions was entered last, which is usually enough.
+/// doing. A background thread pings the main queue every half second;
+/// if a ping goes unanswered for `threshold` it logs the last checkpoint
+/// (suspect entry points call `checkpoint(_:)`) and then takes the main
+/// thread's actual stack: it sends the main thread SIGUSR2, whose handler
+/// runs *on* the main thread even while it is blocked in a system call
+/// and records `backtrace()`; the watchdog symbolicates that off-thread
+/// and writes it to the log. The same technique crash reporters use.
 ///
 /// Built after the iPad froze on entering Airplane Mode with no
-/// diagnostic to show for it.
+/// diagnostic to show for it; the stack capture was added when a
+/// launch hang came back with checkpoint "(none)".
 nonisolated enum MainThreadWatchdog {
     static let threshold: TimeInterval = 3
     private static let lock = NSLock()
@@ -98,6 +100,7 @@ nonisolated enum MainThreadWatchdog {
     private static var lastCheckpointAt = Date()
     private static var pingSent: Date?
     private static var reportedThisHang = false
+    private static var mainThread: pthread_t?
 
     static func checkpoint(_ label: String) {
         lock.lock(); defer { lock.unlock() }
@@ -105,7 +108,13 @@ nonisolated enum MainThreadWatchdog {
         lastCheckpointAt = Date()
     }
 
+    private static var started = false
+
     static func start() {
+        lock.lock(); let alreadyStarted = started; started = true; lock.unlock()
+        guard !alreadyStarted else { return }
+        mainThread = pthread_self()   // called on the main thread at launch
+        installStackCapture()
         let thread = Thread {
             while true {
                 Thread.sleep(forTimeInterval: 0.5)
@@ -117,6 +126,9 @@ nonisolated enum MainThreadWatchdog {
                         let note = "main thread unresponsive for \(Int(stalled)) s; last checkpoint '\(lastCheckpoint)' \(Int(Date().timeIntervalSince(lastCheckpointAt))) s ago"
                         lock.unlock()
                         AppLog.note("hang", note)
+                        if let stack = captureMainThreadStack() {
+                            AppLog.note("hang", "main thread stack:\n" + stack)
+                        }
                         continue
                     }
                     lock.unlock()
@@ -139,7 +151,45 @@ nonisolated enum MainThreadWatchdog {
         thread.qualityOfService = .utility
         thread.start()
     }
+
+    // MARK: Stack capture
+
+    private static func installStackCapture() {
+        var action = sigaction()
+        action.__sigaction_u.__sa_handler = { _ in
+            hangStackBuffer.withUnsafeMutableBufferPointer { buffer in
+                hangStackCount = backtrace(buffer.baseAddress, Int32(buffer.count))
+            }
+            hangStackReady = 1
+        }
+        sigemptyset(&action.sa_mask)
+        action.sa_flags = 0
+        sigaction(SIGUSR2, &action, nil)
+    }
+
+    /// Signals the main thread and waits briefly for the handler to fill
+    /// the buffer. Returns symbolicated frames, one per line.
+    static func captureMainThreadStack() -> String? {
+        guard let mainThread else { return nil }
+        hangStackCount = 0
+        hangStackReady = 0
+        guard pthread_kill(mainThread, SIGUSR2) == 0 else { return nil }
+        let deadline = Date().addingTimeInterval(0.5)
+        while hangStackReady == 0, Date() < deadline { usleep(5_000) }
+        guard hangStackReady != 0, hangStackCount > 0 else { return nil }
+        let count = Int(hangStackCount)
+        let addresses = Array(hangStackBuffer.prefix(count))
+        guard let symbols = backtrace_symbols(addresses, Int32(count)) else { return nil }
+        defer { free(symbols) }
+        return (0..<count).compactMap { symbols[$0].map { String(cString: $0) } }.joined(separator: "\n")
+    }
 }
+
+// Signal-handler state: plain globals, no locks, no allocation in the handler.
+nonisolated(unsafe) private var hangStackBuffer = [UnsafeMutableRawPointer?](repeating: nil, count: 128)
+nonisolated(unsafe) private var hangStackCount: Int32 = 0
+nonisolated(unsafe) private var hangStackReady: Int32 = 0
+
 
 // MARK: - Crash reports
 
