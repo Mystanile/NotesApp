@@ -93,6 +93,7 @@ final class SyncEngine: ObservableObject {
     /// Cheap, off main, and never contends with a folder sync: it has its
     /// own environment and state.
     private func writeMirror() {
+        MainThreadWatchdog.checkpoint("SyncEngine.writeMirror")
         guard let container else { return }
         let environment = SyncEnvironment.mirror
         Task.detached(priority: .utility) {
@@ -166,6 +167,7 @@ final class SyncEngine: ObservableObject {
     /// own pushes trigger this too; that pull finds nothing newer than what
     /// it just wrote and stops at the index.
     private func startWatchingFolder() {
+        MainThreadWatchdog.checkpoint("SyncEngine.startWatchingFolder")
         guard watcher == nil, SyncFolder.isConfigured else { return }
         guard let folder = try? SyncFolder.openFolder(),
               let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else { return }
@@ -175,11 +177,13 @@ final class SyncEngine: ObservableObject {
     }
 
     private func stopWatchingFolder() {
+        MainThreadWatchdog.checkpoint("SyncEngine.stopWatchingFolder")
         watcher?.stop()
         watcher = nil
     }
 
     private func folderDidChange() {
+        MainThreadWatchdog.checkpoint("SyncEngine.folderDidChange")
         guard SyncFolder.isConfigured, !isRunning else { return }
         start(pull: true, push: false)
     }
@@ -200,6 +204,7 @@ final class SyncEngine: ObservableObject {
     }
 
     private func start(pull: Bool, push: Bool) {
+        MainThreadWatchdog.checkpoint("SyncEngine.start pull=\(pull) push=\(push)")
         guard let container else { return }
         guard SyncFolder.isConfigured else {
             status = .failed(SyncFolder.SyncFolderError.notConfigured.localizedDescription)

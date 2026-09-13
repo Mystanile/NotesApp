@@ -52,6 +52,7 @@ struct ContentView: View {
             SyncEngine.shared.pullOnForeground()
         }
         .onChange(of: scenePhase) { _, phase in
+            MainThreadWatchdog.checkpoint("ContentView.scenePhase \(phase)")
             switch phase {
             case .active:
                 SyncEngine.shared.pullOnForeground()

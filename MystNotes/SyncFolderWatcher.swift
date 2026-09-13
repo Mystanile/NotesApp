@@ -29,7 +29,10 @@ final class SyncFolderWatcher {
         debouncer = SyncDebouncer(interval: coalescingInterval, action: onChange)
         presenter = Presenter(url: url)
         presenter.onEvent = { [debouncer] in
-            Task { @MainActor in debouncer.noteChange() }
+            Task { @MainActor in
+                MainThreadWatchdog.checkpoint("SyncFolderWatcher.event")
+                debouncer.noteChange()
+            }
         }
         NSFileCoordinator.addFilePresenter(presenter)
     }

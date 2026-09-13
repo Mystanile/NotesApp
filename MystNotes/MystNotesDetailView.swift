@@ -1226,6 +1226,7 @@ struct NotebookDetailView: View {
     // MARK: - Drawing persistence
 
     private func loadCurrentPageDrawing() {
+        MainThreadWatchdog.checkpoint("DetailView.loadCurrentPageDrawing")
         guard let page = currentPage else {
             installFreshCanvas(forPageID: nil)
             return
@@ -1305,6 +1306,7 @@ struct NotebookDetailView: View {
     /// because its ink hasn't arrived yet, and writing it would replace
     /// that ink with nothing.
     private func saveCurrentPage(force: Bool = false) {
+        MainThreadWatchdog.checkpoint("DetailView.saveCurrentPage")
         guard canvasIsDirty || force,
               let pageID = canvasPageID,
               let page = sortedPages.first(where: { $0.id == pageID }) else { return }

@@ -79,6 +79,68 @@ enum AppLog {
     }
 }
 
+// MARK: - Main-thread watchdog
+
+/// Notices when the main thread stops responding and writes what it was
+/// last known to be doing. Suspect entry points call
+/// `MainThreadWatchdog.checkpoint(_:)` (a store, no I/O); a background
+/// thread pings the main queue every half second and, if a ping goes
+/// unanswered for `threshold`, logs the last checkpoint. It can't take
+/// the main thread's stack - nothing public can - but it says which of
+/// our functions was entered last, which is usually enough.
+///
+/// Built after the iPad froze on entering Airplane Mode with no
+/// diagnostic to show for it.
+enum MainThreadWatchdog {
+    static let threshold: TimeInterval = 3
+    private static let lock = NSLock()
+    private static var lastCheckpoint = "(none)"
+    private static var lastCheckpointAt = Date()
+    private static var pingSent: Date?
+    private static var reportedThisHang = false
+
+    static func checkpoint(_ label: String) {
+        lock.lock(); defer { lock.unlock() }
+        lastCheckpoint = label
+        lastCheckpointAt = Date()
+    }
+
+    static func start() {
+        let thread = Thread {
+            while true {
+                Thread.sleep(forTimeInterval: 0.5)
+                lock.lock()
+                if let sent = pingSent {
+                    let stalled = Date().timeIntervalSince(sent)
+                    if stalled >= threshold, !reportedThisHang {
+                        reportedThisHang = true
+                        let note = "main thread unresponsive for \(Int(stalled)) s; last checkpoint '\(lastCheckpoint)' \(Int(Date().timeIntervalSince(lastCheckpointAt))) s ago"
+                        lock.unlock()
+                        AppLog.note("hang", note)
+                        continue
+                    }
+                    lock.unlock()
+                    continue   // still waiting for the last ping
+                }
+                pingSent = Date()
+                lock.unlock()
+                DispatchQueue.main.async {
+                    lock.lock()
+                    if let sent = pingSent, reportedThisHang {
+                        AppLog.note("hang", "main thread responsive again after \(Int(Date().timeIntervalSince(sent))) s")
+                    }
+                    pingSent = nil
+                    reportedThisHang = false
+                    lock.unlock()
+                }
+            }
+        }
+        thread.name = "MystNotes.MainThreadWatchdog"
+        thread.qualityOfService = .utility
+        thread.start()
+    }
+}
+
 // MARK: - Crash reports
 
 #if canImport(MetricKit)
@@ -91,6 +153,7 @@ final class CrashReporter: NSObject, MXMetricManagerSubscriber {
         MXMetricManager.shared.add(self)
         AppLog.trimOnLaunch()
         AppLog.note("launch", "MystNotes \(DiagnosticsExport.appVersion) started")
+        MainThreadWatchdog.start()
     }
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
