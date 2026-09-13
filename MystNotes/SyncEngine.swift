@@ -55,6 +55,7 @@ final class SyncEngine: ObservableObject {
     private var pushAgainWhenDone = false
     private var saveObserver: NSObjectProtocol?
     private var watcher: SyncFolderWatcher?
+    private var isStartingWatcher = false
     private lazy var debouncer = SyncDebouncer(interval: Self.debounceInterval) { [weak self] in
         self?.pushAfterEdits()
     }
@@ -166,20 +167,38 @@ final class SyncEngine: ObservableObject {
     /// open are pulled a couple of seconds after the last one arrives. Our
     /// own pushes trigger this too; that pull finds nothing newer than what
     /// it just wrote and stops at the index.
+    ///
+    /// Resolving the bookmark, creating the working directory and
+    /// registering the presenter all talk to the iCloud file provider,
+    /// which on the iPad took six seconds at launch (the in-app watchdog
+    /// logged it). None of it happens on the main thread.
     private func startWatchingFolder() {
         MainThreadWatchdog.checkpoint("SyncEngine.startWatchingFolder")
-        guard watcher == nil, SyncFolder.isConfigured else { return }
-        guard let folder = try? SyncFolder.openFolder(),
-              let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else { return }
-        watcher = SyncFolderWatcher(url: workingDir, stopAccess: folder.stop) { [weak self] in
-            self?.folderDidChange()
+        guard watcher == nil, !isStartingWatcher, SyncFolder.isConfigured else { return }
+        isStartingWatcher = true
+        Task.detached(priority: .utility) { [weak self] in
+            guard let folder = try? SyncFolder.openFolder(),
+                  let workingDir = try? SyncFolder.workingDirectory(in: folder.url) else {
+                await MainActor.run { self?.isStartingWatcher = false }
+                return
+            }
+            let watcher = SyncFolderWatcher(url: workingDir, stopAccess: folder.stop) { [weak self] in
+                self?.folderDidChange()
+            }
+            await MainActor.run {
+                guard let self, self.watcher == nil, SyncFolder.isConfigured else { watcher.stop(); return }
+                self.watcher = watcher
+                self.isStartingWatcher = false
+            }
         }
     }
 
     private func stopWatchingFolder() {
         MainThreadWatchdog.checkpoint("SyncEngine.stopWatchingFolder")
-        watcher?.stop()
-        watcher = nil
+        guard let watcher else { return }
+        self.watcher = nil
+        // removeFilePresenter waits for in-flight coordination; not on main.
+        Task.detached(priority: .utility) { watcher.stop() }
     }
 
     private func folderDidChange() {

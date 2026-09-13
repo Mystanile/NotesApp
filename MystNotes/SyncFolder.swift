@@ -127,7 +127,7 @@ nonisolated enum SyncFolder {
     /// the returned `stop` is called. For the folder watcher, which needs
     /// the folder for as long as the app is open; everything else should
     /// use `withFolder`.
-    static func openFolder() throws -> (url: URL, stop: () -> Void) {
+    static func openFolder() throws -> (url: URL, stop: @Sendable () -> Void) {
         guard let bookmark = AppSettings.syncFolderBookmark else {
             throw SyncFolderError.notConfigured
         }
@@ -142,7 +142,7 @@ nonisolated enum SyncFolder {
         guard url.startAccessingSecurityScopedResource() else {
             throw SyncFolderError.accessDenied
         }
-        return (url, { url.stopAccessingSecurityScopedResource() })
+        return (url, { @Sendable in url.stopAccessingSecurityScopedResource() })
     }
 
     /// The `Mystnotes/` working directory inside the chosen folder, created if

@@ -10,8 +10,7 @@ import Foundation
 /// inside iCloud Drive it fires for writes from other processes,
 /// coordinated or not, at any depth, within about a second - and several
 /// times per write, hence the coalescing window.
-@MainActor
-final class SyncFolderWatcher {
+nonisolated final class SyncFolderWatcher: @unchecked Sendable {
     /// How long to wait after the last event before reacting. A single
     /// iCloud delivery is a burst: the index, a few notebook files, some
     /// payloads, each announced more than once.
@@ -19,16 +18,19 @@ final class SyncFolderWatcher {
 
     private let presenter: Presenter
     private let debouncer: SyncDebouncer
-    private let stopAccess: () -> Void
+    private let stopAccess: @Sendable () -> Void
 
     /// Starts watching `url`. `stopAccess` is called on `stop()` so a
     /// security-scoped folder can be held open for the watcher's lifetime.
+    /// May be called from any thread; the debouncer it drives lives on
+    /// the main actor and is only ever touched there.
     init(url: URL, coalescingInterval: TimeInterval = SyncFolderWatcher.coalescingInterval,
-         stopAccess: @escaping () -> Void = {}, onChange: @escaping @MainActor () -> Void) {
+         stopAccess: @escaping @Sendable () -> Void = {}, onChange: @escaping @MainActor () -> Void) {
         self.stopAccess = stopAccess
-        debouncer = SyncDebouncer(interval: coalescingInterval, action: onChange)
+        let debouncer = SyncDebouncer(interval: coalescingInterval, action: onChange)
+        self.debouncer = debouncer
         presenter = Presenter(url: url)
-        presenter.onEvent = { [debouncer] in
+        presenter.onEvent = {
             Task { @MainActor in
                 MainThreadWatchdog.checkpoint("SyncFolderWatcher.event")
                 debouncer.noteChange()
@@ -37,9 +39,13 @@ final class SyncFolderWatcher {
         NSFileCoordinator.addFilePresenter(presenter)
     }
 
+    /// May be called from any thread. `removeFilePresenter` waits for
+    /// in-flight coordination to finish, so callers on the main thread
+    /// should hop off first.
     func stop() {
         NSFileCoordinator.removeFilePresenter(presenter)
-        debouncer.cancel()
+        let debouncer = self.debouncer
+        Task { @MainActor in debouncer.cancel() }
         stopAccess()
     }
 

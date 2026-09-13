@@ -13,7 +13,7 @@ final class SyncDebouncer {
     private let action: @MainActor () -> Void
     private var pending: Task<Void, Never>?
 
-    init(interval: TimeInterval, action: @escaping @MainActor () -> Void) {
+    nonisolated init(interval: TimeInterval, action: @escaping @MainActor () -> Void) {
         self.interval = interval
         self.action = action
     }
