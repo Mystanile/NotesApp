@@ -15,7 +15,7 @@ import SwiftData
 /// `Documents/Library/`) is rebuilt from instead: the same layout, kept
 /// on this device by every push, referencing the local payloads in
 /// place.
-enum LibraryRebuild {
+nonisolated enum LibraryRebuild {
     static func rebuild(container: ModelContainer, environment: SyncEnvironment) throws {
         let context = ModelContext(container)
         context.autosaveEnabled = false

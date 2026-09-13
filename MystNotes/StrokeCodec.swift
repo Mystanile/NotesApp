@@ -46,7 +46,7 @@ import PencilKit
 /// this file is what syncs per page per edit. LZFSE decompresses in well
 /// under a millisecond for a dense page. A file written without the flag
 /// reads the same.
-enum StrokeCodec {
+nonisolated enum StrokeCodec {
     static let magic: [UInt8] = Array("MYSK".utf8)
     static let version: UInt16 = 1
     static let compressedBodyFlag: UInt32 = 1 << 0
@@ -233,7 +233,7 @@ enum StrokeCodec {
 /// transform (a lasso move) or its mask (a partial erase) - those change
 /// without the stroke becoming a different stroke. Strokes a shape tool
 /// creates in the same instant differ by their points.
-struct StrokeIDMap: Equatable {
+nonisolated struct StrokeIDMap: Equatable {
     struct Fingerprint: Hashable {
         var creationDate: TimeInterval
         var randomSeed: UInt32
@@ -277,7 +277,7 @@ struct StrokeIDMap: Equatable {
 
 // MARK: - Little-endian byte I/O
 
-struct ByteWriter {
+nonisolated struct ByteWriter {
     private(set) var data = Data()
 
     mutating func bytes(_ b: [UInt8]) { data.append(contentsOf: b) }
@@ -293,7 +293,7 @@ struct ByteWriter {
     }
 }
 
-struct ByteReader {
+nonisolated struct ByteReader {
     private let data: Data
     private(set) var offset = 0
 

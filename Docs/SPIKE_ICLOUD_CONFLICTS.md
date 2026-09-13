@@ -39,6 +39,10 @@ Run before the two-device experiment, against `iCloud Drive/MystSpike/probe/` (s
 
 The conflict was never created, because both devices were stuck before it: `contentSignature` was computed from microsecond dates and compared against millisecond ones, so every notebook file read from the folder "didn't match its index entry" → pending forever → never republished. Meanwhile the Mac had paged through Spike while page 1's ink was still arriving, and the page-switch save wrote a **blank** record for it with a newer date. Both fixed (commit after `4c1c2b9`), with regression tests. Also: `UIDevice.current.name` is "iPad" on Catalyst, so device attribution in `index-history/` was meaningless until the install-id naming landed; and `Write Sync Diagnostics` hung the Mac on the main thread (MetricKit caught it) — now off main. Re-run §3 on the fixed build.
 
+## 1.7 The freeze (Sept 12, 2026, evening)
+
+Entering Airplane Mode froze the iPad for ~10 s and iOS killed the app (`0x8BADF00D`, scene-update watchdog). The crash log's main-thread stack: `SyncRunner.run → performPush → pruneFolder → readJSON → NSFileCoordinator.coordinateReadingItemAtURL → semaphore_wait`. **The sync engine was on the main thread** — the module's default MainActor isolation made `Task.detached` run on the main actor. A second log from that morning showed the pre-M0 engine doing the same with `ensureDownloaded`'s `Thread.sleep`. Fixed by marking every sync type `nonisolated`, with a thread-observing test. Every earlier "the notebook took 20 s to load" in these runs was this.
+
 ## 2. Setup (once, ~10 min)
 
 - [ ] Both devices signed into the **same** iCloud account, iCloud Drive on, Wi-Fi on.

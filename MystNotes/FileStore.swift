@@ -11,7 +11,7 @@ import Foundation
 /// preference, which is how "every drawing disappeared" shipped once. That
 /// path is gone; `adoptLegacyCloudFilesOnce` brings anything left there
 /// home, one time, and nothing looks there again.
-enum FileStore {
+nonisolated enum FileStore {
     /// The one place payload files live.
     static func baseDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

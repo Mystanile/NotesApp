@@ -9,7 +9,7 @@ import UIKit
 /// spike (`Docs/SPIKE_ICLOUD_CONFLICTS.md`): whether iCloud Drive surfaces
 /// concurrent writes to a user-picked folder as `NSFileVersion` conflicts,
 /// as renamed siblings, or not at all. Debug builds only.
-enum SyncDiagnostics {
+nonisolated enum SyncDiagnostics {
     /// Runs off the main thread: enumerating a folder and asking
     /// NSFileVersion about every file took seconds on a real library and
     /// hung the Mac app (MetricKit reported it - task 21's first catch).

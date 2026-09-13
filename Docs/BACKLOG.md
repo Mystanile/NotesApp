@@ -31,7 +31,8 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Pen on Mac: reported as not usable. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
 - [M1] Typed text blocks: no font, size, bold/italic, colour controls - only typing and moving.
 - [M1] Stickers: no resize or rotate - only move.
-- [M0, open] **iPad freezes on entering Airplane Mode**, is killed after ~a minute, and after relaunch sync does nothing until the app is relaunched from Xcode. The watchdog in `SyncEngine` (120 s) bounds the second half; the freeze itself needs the iPad's MetricKit hang/crash payload, which *Write Sync Diagnostics* now copies into the folder.
+- ~~[M0, open] iPad freezes on entering Airplane Mode~~ **Found and fixed Sept 12, 2026**: the sync engine was running on the main thread (default MainActor isolation defeated `Task.detached`); a coordinated iCloud read blocked when the device went offline and the watchdog killed the app. All sync types are `nonisolated` now, with a test.
+- [M1] PencilKit crash in undo on the whiteboard canvas (`-[PKTiledView updateTilesForVisibleRect…]` under `WhiteboardCanvasView` undo, Sept 10 crash log). Reproduce: draw on a whiteboard, undo via the shortcut. Likely undoing across a canvas swap.
 
 ## Parked from planning (Sept 12, 2026)
 

@@ -50,6 +50,38 @@ final class SyncTests: XCTestCase {
 
     // MARK: What the first real two-device run found (Sept 12, 2026)
 
+    /// Invariant 10. The iPad's crash log showed SyncRunner.run on the main
+    /// thread, inside a coordinated iCloud read, killed by the watchdog on
+    /// entering Airplane Mode: with the module's default MainActor isolation
+    /// every sync type was implicitly main-actor and Task.detached was
+    /// inferred main-actor too. The runner must execute off main when
+    /// started the way SyncEngine starts it.
+    func testRunner_executesOffTheMainThread_whenDetached() async throws {
+        let ipad = try harness.makeDevice("iPad")
+        _ = try ipad.createNotebook(title: "A", pageCount: 2)
+        harness.clock.advance()
+
+        final class ThreadProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var calls = 0
+            private(set) var onMain = 0
+            func record() { lock.lock(); calls += 1; if Thread.isMainThread { onMain += 1 }; lock.unlock() }
+        }
+        let probe = ThreadProbe()
+        var environment = ipad.environment
+        let clock = harness.clock
+        environment.now = { probe.record(); return clock.now }
+        let container = ipad.container
+        let env = environment
+
+        try await Task.detached(priority: .utility) {
+            try SyncRunner(container: container, environment: env).run(pull: true, push: true)
+        }.value
+
+        XCTAssertGreaterThan(probe.calls, 0, "the runner consulted the clock")
+        XCTAssertEqual(probe.onMain, 0, "the sync runner executed on the main thread \(probe.onMain) of \(probe.calls) times")
+    }
+
     /// `Date()` has microseconds; the file has milliseconds. The content
     /// signature must be computed from what the file says, or every
     /// notebook file "doesn't match its index entry" after one round trip

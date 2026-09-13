@@ -45,7 +45,7 @@ Two notes on the interim mapping. First, **you mostly don't need one**: when the
 7. **One storage root.** Payloads live in the app's Documents directory and nowhere else. `FileStore`'s iCloud ubiquity path, the dual-location fallback and the `syncEnabled` preference are gone (M0 task 15); only a one-time, background adoption of anything an old build left in the container remains.
 8. **Local-first.** Fully functional with no sync folder chosen, an unreachable folder, or an evicted file. These are designed states with calm UI, not error dialogs.
 9. **The user can export everything, always.** Any feature that creates data is covered by export before it ships.
-10. **Ink latency is sacred.** Nothing synchronous on the main thread during drawing. Recognition, indexing, thumbnails, embeddings and sync all stay off the drawing path.
+10. **Ink latency is sacred.** Nothing synchronous on the main thread during drawing. Recognition, indexing, thumbnails, embeddings and sync all stay off the drawing path. **Was violated by the entire sync engine until Sept 12, 2026** — see the gotcha on `SWIFT_DEFAULT_ACTOR_ISOLATION`; `testRunner_executesOffTheMainThread_whenDetached` guards it now.
 11. **SwiftData properties stay optional or defaulted, no unique constraints.** Not currently required (no CloudKit), but it costs nothing and preserves the option.
 
 ---
@@ -133,6 +133,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
+- **This project builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Every type not marked `nonisolated` is main-actor, and `Task.detached { someMainActorType.work() }` does NOT run in the background — the closure is inferred main-actor and hops to the main thread.** The whole sync engine ran on the main thread this way (iPad crash log: watchdog kill inside `NSFileCoordinator` under `SyncRunner.run`, thread 0). Every sync, persistence, codec and diagnostics type is now `nonisolated`; when adding one, mark it, and if it must run in the background write a test that observes the thread. `@MainActor` on `SyncEngine`, the watcher and the debouncer is deliberate.
 - **Anything hashed or compared across devices must be computed from what the file says, never from in-memory values.** `Date()` has microseconds, the snapshot has milliseconds; hashing raw `timeIntervalSince1970` made every notebook "not match its index entry" after one round trip and left both real devices pending forever. `SnapshotDates.stamp` is the encoded string for that reason. The harness clock ticks in whole seconds, which is why tests never saw it — the sub-millisecond regression test exists now.
 - `UIDevice.current.name` is "iPad" on Mac Catalyst too (the real name is behind an entitlement). Sync's device name is platform + install id.
 - A canvas nobody drew on must never be saved: it may be blank only because its ink hasn't arrived. `MystNotesDetailView` saves only when `canvasIsDirty`, and only to `canvasPageID` — the page the canvas was loaded for, which a pull can shift out from under `currentPageIndex`.

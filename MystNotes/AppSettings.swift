@@ -9,7 +9,7 @@ import PencilKit
 /// reads most of these through `@AppStorage` (same keys) for live bindings in
 /// Settings; non-view code (e.g. the canvas) reads them through these static
 /// accessors so everything stays in sync.
-enum AppSettings {
+nonisolated enum AppSettings {
     private static let defaults = UserDefaults.standard
 
     enum Keys {

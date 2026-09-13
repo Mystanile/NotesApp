@@ -8,7 +8,7 @@ import Foundation
 /// security-scoped bookmark to it. iCloud Drive then syncs that folder
 /// between the user's devices on its own; we just do plain file I/O against
 /// whatever the bookmark resolves to.
-enum SyncFolder {
+nonisolated enum SyncFolder {
 
     enum SyncFolderError: LocalizedError {
         case notConfigured

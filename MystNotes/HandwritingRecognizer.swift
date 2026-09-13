@@ -17,7 +17,7 @@ import Vision
 /// changed since it was last recognized — compared via the drawing file's
 /// modification date against `Page.ocrUpdatedAt`. Unchanged pages keep their
 /// cached text and cost nothing on later searches.
-enum HandwritingRecognizer {
+nonisolated enum HandwritingRecognizer {
     /// Recognizes the text in a page's ink. Returns nil when there is no
     /// drawing, it's blank, or recognition finds nothing. Runs the Vision
     /// request off the main actor so the UI never hangs on a search.

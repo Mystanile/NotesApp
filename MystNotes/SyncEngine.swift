@@ -276,7 +276,7 @@ final class SyncEngine: ObservableObject {
 /// Every process-wide dependency (sync folder, local files directory, the
 /// pulled/pushed markers, tombstones, clock) comes through `environment` so
 /// the sync tests can run two independent libraries against one folder.
-struct SyncRunner {
+nonisolated struct SyncRunner {
     let container: ModelContainer
     let environment: SyncEnvironment
 

@@ -31,7 +31,7 @@ import PencilKit
 ///   decodes, that's the ink, and the record is regenerated from it.
 /// - **Older libraries just work.** A page from before the flip has only a
 ///   `.drawing`; it loads, and the record is written from it on the spot.
-struct DrawingStore {
+nonisolated struct DrawingStore {
     /// Resolves a payload file name to its on-disk URL.
     var url: (String) -> URL
 
@@ -223,7 +223,7 @@ struct DrawingStore {
 /// Stroke ids per page for the life of the process. A page's map is
 /// restored from its record on load and consulted on save; the record
 /// itself is the durable copy.
-final class StrokeIDCache {
+nonisolated final class StrokeIDCache {
     static let shared = StrokeIDCache()
     private let lock = NSLock()
     private var maps: [UUID: StrokeIDMap] = [:]

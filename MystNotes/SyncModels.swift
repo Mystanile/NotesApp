@@ -35,7 +35,7 @@ let librarySnapshotFormatVersion = 2
 /// `.iso8601` strategy) made two edits inside one second compare equal
 /// and made a device's own dates look different after a round trip.
 /// Decoding accepts both forms so snapshots written before this still read.
-enum SnapshotDates {
+nonisolated enum SnapshotDates {
     private static let fractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -73,7 +73,7 @@ enum SnapshotDates {
 
 // MARK: - index.json
 
-struct LibraryIndex: Codable {
+nonisolated struct LibraryIndex: Codable {
     var formatVersion: Int = librarySnapshotFormatVersion
     var exportedAt: Date
     var deviceName: String
@@ -87,7 +87,7 @@ struct LibraryIndex: Codable {
 /// `tombstones.json`. Kept apart from the index because two versions of
 /// this file merge by plain union, which is what makes a conflicting pair
 /// of writes (task 8) safe to reconcile.
-struct TombstoneFile: Codable {
+nonisolated struct TombstoneFile: Codable {
     var formatVersion: Int = librarySnapshotFormatVersion
     var tombstones: [Tombstone]
 }
@@ -115,7 +115,7 @@ extension LibraryIndex {
 
 /// What the index knows about a notebook: enough to list it, merge its
 /// settings, and decide whether `notebooks/<id>.json` needs reading.
-struct NotebookIndexEntry: Codable {
+nonisolated struct NotebookIndexEntry: Codable {
     var id: UUID
     var title: String
     var coverStyle: String
@@ -147,7 +147,7 @@ struct NotebookIndexEntry: Codable {
 ///
 /// Also the exact shape of the format-1 `library.json`, which is why it
 /// stays `Codable`: `notebookIndex` is absent there and derived.
-struct LibrarySnapshot: Codable {
+nonisolated struct LibrarySnapshot: Codable {
     var formatVersion: Int = librarySnapshotFormatVersion
     var exportedAt: Date
     var deviceName: String
@@ -176,7 +176,7 @@ struct LibrarySnapshot: Codable {
 /// SHA-256 plus the original extension, so a file that hasn't finished
 /// downloading (or was damaged) is detectable by rehashing it, and two
 /// pages with identical ink share one file.
-enum PayloadHash {
+nonisolated enum PayloadHash {
     static func sha256(of url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return sha256(of: data)
@@ -195,7 +195,7 @@ enum PayloadHash {
 
 // MARK: - Tombstone
 
-struct Tombstone: Codable, Hashable {
+nonisolated struct Tombstone: Codable, Hashable {
     /// `page` was added with per-page merge; a build from before it can't
     /// decode a snapshot that contains one.
     enum Kind: String, Codable { case folder, notebook, page }
@@ -213,7 +213,7 @@ struct Tombstone: Codable, Hashable {
 /// The store defaults to the app's real one; `SyncRunner` passes its
 /// environment's store so each simulated device in the sync tests keeps its
 /// own list.
-enum SyncTombstones {
+nonisolated enum SyncTombstones {
     private static let lock = NSLock()
     /// Tombstones older than this are pruned - long enough that every device
     /// has realistically synced, without the list growing forever.
@@ -241,14 +241,14 @@ enum SyncTombstones {
 
 // MARK: - DTOs
 
-struct FolderDTO: Codable {
+nonisolated struct FolderDTO: Codable {
     var id: UUID
     var name: String
     var parentID: UUID?
 }
 
 /// One notebook, complete: what `notebooks/<id>.json` holds.
-struct NotebookDTO: Codable {
+nonisolated struct NotebookDTO: Codable {
     /// Optional because notebooks embedded in a format-1 `library.json`
     /// have no version of their own.
     var formatVersion: Int? = librarySnapshotFormatVersion
@@ -279,7 +279,7 @@ struct NotebookDTO: Codable {
     }
 }
 
-struct PageDTO: Codable {
+nonisolated struct PageDTO: Codable {
     var id: UUID
     var index: Int
     var type: String
@@ -304,7 +304,7 @@ struct PageDTO: Codable {
     var importedDocuments: [ImportedDocumentDTO]
 }
 
-struct TextBlockDTO: Codable {
+nonisolated struct TextBlockDTO: Codable {
     var id: UUID
     var content: String
     var frameX: Double
@@ -314,7 +314,7 @@ struct TextBlockDTO: Codable {
     var textColorHex: String
 }
 
-struct StickerDTO: Codable {
+nonisolated struct StickerDTO: Codable {
     var id: UUID
     var assetRef: String
     var frameX: Double
@@ -323,7 +323,7 @@ struct StickerDTO: Codable {
     var frameHeight: Double
 }
 
-struct ImportedDocumentDTO: Codable {
+nonisolated struct ImportedDocumentDTO: Codable {
     var id: UUID
     var sourceType: String
     var fileRef: String
@@ -341,7 +341,7 @@ struct ImportedDocumentDTO: Codable {
     var cropHeight: Double?
 }
 
-struct LinkDTO: Codable {
+nonisolated struct LinkDTO: Codable {
     var id: UUID
     var sourcePageID: UUID
     var destinationPageID: UUID

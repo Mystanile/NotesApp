@@ -24,7 +24,7 @@ import UIKit
 ///   export" M6 asks for.
 ///
 /// Everything lives in `Documents/diagnostics/`.
-enum Diagnostics {
+nonisolated enum Diagnostics {
     static var directory: URL {
         FileStore.baseDirectory().appendingPathComponent("diagnostics", isDirectory: true)
     }
@@ -32,7 +32,7 @@ enum Diagnostics {
 
 // MARK: - Log
 
-enum AppLog {
+nonisolated enum AppLog {
     static let maximumBytes = 512 * 1024
     private static let queue = DispatchQueue(label: "MystNotes.AppLog")
     private static let logger = Logger(subsystem: "com.mozynas.Mystnotes", category: "app")
@@ -91,7 +91,7 @@ enum AppLog {
 ///
 /// Built after the iPad froze on entering Airplane Mode with no
 /// diagnostic to show for it.
-enum MainThreadWatchdog {
+nonisolated enum MainThreadWatchdog {
     static let threshold: TimeInterval = 3
     private static let lock = NSLock()
     private static var lastCheckpoint = "(none)"
@@ -182,7 +182,7 @@ final class CrashReporter: NSObject, MXMetricManagerSubscriber {
 
 // MARK: - Export
 
-enum DiagnosticsExport {
+nonisolated enum DiagnosticsExport {
     static var appVersion: String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"

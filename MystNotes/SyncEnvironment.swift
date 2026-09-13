@@ -12,7 +12,7 @@ import UIKit
 /// `Date()`). Tests build one environment per simulated device so two
 /// libraries can share one sync folder inside a single process - the
 /// only way to drive a real two-device merge from a unit test.
-struct SyncEnvironment {
+nonisolated struct SyncEnvironment {
     /// Resolves the user's sync folder and runs `body` with access held.
     var withFolder: (_ body: (URL) throws -> Void) throws -> Void
     /// Where this device keeps its payload files (`<page-id>.drawing`,
@@ -99,7 +99,7 @@ struct SyncEnvironment {
 
 /// Per-device sync bookkeeping. Class-bound so a store can be shared by
 /// value (inside `SyncEnvironment`) while its setters still take effect.
-protocol SyncStateStore: AnyObject {
+nonisolated protocol SyncStateStore: AnyObject {
     /// Signature of the last remote snapshot this device fully applied, or
     /// authored. A pull whose remote signature equals it has nothing new.
     /// Content, not time: two devices pushing every 30 s can each write an
@@ -114,7 +114,7 @@ protocol SyncStateStore: AnyObject {
 /// The local mirror's markers. Tombstones are shared with the live store:
 /// a deletion recorded on this device must apply when the mirror is read
 /// back, or a rebuild would resurrect it.
-final class MirrorSyncStateStore: SyncStateStore {
+nonisolated final class MirrorSyncStateStore: SyncStateStore {
     static let shared = MirrorSyncStateStore()
     private init() {}
     private let defaults = UserDefaults.standard
@@ -134,7 +134,7 @@ final class MirrorSyncStateStore: SyncStateStore {
 }
 
 /// The app's real store: `UserDefaults` through `AppSettings`.
-final class LiveSyncStateStore: SyncStateStore {
+nonisolated final class LiveSyncStateStore: SyncStateStore {
     static let shared = LiveSyncStateStore()
     private init() {}
 
