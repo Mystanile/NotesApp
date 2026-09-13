@@ -170,6 +170,32 @@ final class SyncTests: XCTestCase {
         _ = a
     }
 
+    /// The folder holds something other than this library, but the device's
+    /// stored "last pushed" marker happens to equal its own state (a
+    /// leftover from a push that had to substitute the folder's entry).
+    /// The marker must not decide; the folder must.
+    func testStaleLastPushMarker_doesNotStopAPush() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+        let macInk = Data("Mac's edit".utf8)
+        harness.clock.advance(); try mac.edit(page: macPages[0], ink: macInk)
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(harness.pageInFolder(macPages[0].id)?.drawingHash, PayloadHash.sha256(of: macInk), "precondition: published")
+
+        // The folder loses the Mac's write (an older index lands over it)
+        // while the Mac's marker still says "I pushed exactly this".
+        let older = harness.historyFileNames().first!
+        try Data(contentsOf: harness.folderFile("index-history/\(older)")).write(to: harness.folderFile("index.json"))
+        mac.state.lastAppliedRemoteSignature = nil
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(harness.pageInFolder(macPages[0].id)?.drawingHash, PayloadHash.sha256(of: macInk), "the Mac must publish again because the folder differs")
+        XCTAssertEqual(try harness.readIndex().deviceName, "Mac")
+    }
+
     // MARK: Conflict versions (M0 task 8)
 
     /// Both devices pushed while offline; iCloud kept the loser's index as

@@ -383,9 +383,14 @@ struct SyncRunner {
                              workingDir: URL, hashes: PayloadHashCache) throws {
         let snapshot = try buildSnapshot(context: context, hashes: hashes)
         let remoteIndex = remote?.index
-        // A folder without index.json yet (empty, or format 1) always gets
-        // one, even when nothing else changed - that's the migration.
-        guard snapshot.signature != environment.state.lastPushSignature || remoteIndex == nil else { return }
+        // Push unless the folder already holds exactly this library. That
+        // is judged against the index just read, never against a stored
+        // "last pushed" marker: a marker can be stale (it was, on a real
+        // device, after a push that had to keep the folder's entry for a
+        // pending notebook), and a stale marker means an edit that never
+        // leaves the device. A folder without index.json yet (empty, or
+        // format 1) always gets one - that's the migration.
+        if let remote, remote.index != nil, !remote.isConflictVersion, remote.snapshot.signature == snapshot.signature { return }
 
         pushPayloads(for: snapshot,
                      from: environment.localFilesDirectory(),
