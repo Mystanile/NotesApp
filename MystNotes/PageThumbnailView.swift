@@ -33,6 +33,7 @@ struct PageThumbnailView: View {
             .joined(separator: ",")
         return [
             page.drawingFileRef ?? "-",
+            page.modifiedAt.map { String($0.timeIntervalSince1970) } ?? "-",
             page.backgroundRef ?? "-",
             frame,
             String(format: "%.4f", page.aspectRatio ?? -1)

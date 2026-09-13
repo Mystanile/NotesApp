@@ -76,6 +76,10 @@ struct NotebookDetailView: View {
     // another's file.
     @State private var canvasPageID: UUID?
     @State private var canvasIsDirty = false
+    /// The modifiedAt our own last save stamped, so the "page changed
+    /// under us" reload below can tell a pull from our autosave. Reloading
+    /// after every autosave would reinstall the canvas mid-stroke.
+    @State private var ownSaveDate: Date?
     @State private var drawingNeedsOCR = false
     @State private var showingPageStrip = true
 
@@ -238,6 +242,14 @@ struct NotebookDetailView: View {
         .onChange(of: currentPage?.id) { _, newID in
             guard newID != canvasPageID else { return }
             saveCurrentPage()
+            loadCurrentPageDrawing()
+        }
+        // A pull that brings a newer version of *this* page changes its
+        // modifiedAt. Show it - unless the user has drawn on the canvas
+        // since it loaded, in which case their strokes stay and the save
+        // decides by date, like any same-page edit.
+        .onChange(of: currentPage?.modifiedAt) { _, newDate in
+            guard currentPage?.id == canvasPageID, !canvasIsDirty, newDate != ownSaveDate else { return }
             loadCurrentPageDrawing()
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1247,6 +1259,7 @@ struct NotebookDetailView: View {
     private func installFreshCanvas(with drawing: PKDrawing = PKDrawing(), forPageID pageID: UUID?) {
         canvasPageID = pageID
         canvasIsDirty = false
+        ownSaveDate = nil
         autosaveTask?.cancel()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         let fresh = PageCanvasView()
@@ -1312,6 +1325,7 @@ struct NotebookDetailView: View {
         do {
             page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
             page.markModified()
+            if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
             try modelContext.save()
         } catch {
             print("Failed to save drawing: \(error)")
@@ -1321,6 +1335,7 @@ struct NotebookDetailView: View {
     private func save(to page: Page) {
         page.drawingFileRef = DrawingStore.fileName(for: page.id)
         page.markModified()
+        if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
         try? modelContext.save()
     }
 #endif
