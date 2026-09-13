@@ -25,7 +25,7 @@ Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and pe
 **Three things blocked shipping. As of Sept 12, 2026 (M0, `m0-correctness`) all three are closed in code; what remains is on hardware — see the M0 task list below.**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
-2. **`library.json` holds the entire library in one file** — *split done (M0 task 6, Sept 12, 2026): `index.json` + `notebooks/<uuid>.json`, partial push and pull by content signature, format gate, legacy read.* Index history (task 7), `tombstones.json` (task 9), content-addressed payloads (task 10), trash-not-delete with orphan pruning (task 11), the 30 s debounced push (task 12), `NSFilePresenter` folder watching (task 13), non-blocking downloads (task 14) and the single storage root (task 15) done. Still open: iCloud conflict versions (task 8, blocked on `Docs/SPIKE_ICLOUD_CONFLICTS.md`).
+2. ~~**`library.json` holds the entire library in one file**~~ **Closed (M0 tasks 6–15, Sept 12, 2026).** Split into `index.json` + `notebooks/<uuid>.json` with partial push/pull, index history, `tombstones.json`, content-addressed payloads, trash-not-delete, debounced push, folder watching, non-blocking downloads, one storage root — and iCloud conflict versions read and merged (task 8; the spike found outcome B on real hardware).
 3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness, durability, codec, fidelity, watcher, debouncer, diagnostics and performance suites, 73 tests green. Run on the iPad simulator: boot it first (see gotchas), then `xcodebuild test -scheme MystNotes -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)'`.
 
 ---
@@ -171,7 +171,7 @@ In order. Each gates the next.
 5. Merge per page. Remove `rebuild()`'s delete-all-pages behavior.
 6. Split `library.json` into `index.json` + `notebooks/<uuid>.json`.
 7. Keep the last N index snapshots in `index-history/`.
-8. Read and resolve `NSFileVersion` conflict versions instead of ignoring them.
+8. ~~Read and resolve `NSFileVersion` conflict versions~~ done — spike confirmed outcome B on real hardware; versions merged sequentially, resolved after a complete merge.
 9. Move tombstones from `UserDefaults` into `tombstones.json` in the folder.
 10. Content-address payloads by SHA-256; drop mtime comparison in `copyFiles`.
 11. Prune orphaned payloads; route deletions to `trash/`, never `removeItem`.

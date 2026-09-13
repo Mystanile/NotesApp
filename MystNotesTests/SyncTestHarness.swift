@@ -59,6 +59,10 @@ final class SyncTestDevice {
     let context: ModelContext
     let filesDirectory: URL
     let state = InMemorySyncStateStore()
+    /// Planted "conflict versions": file URL -> other versions of it, as
+    /// `NSFileVersion` would report. Resolved ones are recorded.
+    var plantedConflicts: [URL: [URL]] = [:]
+    private(set) var resolvedConflicts: [URL] = []
     var indexHistoryLimit = 50
     var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
 
@@ -123,7 +127,11 @@ final class SyncTestDevice {
             deviceName: name,
             now: { [clock] in clock.now },
             indexHistoryLimit: indexHistoryLimit,
-            orphanGracePeriod: orphanGracePeriod
+            orphanGracePeriod: orphanGracePeriod,
+            conflictVersions: { [unowned self] url in self.plantedConflicts[url.standardizedFileURL] ?? [] },
+            resolveConflicts: { [unowned self] url in
+                if self.plantedConflicts.removeValue(forKey: url.standardizedFileURL) != nil { self.resolvedConflicts.append(url) }
+            }
         )
     }
 

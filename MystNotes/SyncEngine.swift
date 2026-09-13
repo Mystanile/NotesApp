@@ -274,10 +274,35 @@ struct SyncRunner {
             defer { hashes.persist() }
             // A push always pulls first, folding in what another device
             // wrote - except into the mirror, which only this device writes.
-            let remote = try readRemote(workingDir: workingDir, context: context)
+            // The folder's current index first, then any conflict versions
+            // iCloud kept - each applied as its own snapshot so every page
+            // is compared against what's local *now*, not what was local
+            // before the previous version was merged.
+            let versions = try readRemoteVersions(workingDir: workingDir, context: context)
+            let remote = versions.first
             var pending = remote?.pending ?? []
             if pull || (push && !environment.payloadsAreLocal) {
-                pending.formUnion(try performPull(remote, context: context, workingDir: workingDir, hashes: hashes))
+                var allComplete = true
+                for version in versions {
+                    let deferred = try performPull(version, context: context, workingDir: workingDir, hashes: hashes)
+                    pending.formUnion(deferred)
+                    if !version.isComplete || !deferred.isEmpty { allComplete = false }
+                }
+                if versions.count > 1, allComplete {
+                    // Everything every version said is in the library; the
+                    // conflict has been reconciled, and the next push writes
+                    // the union. Until then the versions stay, so a kill
+                    // here loses nothing.
+                    for name in ["index.json", "tombstones.json"] {
+                        environment.resolveConflicts(workingDir.appendingPathComponent(name))
+                    }
+                    for version in versions.dropFirst() {
+                        for notebook in version.snapshot.notebooks {
+                            environment.resolveConflicts(Self.notebookFileURL(for: notebook.id, in: workingDir))
+                        }
+                    }
+                    AppLog.note("sync", "merged \(versions.count - 1) conflict version(s) of the index")
+                }
             }
             if push {
                 try performPush(against: remote, pending: pending, context: context, workingDir: workingDir, hashes: hashes)
@@ -301,7 +326,7 @@ struct SyncRunner {
                              hashes: PayloadHashCache) throws -> Set<UUID> {
         guard let remote else { return [] }
 
-        if remote.snapshot.signature == environment.state.lastAppliedRemoteSignature {
+        if !remote.isConflictVersion, remote.snapshot.signature == environment.state.lastAppliedRemoteSignature {
             return []  // already applied exactly this
         }
 
@@ -327,7 +352,7 @@ struct SyncRunner {
         // pull tries again. Nothing that did arrive is undone - the merge
         // is safe to repeat.
         let isComplete = remote.isComplete && deferredNotebooks.isEmpty
-        if isComplete {
+        if isComplete, !remote.isConflictVersion {
             environment.state.lastAppliedRemoteSignature = remote.snapshot.signature
         }
 
@@ -336,7 +361,8 @@ struct SyncRunner {
         // tombstone isn't in the folder yet - the next push must go out, so
         // the marker is left alone. (It used to be set unconditionally,
         // which is how a device's own edits went unpushed.)
-        if isComplete, try buildSnapshot(context: context, hashes: hashes).signature == remote.snapshot.signature {
+        if isComplete, !remote.isConflictVersion,
+           try buildSnapshot(context: context, hashes: hashes).signature == remote.snapshot.signature {
             environment.state.lastPushSignature = remote.snapshot.signature
         }
         return deferredNotebooks
@@ -410,13 +436,33 @@ struct SyncRunner {
         /// Every folder, tombstone and notebook index entry, plus the
         /// `NotebookDTO`s that needed reading (new here, or changed).
         var snapshot: LibrarySnapshot
-        /// Notebooks whose file the index promised but which was missing,
-        /// unreadable, or didn't match its entry. Empty means complete.
+        /// Notebooks whose file the index promised but which was missing
+        /// or unreadable. This library has only their settings, so they
+        /// must not be republished from here.
         var pending: Set<UUID>
+        /// Notebooks whose file was read but doesn't match its index entry
+        /// - an older or newer push than the index came from, or an entry
+        /// written by a build that hashed differently. Applied (the merge
+        /// is safe either way) but the pull isn't marked done, so the next
+        /// one looks again. Unlike `pending`, these *are* republished: the
+        /// only way a stale entry gets replaced is for someone to write a
+        /// current one.
+        var mismatched: Set<UUID>
         /// nil for a format-1 `library.json`.
         var index: LibraryIndex?
+        /// True for a version iCloud kept aside after concurrent writes;
+        /// it is merged but never counts as "the" folder state.
+        var isConflictVersion = false
+        /// Conflict versions of individual notebook files, found while
+        /// reading this index. Each is merged as a version of its own -
+        /// never alongside the current file in one snapshot, because the
+        /// merge plan is keyed by page and the last DTO seen would decide.
+        var notebookConflictVersions: [NotebookDTO] = []
 
-        var isComplete: Bool { pending.isEmpty }
+        /// A conflict version's entries describe files that have since been
+        /// replaced, so "doesn't match its entry" is its normal condition,
+        /// not a reason to wait.
+        var isComplete: Bool { pending.isEmpty && (mismatched.isEmpty || isConflictVersion) }
     }
 
     /// The folder's index exists but iCloud hasn't downloaded it. Nothing
@@ -458,6 +504,34 @@ struct SyncRunner {
             .appendingPathComponent("\(id.uuidString).json")
     }
 
+    /// The folder's current library, followed by one entry per unresolved
+    /// conflict version of `index.json`. Empty when there is no library.
+    private func readRemoteVersions(workingDir: URL, context: ModelContext) throws -> [RemoteLibrary] {
+        guard let current = try readRemote(workingDir: workingDir, context: context) else { return [] }
+        var versions = [current]
+        for url in environment.conflictVersions(Self.indexURL(in: workingDir)) {
+            guard var version = try? readIndexedLibrary(indexURL: url, workingDir: workingDir, context: context) else { continue }
+            version.isConflictVersion = true
+            versions.append(version)
+        }
+        // Every notebook-file conflict becomes a version of its own, after
+        // the index versions, so its pages are compared against a library
+        // that has already taken in everything the current files said.
+        var seen = Set<String>()
+        for version in versions {
+            for dto in version.notebookConflictVersions {
+                let key = "\(dto.id):\(dto.contentSignature)"
+                guard seen.insert(key).inserted else { continue }
+                var single = version
+                single.snapshot.notebooks = [dto]
+                single.isConflictVersion = true
+                single.notebookConflictVersions = []
+                versions.append(single)
+            }
+        }
+        return versions
+    }
+
     private func readRemote(workingDir: URL, context: ModelContext) throws -> RemoteLibrary? {
         let indexURL = Self.indexURL(in: workingDir)
         switch SyncFolder.availability(of: indexURL) {
@@ -477,7 +551,7 @@ struct SyncRunner {
         guard legacy.formatVersion <= librarySnapshotFormatVersion else {
             throw SyncFormatError.newerThanThisBuild(legacy.formatVersion)
         }
-        return RemoteLibrary(snapshot: legacy, pending: [], index: nil)
+        return RemoteLibrary(snapshot: legacy, pending: [], mismatched: [], index: nil)
     }
 
     private func readIndexedLibrary(indexURL: URL, workingDir: URL, context: ModelContext) throws -> RemoteLibrary {
@@ -495,7 +569,9 @@ struct SyncRunner {
         )
 
         var notebooks: [NotebookDTO] = []
+        var notebookConflicts: [NotebookDTO] = []
         var pending: Set<UUID> = []
+        var mismatched: Set<UUID> = []
         for entry in index.notebooks where localSignatures[entry.id] != entry.contentSignature {
             let url = Self.notebookFileURL(for: entry.id, in: workingDir)
             guard SyncFolder.availability(of: url) == .available,
@@ -503,11 +579,13 @@ struct SyncRunner {
                 pending.insert(entry.id)   // not here yet, or not all here yet
                 continue
             }
-            // A file that doesn't match its entry is from another push -
-            // older or newer. Either is safe to merge by page date; it just
-            // means this snapshot isn't the one on disk, so come back.
-            if notebook.contentSignature != entry.contentSignature { pending.insert(entry.id) }
+            if notebook.contentSignature != entry.contentSignature { mismatched.insert(entry.id) }
             notebooks.append(notebook)
+            // A notebook file both devices wrote offline: iCloud kept the
+            // other write. Same pages, merged by date - as its own version.
+            for versionURL in environment.conflictVersions(url) {
+                if let other: NotebookDTO = try? readJSON(from: versionURL) { notebookConflicts.append(other) }
+            }
         }
 
         let snapshot = LibrarySnapshot(
@@ -519,7 +597,8 @@ struct SyncRunner {
             notebookIndex: index.notebooks,
             tombstones: try readTombstones(workingDir: workingDir) + (index.tombstones ?? [])
         )
-        return RemoteLibrary(snapshot: snapshot, pending: pending, index: index)
+        return RemoteLibrary(snapshot: snapshot, pending: pending, mismatched: mismatched, index: index,
+                             notebookConflictVersions: notebookConflicts)
     }
 
     /// `tombstones.json`, or nothing if it isn't there yet. An unreadable
@@ -530,7 +609,12 @@ struct SyncRunner {
         let url = Self.tombstonesURL(in: workingDir)
         guard SyncFolder.availability(of: url) == .available else { return [] }
         let file: TombstoneFile? = try? readJSON(from: url)
-        return file?.tombstones ?? []
+        var stones = file?.tombstones ?? []
+        // Tombstones merge by union, so a conflict version just adds.
+        for versionURL in environment.conflictVersions(url) {
+            if let other: TombstoneFile = try? readJSON(from: versionURL) { stones += other.tombstones }
+        }
+        return stones
     }
 
     // MARK: Pruning

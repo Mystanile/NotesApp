@@ -113,6 +113,84 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(try ipad.pages(ofNotebook: notebook.id)?.count, 2)
     }
 
+    /// The index's entries were written by a build that hashed differently
+    /// (or the index and the notebook file came from different pushes). The
+    /// file is here and readable, so it's applied *and* the notebook is
+    /// republished with a current entry - otherwise no device could ever
+    /// replace the stale one and every notebook would be pending forever.
+    /// Exactly what the first real run hit after the signature fix shipped.
+    func testStaleIndexEntry_isAppliedAndRepublished_notPendingForever() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+
+        // Rewrite the entry's signature the way an old build would have.
+        var index = try harness.readIndex()
+        index.notebooks = index.notebooks.map { e in var e = e; e.contentSignature = "old-format-" + e.contentSignature.prefix(8); return e }
+        try harness.writeJSON(index, to: "index.json")
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.count, 2, "the file is applied despite the stale entry")
+        let entry = try XCTUnwrap(try harness.readIndex().notebooks.first { $0.id == notebook.id })
+        XCTAssertFalse(entry.contentSignature.hasPrefix("old-format"), "the Mac republished a current entry")
+        XCTAssertEqual(try harness.readIndex().deviceName, "Mac")
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotNil(mac.state.lastAppliedRemoteSignature, "with a matching entry the pull completes")
+    }
+
+    // MARK: Conflict versions (M0 task 8)
+
+    /// Both devices pushed while offline; iCloud kept the loser's index as
+    /// an unresolved conflict version. Reading it as a second snapshot
+    /// brings the loser's page edit in, and the conflict is marked
+    /// resolved only once everything merged.
+    func testConflictVersionOfTheIndex_isMergedAndResolved() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Spike", pageCount: 4)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+        let iInk = Data("I".utf8), mInk = Data("M".utf8)
+
+        // Offline: iPad draws on page 1, Mac on page 2. iPad "wins" the
+        // folder; the Mac's write becomes a conflict version.
+        harness.clock.advance(); try ipad.edit(page: ipadPages[0], ink: iInk)
+        harness.clock.advance(); try mac.edit(page: macPages[1], ink: mInk)
+        harness.clock.advance(); try mac.sync()           // Mac's index + notebook file land first...
+        let macIndex = try Data(contentsOf: harness.folderFile("index.json"))
+        let macNotebook = try Data(contentsOf: harness.folderFile("notebooks/\(notebook.id.uuidString).json"))
+        // ...then iCloud replaces them with the iPad's (ignoring the Mac's), keeping the Mac's as conflicts.
+        ipad.state.lastAppliedRemoteSignature = nil
+        ipad.state.lastPushSignature = ""
+        try harness.writeJSON(try harness.readIndex(), to: "index.json")  // no-op; iPad must not see Mac's yet
+        harness.clock.advance()
+        // Force the iPad to push without merging the Mac's write: park the Mac's files, push, then plant them as conflicts.
+        let parkedIndex = harness.folderFile("index.json.mac"), parkedNotebook = harness.folderFile("notebooks/\(notebook.id.uuidString).json.mac")
+        try macIndex.write(to: parkedIndex); try macNotebook.write(to: parkedNotebook)
+        try Data(contentsOf: harness.folderFile("index-history/\(harness.historyFileNames().first!)")).write(to: harness.folderFile("index.json"))
+        try ipad.sync()
+        XCTAssertEqual(try harness.readIndex().deviceName, "iPad", "the iPad's index is current")
+        for device in [ipad, mac] {
+            device.plantedConflicts[harness.folderFile("index.json").standardizedFileURL] = [parkedIndex]
+            device.plantedConflicts[harness.folderFile("notebooks/\(notebook.id.uuidString).json").standardizedFileURL] = [parkedNotebook]
+        }
+
+        harness.clock.advance(); try ipad.sync()
+        XCTAssertEqual(ipad.ink(forPageID: macPages[1].id), mInk, "the Mac's edit came in through the conflict version")
+        XCTAssertEqual(ipad.ink(forPageID: ipadPages[0].id), iInk, "the iPad kept its own")
+        XCTAssertFalse(ipad.resolvedConflicts.isEmpty, "the conflict was marked resolved after a complete merge")
+
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(mac.ink(forPageID: ipadPages[0].id), iInk)
+        XCTAssertEqual(mac.ink(forPageID: macPages[1].id), mInk)
+        let final = try XCTUnwrap(harness.pageInFolder(macPages[1].id))
+        XCTAssertEqual(final.drawingHash, PayloadHash.sha256(of: mInk), "the folder now carries the union")
+    }
+
     // MARK: Folder layout (M0 task 6)
 
     func testPush_writesIndexAndOneFilePerNotebook_neverLibraryJSON() throws {

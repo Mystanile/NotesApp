@@ -33,6 +33,17 @@ struct SyncEnvironment {
     /// payloads it references are the local files themselves (nothing is
     /// copied in or out), and nothing else writes it (no pull before push).
     var payloadsAreLocal: Bool = false
+    /// Other versions of a file that iCloud kept because two devices wrote
+    /// it while offline (`NSFileVersion` unresolved conflicts). Each is
+    /// merged like any other remote snapshot, then marked resolved.
+    var conflictVersions: (URL) -> [URL] = { url in
+        (NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? []).map(\.url)
+    }
+    var resolveConflicts: (URL) -> Void = { url in
+        for version in NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? [] {
+            version.isResolved = true
+        }
+    }
 
     static var live: SyncEnvironment {
         SyncEnvironment(
@@ -60,7 +71,9 @@ struct SyncEnvironment {
             deviceName: liveDeviceName,
             now: { Date() },
             indexHistoryLimit: 20,
-            payloadsAreLocal: true
+            payloadsAreLocal: true,
+            conflictVersions: { _ in [] },
+            resolveConflicts: { _ in }
         )
     }
 

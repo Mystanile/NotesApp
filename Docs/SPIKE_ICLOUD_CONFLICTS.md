@@ -117,16 +117,26 @@ From the two `diagnostics/*.txt` files written after the 2-minute wait. For `ind
 
 ---
 
-## 5. Result — fill this in
+## 5. Result
 
-**Date run:** ________  **iOS / macOS versions:** ________ / ________
+**Date run:** Sept 12, 2026 (first run) and the folder read afterwards from the Mac. **iPadOS / macOS:** 26.x / 26.6.2.
 
-**Outcome (circle):** A — silent last-writer · B — `NSFileVersion` conflicts · C — renamed siblings · D — differs per platform
-
-**Evidence (paste the relevant lines from the diagnostics files):**
+**Outcome: B — `NSFileVersion` conflict versions.** Read from the Mac after both devices had pushed offline:
 
 ```
+index.json: hasUnresolvedConflicts=true  (URLResourceKey)
+NSFileVersion.unresolvedConflictVersionsOfItem(at: index.json) -> 2
+  conflict: modified 2026-09-13 00:42:32 by "Mohammad's MacBook Air"
+  conflict: modified 2026-09-13 00:45:36 by "Mohammad's iPad"
+  (stored under /System/Volumes/Data/.DocumentRevisions-V100/…/com.apple.ubiquity/)
+tombstones.json, notebooks/<id>.json: 0 conflicts in this run
 ```
+
+No renamed siblings appeared. Both platforms behave the same. `localizedNameOfSavingComputer` carries the real device names even though `UIDevice.current.name` does not.
+
+**What surprised:** the conflict wasn't the problem. Two bugs on our side kept either device from ever publishing after the first round trip (see §1.6), so the conflict just sat there unread.
+
+**Decision for task 8 — done:** `SyncEnvironment.conflictVersions` / `resolveConflicts` wrap `NSFileVersion`; every conflict version of `index.json`, `tombstones.json` and each `notebooks/<id>.json` is merged as its own snapshot, in sequence, after the current one; the versions are marked resolved only once everything merged completely. Tested with planted versions.
 
 **Anything that surprised you:**
 
