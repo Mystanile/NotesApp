@@ -140,6 +140,36 @@ final class SyncTests: XCTestCase {
         XCTAssertNotNil(mac.state.lastAppliedRemoteSignature, "with a matching entry the pull completes")
     }
 
+    /// A notebook that was pending at push time was published with the
+    /// folder's own entry. Once its file is here, the next push must
+    /// publish this library's version even though nothing changed
+    /// locally in between. (It didn't: the push had recorded the local
+    /// signature as "last pushed", so it thought it was done.)
+    func testNotebookPendingAtPushTime_isPublishedByTheNextPush_withoutALocalChange() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let a = try ipad.createNotebook(title: "A", pageCount: 1)
+        let b = try ipad.createNotebook(title: "B", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let macB = try XCTUnwrap(try mac.pages(ofNotebook: b.id))
+        let macInk = Data("Mac on B".utf8)
+        harness.clock.advance(); try mac.edit(page: macB[0], ink: macInk)
+
+        // B's file goes missing (still downloading) for the Mac's push.
+        let bFile = harness.folderFile("notebooks/\(b.id.uuidString).json")
+        let parked = bFile.appendingPathExtension("notyet")
+        try FileManager.default.moveItem(at: bFile, to: parked)
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotEqual(harness.pageInFolder(macB[0].id)?.drawingHash, PayloadHash.sha256(of: macInk), "B was pending: not published")
+        try FileManager.default.moveItem(at: parked, to: bFile)
+
+        // Nothing changes on the Mac. The next sync must still publish B.
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(harness.pageInFolder(macB[0].id)?.drawingHash, PayloadHash.sha256(of: macInk), "B published once its file was back")
+        _ = a
+    }
+
     // MARK: Conflict versions (M0 task 8)
 
     /// Both devices pushed while offline; iCloud kept the loser's index as

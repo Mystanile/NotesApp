@@ -420,13 +420,17 @@ struct SyncRunner {
         keepHistory(of: index, workingDir: workingDir)
         pruneFolder(workingDir: workingDir, tombstones: snapshot.tombstones, pending: pending)
 
-        environment.state.lastPushSignature = snapshot.signature
+        // What was actually written - with the folder's own entries kept
+        // for anything pending - not what this library holds. Recording the
+        // local signature here meant a device whose notebook was pending
+        // believed it had published it and, with nothing changing locally,
+        // never tried again.
+        let written = LibraryIndex.signature(folders: index.folders, notebooks: index.notebooks, tombstones: snapshot.tombstones)
+        environment.state.lastPushSignature = written
         // We authored this snapshot - don't turn around and re-apply it.
         // Unless something is still pending: then the next pull must look
         // again, and re-reading our own index is cheap and harmless.
-        environment.state.lastAppliedRemoteSignature = pending.isEmpty
-            ? LibraryIndex.signature(folders: index.folders, notebooks: index.notebooks, tombstones: snapshot.tombstones)
-            : nil
+        environment.state.lastAppliedRemoteSignature = pending.isEmpty ? written : nil
     }
 
     // MARK: Reading the folder
