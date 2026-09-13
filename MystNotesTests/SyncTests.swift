@@ -80,6 +80,19 @@ final class SyncTests: XCTestCase {
 
         XCTAssertGreaterThan(probe.calls, 0, "the runner consulted the clock")
         XCTAssertEqual(probe.onMain, 0, "the sync runner executed on the main thread \(probe.onMain) of \(probe.calls) times")
+
+        // And through the engine's own entry point, called from the main
+        // actor exactly as SyncEngine.start does. The first version of this
+        // test passed while the app still hung, because the app's closure
+        // captured the engine; this pins the code the app runs.
+        let probe2 = ThreadProbe()
+        var env2 = ipad.environment
+        env2.now = { probe2.record(); return clock.now }
+        harness.clock.advance()
+        let outcome = await SyncEngine.runDetached(container: container, environment: env2, pull: true, push: true).value
+        if case .failure(let error) = outcome { XCTFail("\(error)") }
+        XCTAssertGreaterThan(probe2.calls, 0)
+        XCTAssertEqual(probe2.onMain, 0, "SyncEngine.runDetached executed on the main thread \(probe2.onMain) of \(probe2.calls) times")
     }
 
     /// `Date()` has microseconds; the file has milliseconds. The content

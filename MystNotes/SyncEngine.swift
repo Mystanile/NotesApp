@@ -96,13 +96,9 @@ final class SyncEngine: ObservableObject {
     private func writeMirror() {
         MainThreadWatchdog.checkpoint("SyncEngine.writeMirror")
         guard let container else { return }
-        let environment = SyncEnvironment.mirror
-        Task.detached(priority: .utility) {
-            do {
-                try SyncRunner(container: container, environment: environment).run(pull: false, push: true)
-            } catch {
-                AppLog.note("mirror", "write failed: \(error)")
-            }
+        let work = Self.runDetached(container: container, environment: SyncEnvironment.mirror, pull: false, push: true)
+        Task { @MainActor in
+            if case .failure(let error) = await work.value { AppLog.note("mirror", "write failed: \(error)") }
         }
     }
 
@@ -137,17 +133,14 @@ final class SyncEngine: ObservableObject {
         status = .syncing
         debouncer.cancel()
         let environment = SyncFolder.isConfigured ? SyncEnvironment.live : SyncEnvironment.mirror
-        Task.detached(priority: .userInitiated) {
-            let outcome: Result<Void, Error>
-            do {
-                try LibraryRebuild.rebuild(container: container, environment: environment)
-                outcome = .success(())
-            } catch {
-                outcome = .failure(error)
-            }
-            await MainActor.run {
-                self.isRunning = false
-                switch outcome {
+        let work = Self.detached(priority: .userInitiated) {
+            try LibraryRebuild.rebuild(container: container, environment: environment)
+        }
+        Task { @MainActor [weak self] in
+            let outcome = await work.value
+            guard let self else { return }
+            self.isRunning = false
+            switch outcome {
                 case .success:
                     self.status = .succeeded(Date())
                     AppLog.note("rebuild", "index rebuilt from the folder")
@@ -156,8 +149,30 @@ final class SyncEngine: ObservableObject {
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
                     AppLog.note("rebuild", "failed: \(error)")
-                }
             }
+        }
+    }
+
+    /// The only way a runner is started. Deliberately a nonisolated static
+    /// whose detached closure captures nothing main-actor: under this
+    /// module's default MainActor isolation, a closure that so much as
+    /// references `self` is inferred main-actor and `Task.detached` runs
+    /// it on the main thread - which is how the engine ended up there
+    /// twice today (iPad watchdog log). The caller awaits the task from
+    /// the main actor and touches state after.
+    nonisolated static func runDetached(container: ModelContainer, environment: SyncEnvironment,
+                                        pull: Bool, push: Bool) -> Task<Result<Void, Error>, Never> {
+        detached(priority: .utility) {
+            try SyncRunner(container: container, environment: environment).run(pull: pull, push: push)
+        }
+    }
+
+    /// Runs `body` on a background thread, whatever context this is called
+    /// from. Nonisolated, static, and capture-free by construction.
+    nonisolated static func detached(priority: TaskPriority,
+                                     _ body: @escaping @Sendable () throws -> Void) -> Task<Result<Void, Error>, Never> {
+        Task.detached(priority: priority) {
+            do { try body(); return .success(()) } catch { return .failure(error) }
         }
     }
 
@@ -256,31 +271,24 @@ final class SyncEngine: ObservableObject {
             self.currentRunID = nil
             self.status = .waiting("Sync is taking longer than expected. It will retry.")
         }
-        Task.detached(priority: .utility) {
-            let outcome: Result<Void, Error>
-            do {
-                try SyncRunner(container: container, environment: environment).run(pull: pull, push: push)
-                outcome = .success(())
-            } catch {
-                outcome = .failure(error)
+        let work = Self.runDetached(container: container, environment: environment, pull: pull, push: push)
+        Task { @MainActor [weak self] in
+            let outcome = await work.value
+            guard let self, self.currentRunID == runID else { return }   // the watchdog gave up on this run
+            self.currentRunID = nil
+            self.isRunning = false
+            switch outcome {
+            case .success:
+                self.status = .succeeded(Date())
+            case .failure(let error as SyncRunner.Waiting):
+                self.status = .waiting(error.localizedDescription)
+            case .failure(let error):
+                self.status = .failed(error.localizedDescription)
+                AppLog.note("sync", "failed (pull=\(pull) push=\(push)): \(error)")
             }
-            await MainActor.run {
-                guard self.currentRunID == runID else { return }   // the watchdog gave up on this run
-                self.currentRunID = nil
-                self.isRunning = false
-                switch outcome {
-                case .success:
-                    self.status = .succeeded(Date())
-                case .failure(let error as SyncRunner.Waiting):
-                    self.status = .waiting(error.localizedDescription)
-                case .failure(let error):
-                    self.status = .failed(error.localizedDescription)
-                    AppLog.note("sync", "failed (pull=\(pull) push=\(push)): \(error)")
-                }
-                if self.pushAgainWhenDone {
-                    self.pushAgainWhenDone = false
-                    self.start(pull: false, push: true)
-                }
+            if self.pushAgainWhenDone {
+                self.pushAgainWhenDone = false
+                self.start(pull: false, push: true)
             }
         }
     }
