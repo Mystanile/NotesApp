@@ -111,6 +111,12 @@ struct NotebookDetailView: View {
     #endif
 
     @State private var isPresenting = false
+    /// The drawing toolbar lives in the navigation bar's principal slot, on
+    /// the row with Play / Pages / + / Save (GoodNotes' layout). That slot
+    /// is squeezed to nothing in compact width (Slide Over, a narrow split),
+    /// so there the bar falls back to floating over the canvas.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var drawingToolbarInNavigationBar: Bool { horizontalSizeClass != .compact }
     @State private var pageToDelete: Page?
     @State private var showingSaveConfirmation = false
     @State private var saveConfirmationTask: Task<Void, Never>?
@@ -149,13 +155,14 @@ struct NotebookDetailView: View {
                             // completely covered by it. Drawing is disabled
                             // during adjust anyway, so there's nothing to
                             // lose by standing it down.
-                            if !isPresenting && adjustingImageFrame == nil {
+                            if !drawingToolbarInNavigationBar && !isPresenting && adjustingImageFrame == nil {
                                 // GeometryReader gives the bar the canvas
                                 // area to clamp its dragging within, which
                                 // is also what keeps it from sliding down
                                 // underneath the page-thumbnail strip.
                                 GeometryReader { geo in
                                     DrawingToolbarView(
+                                        style: .floating,
                                         toolState: $toolState,
                                         canUndo: canUndo,
                                         canRedo: canRedo,
@@ -170,6 +177,20 @@ struct NotebookDetailView: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                                 }
                                 .padding(.top, 8)
+                            }
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            // Page position, moved off the navigation bar
+                            // to make room for the drawing toolbar there.
+                            if !isPresenting && !sortedPages.isEmpty {
+                                Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .padding(10)
+                                    .allowsHitTesting(false)
                             }
                         }
                         .overlay(alignment: .bottom) {
@@ -266,13 +287,23 @@ struct NotebookDetailView: View {
         .toolbar {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
             ToolbarItem(placement: .principal) {
-                if !sortedPages.isEmpty {
-                    Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(.ultraThinMaterial, in: Capsule())
+                // Hidden while placing an image, as the floating bar is:
+                // drawing is disabled during adjust and the image toolbar
+                // owns the moment.
+                if drawingToolbarInNavigationBar, let page = currentPage, adjustingImageFrame == nil {
+                    DrawingToolbarView(
+                        style: .inline,
+                        toolState: $toolState,
+                        canUndo: canUndo,
+                        canRedo: canRedo,
+                        isShapeModeArmed: isShapeModeArmed,
+                        isShapeToolAvailable: page.type != "whiteboard",
+                        isFillToolAvailable: page.type != "whiteboard",
+                        containerSize: .zero,
+                        onUndo: { canvasView.undoManager?.undo() },
+                        onRedo: { canvasView.undoManager?.redo() },
+                        onToggleShapeMode: toggleShapeMode
+                    )
                 }
             }
 
@@ -449,7 +480,10 @@ struct NotebookDetailView: View {
             PageViewportLayer(viewport: viewport, pageSize: pageSize) { _ in
                 ZStack {
                     if page.backgroundRef != nil {
+                        // Per-page identity: without it the same view (and
+                        // its rendered bitmap) is reused across page turns.
                         ImportedPageBackgroundView(page: page, liveFrame: adjustingImageFrame)
+                            .id(page.id)
                     } else {
                         PageBackgroundView(template: page.template)
                     }

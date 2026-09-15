@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import CoreGraphics
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 import UIKit
@@ -50,7 +51,59 @@ enum PageRenderer {
                 backgroundImage.draw(in: rect)
             }
             inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
+            drawTextBlocks(of: page, in: nominal)
         }
+    }
+
+    /// Typed text blocks, laid out the way `TextBlockView` shows them: the
+    /// stored frame is the box, with the same 6 pt padding inside it, the
+    /// width is the wrap width, and the height is a floor the text may grow
+    /// past. Drawn after the ink, as on screen.
+    static func drawTextBlocks(of page: Page, in pageSize: CGSize) {
+        for block in page.textBlocks ?? [] where !block.content.isEmpty {
+            let inset: CGFloat = 6
+            let box = CGRect(x: block.frameX, y: block.frameY, width: block.frameWidth, height: block.frameHeight)
+            let textRect = CGRect(
+                x: box.minX + inset,
+                y: box.minY + inset,
+                width: max(box.width - inset * 2, 1),
+                height: max(pageSize.height - box.minY - inset, 1)
+            )
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: uiFont(for: block),
+                .foregroundColor: Color(hex: block.textColorHex).fixedUIColor,
+                .paragraphStyle: paragraph
+            ]
+            NSAttributedString(string: block.content, attributes: attributes)
+                .draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
+        }
+    }
+
+    /// The UIKit font matching `TextBlockView`'s SwiftUI one, so an export
+    /// wraps at the same places the editor does.
+    static func uiFont(for block: TypedTextBlock) -> UIFont {
+        let size = CGFloat(block.fontSize)
+        let base = UIFont.systemFont(ofSize: size, weight: block.isBold ? .bold : .regular)
+        var descriptor = base.fontDescriptor
+        let design: UIFontDescriptor.SystemDesign
+        switch TextBlockFontDesign.from(block.fontDesign) {
+        case .default: design = .default
+        case .serif: design = .serif
+        case .rounded: design = .rounded
+        case .monospaced: design = .monospaced
+        }
+        if design != .default, let designed = descriptor.withDesign(design) {
+            descriptor = designed
+        }
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if block.isBold { traits.insert(.traitBold) }
+        if block.isItalic { traits.insert(.traitItalic) }
+        if !traits.isEmpty, let styled = descriptor.withSymbolicTraits(traits) {
+            descriptor = styled
+        }
+        return UIFont(descriptor: descriptor, size: size)
     }
 
     /// One PDF page per notebook page, in the order given. Each output page

@@ -152,12 +152,46 @@ final class TypedTextBlock {
     // a hex string since SwiftData/CloudKit can't store Color directly.
     var textColorHex: String = "#000000"
 
+    // Typography. All defaulted so a record from before these fields
+    // existed reads back exactly as it looked (17 pt system, regular).
+    // `fontDesign` is one of `TextBlockFontDesign`'s raw values; unknown
+    // values fall back to the system font rather than failing to render.
+    var fontSize: Double = 17
+    var fontDesign: String = "default"
+    var isBold: Bool = false
+    var isItalic: Bool = false
+
     var page: Page?
 
     init(content: String = "", page: Page? = nil) {
         self.id = UUID()
         self.content = content
         self.page = page
+    }
+}
+
+/// The font families a text block can use. Kept to the system designs
+/// rather than a font-name string so every device renders the same thing -
+/// a named font that isn't installed on the other side would silently swap
+/// to something else after a sync.
+enum TextBlockFontDesign: String, CaseIterable, Identifiable {
+    case `default`, serif, rounded, monospaced
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .default: return "System"
+        case .serif: return "Serif"
+        case .rounded: return "Rounded"
+        case .monospaced: return "Mono"
+        }
+    }
+
+    /// Unknown raw values (a newer build's future addition) render as the
+    /// system font instead of dropping the block.
+    static func from(_ raw: String) -> TextBlockFontDesign {
+        TextBlockFontDesign(rawValue: raw) ?? .default
     }
 }
 

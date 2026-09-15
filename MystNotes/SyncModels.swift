@@ -312,6 +312,12 @@ nonisolated struct TextBlockDTO: Codable {
     var frameWidth: Double
     var frameHeight: Double
     var textColorHex: String
+    /// Optional: absent in snapshots written before typography existed,
+    /// which decode as the model's defaults (17 pt system, regular).
+    var fontSize: Double?
+    var fontDesign: String?
+    var isBold: Bool?
+    var isItalic: Bool?
 }
 
 nonisolated struct StickerDTO: Codable {

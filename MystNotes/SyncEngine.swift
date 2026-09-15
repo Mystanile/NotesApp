@@ -1112,7 +1112,9 @@ nonisolated struct SyncRunner {
                         TextBlockDTO(id: $0.id, content: $0.content,
                                      frameX: $0.frameX, frameY: $0.frameY,
                                      frameWidth: $0.frameWidth, frameHeight: $0.frameHeight,
-                                     textColorHex: $0.textColorHex)
+                                     textColorHex: $0.textColorHex,
+                                     fontSize: $0.fontSize, fontDesign: $0.fontDesign,
+                                     isBold: $0.isBold, isItalic: $0.isItalic)
                     },
                     stickers: (page.stickers ?? []).map {
                         StickerDTO(id: $0.id, assetRef: $0.assetRef,
@@ -1323,6 +1325,10 @@ nonisolated struct SyncRunner {
             block.frameWidth = blockDTO.frameWidth
             block.frameHeight = blockDTO.frameHeight
             block.textColorHex = blockDTO.textColorHex
+            if let fontSize = blockDTO.fontSize { block.fontSize = fontSize }
+            if let fontDesign = blockDTO.fontDesign { block.fontDesign = fontDesign }
+            if let isBold = blockDTO.isBold { block.isBold = isBold }
+            if let isItalic = blockDTO.isItalic { block.isItalic = isItalic }
             context.insert(block)
             textBlocks.append(block)
         }

@@ -47,13 +47,23 @@ struct DrawingToolState: Equatable {
     }
 }
 
-/// A floating, GoodNotes/Notability-style drawing toolbar - our own custom
-/// UI in place of Apple's system `PKToolPicker`. Tapping a tool selects it;
+/// The GoodNotes/Notability-style drawing toolbar - our own custom UI in
+/// place of Apple's system `PKToolPicker`. Tapping a tool selects it;
 /// tapping the already-selected Pen/Highlighter/Eraser tool again opens a
 /// popover with that tool's options. Undo/redo and the shape tool live here
-/// too rather than in the navigation bar, since they're all part of the
-/// same "drawing controls" cluster GoodNotes/Notability keep together.
+/// too, since they're all part of the same "drawing controls" cluster
+/// GoodNotes/Notability keep together.
+///
+/// Two presentations of the same controls:
+/// - `.inline` sits in the navigation bar's principal slot, on the row with
+///   Play / Pages / + / Save, the way GoodNotes lays its bar out. No
+///   background, no drag handle - the bar is the chrome.
+/// - `.floating` is the capsule over the canvas, draggable out of the way.
+///   Used where the navigation bar has no room for it (compact width).
 struct DrawingToolbarView: View {
+    enum Style { case inline, floating }
+
+    var style: Style = .floating
     @Binding var toolState: DrawingToolState
     var canUndo: Bool
     var canRedo: Bool
@@ -79,7 +89,55 @@ struct DrawingToolbarView: View {
     private let presetColors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
 
     var body: some View {
+        switch style {
+        case .inline:
+            controls
+        case .floating:
+            HStack(spacing: 4) {
+                dragHandle
+                Divider().frame(height: 24)
+                controls
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { barSize = geo.size }
+                        .onChange(of: geo.size) { _, new in barSize = new }
+                }
+            )
+            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+            .offset(x: position.width, y: position.height)
+        }
+    }
+
+    private var controls: some View {
         HStack(spacing: 4) {
+            iconButton("arrow.uturn.backward", disabled: !canUndo, action: onUndo)
+            iconButton("arrow.uturn.forward", disabled: !canRedo, action: onRedo)
+
+            Divider().frame(height: 24)
+
+            toolButton(.pen, systemImage: "pencil.tip")
+            toolButton(.highlighter, systemImage: "highlighter")
+            toolButton(.eraser, systemImage: "eraser")
+            toolButton(.lasso, systemImage: "lasso")
+            toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable)
+
+            Divider().frame(height: 24)
+
+            iconButton(
+                "square.on.circle",
+                isOn: isShapeModeArmed,
+                disabled: !isShapeToolAvailable,
+                action: onToggleShapeMode
+            )
+        }
+    }
+
+    private var dragHandle: some View {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
@@ -102,41 +160,6 @@ struct DrawingToolbarView: View {
                         }
                         .onEnded { _ in dragStart = nil }
                 )
-
-            Divider().frame(height: 24)
-
-            iconButton("arrow.uturn.backward", disabled: !canUndo, action: onUndo)
-            iconButton("arrow.uturn.forward", disabled: !canRedo, action: onRedo)
-
-            Divider().frame(height: 24)
-
-            toolButton(.pen, systemImage: "pencil.tip")
-            toolButton(.highlighter, systemImage: "highlighter")
-            toolButton(.eraser, systemImage: "eraser")
-            toolButton(.lasso, systemImage: "lasso")
-            toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable)
-
-            Divider().frame(height: 24)
-
-            iconButton(
-                "square.on.circle",
-                isOn: isShapeModeArmed,
-                disabled: !isShapeToolAvailable,
-                action: onToggleShapeMode
-            )
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { barSize = geo.size }
-                    .onChange(of: geo.size) { _, new in barSize = new }
-            }
-        )
-        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-        .offset(x: position.width, y: position.height)
     }
 
     /// Keeps the bar fully inside the area it was given, so it can't be

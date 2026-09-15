@@ -894,6 +894,60 @@ final class SyncTests: XCTestCase {
         XCTAssertNotEqual(macPages[0].modifiedAt, editedAt, "an unedited page keeps its date")
     }
 
+    /// A text block's typography (font design, size, bold, italic, colour)
+    /// is part of the page and has to arrive on the other device intact.
+    /// The DTO carries the new fields as optionals, so a snapshot written
+    /// before typography existed must still decode - and land as the
+    /// model's defaults, not as a rejected notebook file.
+    func testTextBlockTypography_reachesTheOtherDevice_andOldSnapshotsStillDecode() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Physics", pageCount: 2).id
+        let ipadPages = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID))
+
+        harness.clock.advance(); try ipad.addTextBlock(to: ipadPages[0], content: "F = ma")
+        let block = try XCTUnwrap(ipadPages[0].textBlocks?.first)
+        block.fontSize = 28
+        block.fontDesign = TextBlockFontDesign.serif.rawValue
+        block.isBold = true
+        block.isItalic = true
+        block.textColorHex = "#FF0000"
+        block.frameWidth = 320
+        block.frameHeight = 120
+        ipadPages[0].markModified(at: harness.clock.advance())
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebookID))
+        let arrived = try XCTUnwrap(macPages[0].textBlocks?.first, "the block never reached the Mac")
+        XCTAssertEqual(arrived.id, block.id)
+        XCTAssertEqual(arrived.content, "F = ma")
+        XCTAssertEqual(arrived.fontSize, 28)
+        XCTAssertEqual(arrived.fontDesign, "serif")
+        XCTAssertTrue(arrived.isBold)
+        XCTAssertTrue(arrived.isItalic)
+        XCTAssertEqual(arrived.textColorHex, "#FF0000")
+        XCTAssertEqual(arrived.frameWidth, 320)
+        XCTAssertEqual(arrived.frameHeight, 120)
+
+        // A pre-typography snapshot: the block entry has no font fields.
+        let legacy = """
+        {"id": "\(UUID().uuidString)", "content": "old", "frameX": 1, "frameY": 2,
+         "frameWidth": 200, "frameHeight": 44, "textColorHex": "#000000"}
+        """
+        let decoded = try JSONDecoder().decode(TextBlockDTO.self, from: Data(legacy.utf8))
+        XCTAssertNil(decoded.fontSize)
+        XCTAssertNil(decoded.fontDesign)
+        XCTAssertNil(decoded.isBold)
+        XCTAssertNil(decoded.isItalic)
+        let fresh = TypedTextBlock()
+        XCTAssertEqual(fresh.fontSize, 17)
+        XCTAssertEqual(TextBlockFontDesign.from(fresh.fontDesign), .default)
+        XCTAssertEqual(TextBlockFontDesign.from("comic-sans"), .default, "unknown designs render as the system font")
+    }
+
     // MARK: PROJECT_PLAN §1.2 - the blocker
 
     /// Offline, the iPad writes on page 3 and the Mac writes on page 7 of the

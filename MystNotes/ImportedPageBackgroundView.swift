@@ -32,12 +32,22 @@ struct ImportedPageBackgroundView: View {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
-    /// Reload when the file, its crop, or its rotation changes - the frame
-    /// isn't included, since resizing doesn't need a re-render.
+    /// Reload when the page, the file, the PDF page inside it, its crop, or
+    /// its rotation changes - the frame isn't included, since resizing
+    /// doesn't need a re-render.
+    ///
+    /// The page id and `pdfPageIndex` are load-bearing. This view sits in a
+    /// fixed spot in the detail view, so SwiftUI keeps the same instance
+    /// (and its `@State image`) as you page through a notebook. Every page
+    /// of a ten-page PDF import shares one `backgroundRef` with no crop and
+    /// no rotation, so a key built from those alone was identical on all
+    /// ten, `.task(id:)` never re-fired, and page 1's bitmap stayed up on
+    /// every page.
     private var imageKey: String {
         let doc = importedDocument
         let values: [Double?] = [doc?.rotationDegrees, doc?.cropX, doc?.cropY, doc?.cropWidth, doc?.cropHeight]
-        return ([page.backgroundRef ?? "-"] + values.map { $0.map { String(format: "%.4f", $0) } ?? "-" })
+        return ([page.id.uuidString, page.backgroundRef ?? "-", String(doc?.pdfPageIndex ?? 0)]
+                + values.map { $0.map { String(format: "%.4f", $0) } ?? "-" })
             .joined(separator: "|")
     }
 
@@ -85,7 +95,7 @@ struct ImportedPageBackgroundView: View {
         #endif
             }
             .task(id: imageKey) {
-                loadImage(targetSize: geometry.size)
+                await loadImage(targetSize: geometry.size)
             }
         }
     }
@@ -95,7 +105,19 @@ struct ImportedPageBackgroundView: View {
     /// template turns to mush the moment you pinch in to write on it.
     private static let oversampling: CGFloat = 2.5
 
-    private func loadImage(targetSize: CGSize) {
+    /// Everything the render needs, copied out of the model on the main
+    /// actor so the rasterization itself can leave it (invariant 10; same
+    /// shape as `PageThumbnailView.Inputs`). Rasterizing a PDF page at
+    /// 2.5x on the main thread was a visible stall on every page turn.
+    nonisolated struct Inputs: Sendable {
+        var backgroundRef: String
+        var pdfPageIndex: Int
+        var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
+        var rotationDegrees: Double?
+        var renderSize: CGSize
+    }
+
+    private func loadImage(targetSize: CGSize) async {
         guard let ref = page.backgroundRef else {
             image = nil
             return
@@ -104,18 +126,42 @@ struct ImportedPageBackgroundView: View {
         let pageSize = (targetSize.width > 0 && targetSize.height > 0)
             ? targetSize
             : PageGeometry.contentSize(for: page)
-        let renderSize = CGSize(width: pageSize.width * Self.oversampling,
-                                height: pageSize.height * Self.oversampling)
-        // Crop and rotation are applied here, by the same helper the
-        // thumbnails and exports use.
-        image = ImportedArtwork.displayImage(
-            fileRef: ref,
-            document: importedDocument,
-            targetSize: renderSize
+        let doc = importedDocument
+        let inputs = Inputs(
+            backgroundRef: ref,
+            pdfPageIndex: doc?.pdfPageIndex ?? 0,
+            cropX: doc?.cropX, cropY: doc?.cropY, cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
+            rotationDegrees: doc?.rotationDegrees,
+            renderSize: CGSize(width: pageSize.width * Self.oversampling,
+                               height: pageSize.height * Self.oversampling)
         )
+        let rendered = await Self.render(inputs).value
+        // A page turn cancels this task; its result belongs to the page
+        // that's no longer on screen.
+        if !Task.isCancelled { image = rendered }
         #else
         // Not available on native macOS (no UIKit image loading).
         image = nil
         #endif
     }
+
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    /// Capture-free: takes only the Sendable inputs. Crop and rotation are
+    /// applied here, by the same helper the thumbnails and exports use.
+    nonisolated static func render(_ inputs: Inputs) -> Task<UIImage?, Never> {
+        Task.detached(priority: .userInitiated) {
+            guard let raw = ImportedArtwork.rasterized(
+                fileRef: inputs.backgroundRef,
+                pdfPageIndex: inputs.pdfPageIndex,
+                targetSize: inputs.renderSize
+            ) else { return nil }
+            return ImportedArtwork.transformed(
+                raw,
+                cropX: inputs.cropX, cropY: inputs.cropY,
+                cropWidth: inputs.cropWidth, cropHeight: inputs.cropHeight,
+                rotationDegrees: inputs.rotationDegrees
+            )
+        }
+    }
+    #endif
 }
