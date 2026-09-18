@@ -299,10 +299,11 @@ Fix the three blockers. Nothing else matters until these are done.
 Smaller than it was, because the toolbar, export, image editing, settings and onboarding are already done.
 
 - **Real PDF annotation.** Replace `ImportedArtwork`'s rasterize-to-JPEG with a live `PDFKit` layer: selectable text, PDF text in the search index, annotations as a separate layer over the real page. Highest-value item in the milestone.
-- **Rebuild the shape tool** (`Docs/TOOL_FIXES.md` Part 1): proper classifier with corner detection, sharp corners via control-point multiplicity, width and colour from the active `PKInkingTool`, rotated rectangles, triangles and arrows, and hold-to-snap replacing the armed mode. Delete `ShapeDrawingOverlay`.
+- ~~**Rebuild the shape tool**~~ **Done Sept 15, 2026; second pass Sept 18** (`Docs/TOOL_FIXES.md` Part 1). Classifier with corner detection, sharp corners via control-point multiplicity, rotated rectangles, triangles and arrows, hold-to-snap replacing the armed mode, `ShapeDrawingOverlay` deleted. The second pass fixed what field use found: the hold timer never firing in tracking mode, lines classified as arrows, shapes drawn at the tool's heaviest mark rather than the weight of the stroke they replace, no axis snap on lines, and no dashed/dotted option. 29 tests. Still owed on the iPad: that the recognizer gets the Pencil's touch during a PencilKit stroke.
+- ~~**Images on a page**~~ **Done Sept 18, 2026** (`Docs/TOOL_FIXES.md` Part 3). An import no longer replaces the page's template — paper, template, artwork, ink is one stack shared by the editor, the thumbnails and the exporter, neither of which drew a template at all before. Artwork loading moved to a shared `BitmapStore` that can't drop a completed render, which is what left pages white after a page turn. Import now also accepts Files/Finder, ⌘V and a drag, with the type read from the file's own header.
 - **Fix or hide the fill tool** (`Docs/TOOL_FIXES.md` Part 2): instrument first to find where the tap coordinate goes wrong under page zoom, then fix. If it isn't quick, remove it from the toolbar until it works.
 - Lasso upgrades: cross-page move, **convert to text** (the Vision pipeline already exists), resize, recolor, copy as image
-- Per-page templates, custom page sizes, imported templates, a starting template library. `Page.aspectRatio` means the model is half done.
+- Per-page templates, custom page sizes, imported templates, a starting template library. `Page.aspectRatio` means the model is half done, and `PageTemplate` (Sept 18) is now the single renderer any new ruling plugs into.
 - Favorites, bookmarks, page outline / jump bar
 - Text formatting in typed blocks: bold/italic, headings, bullets, checklists — **and font, size, colour; reported Sept 12, 2026: today a text block can only be typed into and moved**
 - Stickers: resize (and rotate) — **reported Sept 12, 2026: today they can only be moved**
@@ -353,7 +354,7 @@ Smaller than it was, because the toolbar, export, image editing, settings and on
 
 - **Importers.** GoodNotes and Notability formats are proprietary and undocumented; this is a **timeboxed research spike**, not a promised deliverable. Guaranteed fallback: excellent PDF-with-annotations import (which M1 enables) plus Apple Notes markdown import.
 - iPhone target: quick capture into a graph inbox node, plus read and review
-- Mac Catalyst polish: menu bar, keyboard shortcuts, trackpad, drag and drop. **Reported Sept 12, 2026: "can't actually use the pen on Mac" — some drawing works on Mac (strokes were made during the sync test), so establish which tool/input fails (pen ink type? trackpad vs mouse? `drawingPolicy = .pencilOnly` on Catalyst?) and fix in M1 rather than here if it turns out to be a bug — "full editing on Mac" is a locked decision.**
+- Mac Catalyst polish: menu bar, keyboard shortcuts, trackpad, drag and drop — **image paste (⌘V), a Files/Finder importer and drag-onto-page landed Sept 18, 2026 in M1**, since a Mac had no way at all to get a picture in. **Reported Sept 12, 2026: "can't actually use the pen on Mac" — some drawing works on Mac (strokes were made during the sync test), so establish which tool/input fails (pen ink type? trackpad vs mouse? `drawingPolicy = .pencilOnly` on Catalyst?) and fix in M1 rather than here if it turns out to be a bug — "full editing on Mac" is a locked decision.**
 - App Intents / Shortcuts, Spotlight indexing, Quick Look thumbnails
 - Handoff
 - Apple Pencil Pro: squeeze, barrel roll, double-tap, hover preview

@@ -36,12 +36,22 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 - [M1] Pen on Mac: reported as not usable. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
 - ~~[M1] Typed text blocks: no font, size, bold/italic, colour controls - only typing and moving.~~ **Done Sept 15, 2026**: font design (system/serif/rounded/mono), size, bold, italic, colour, and a corner resize handle; typography syncs (`TextBlockDTO` optionals, `testTextBlockTypography_reachesTheOtherDevice_andOldSnapshotsStillDecode`) and exports (`PageRenderer.drawTextBlocks`).
-- [M1] Page thumbnails don't composite typed text blocks (export does, since Sept 15). At 60×80 it hardly shows; add it when thumbnails get a real cache.
+- [M1] Page thumbnails don't composite typed text blocks (export does, since Sept 15). At 60×80 it hardly shows. **Thumbnails got their real cache Sept 18 (`PageBitmaps.thumbnails`), so the reason to wait is gone** — add it to `PageThumbnailRenderer.render` next to the artwork draw.
 - [M1] Stickers and link anchors aren't drawn in exports either (invariant 9). Same shape as `PageRenderer.drawTextBlocks`.
 - [M1] Stickers: no resize or rotate - only move.
 - ~~[M0, open] iPad freezes on entering Airplane Mode~~ **Closed Sept 13, 2026, verified on device** ("didn't freeze"; log shows every sync run and the watcher setup on the background thread). It was never Airplane Mode: four successive launch-time main-thread hangs, 6–8 s each, in sync setup — the runner, `startWatchingFolder`, the `start` closure capturing `self`, the watcher closure capturing a `@MainActor` callback — each hit while the test was starting. Root cause for all four: default MainActor isolation making `Task.detached` closures main-actor whenever they capture anything main-actor-typed. Rule and test in CLAUDE.md. One launch hang remains with checkpoint "(none)" — before sync starts; launch-path checkpoints added and thumbnails moved off main to find/fix it.
 - [M1] `FillTool` computes its flood fill in a `Task.detached` formed inside a main-actor view, so under default MainActor isolation it runs on the main thread. A hitch on large fills, same species as the sync engine bug; move the computation into a `nonisolated` static.
 - [M1] PencilKit crash in undo on the whiteboard canvas (`-[PKTiledView updateTilesForVisibleRect…]` under `WhiteboardCanvasView` undo, Sept 10 crash log). Reproduce: draw on a whiteboard, undo via the shortcut. Likely undoing across a canvas swap.
+
+
+## Found while fixing images and shapes (Sept 18, 2026)
+
+- [M1] **`PageViewportLayer` hides everything until the viewport syncs.** `.opacity(viewport.hasSynced ? 1 : 0)` covers the paper, the artwork, the text blocks and the link anchors, and it is cleared only by the canvas publishing a fitted viewport for the *incoming* page. Every path I traced ends in `setNeedsLayout`, so it should always land — but it is the second candidate for "images disappear on a page turn until you move around" (`TOOL_FIXES.md` §3.2) and it has no fallback. If that symptom survives the `BitmapStore` fix on the iPad, this is the cause; the fix is to stop hiding a whole layer on a signal with no timeout.
+- [M1] Imported artwork is still **one background per page** — `page.backgroundRef` plus one `ImportedDocument`. Several images on a page, or an image *behind* ink versus in front of it, both need the artwork to become a page element like `Sticker`, with its own frame and z-order. That is a model and DTO change, so it wants its own commit and a sync test; the rendering is already a stack, so the view side is ready for it.
+- [M1] `removeImage(from:)` clears `page.backgroundRef` and deletes the `ImportedDocument` but leaves the payload on disk. Correct per invariant 3 (never `removeItem` on a payload), but it is exactly the local-orphan case the trash-retention decision has to cover.
+- [M1] Dashed and dotted only exist for *snapped* shapes, because a freehand stroke's dashes would have to be recomputed on every sample as it grows. If dashed freehand is ever wanted, it is a post-processing pass at stroke commit, not a change to the live path.
+- [M1] `ShapeLineStyle` is session state on `DrawingToolState`, not persisted in `AppSettings` like the pen's ink type, colour and width. One line each way; do it with the next `AppSettings` change rather than on its own.
+- [M2] `BitmapStore` is the shape the graph canvas will want for node previews too — bounded, keyed by a value, `@Observable`, renderer injected. Don't write a third one.
 
 ## Parked from planning (Sept 12, 2026)
 
@@ -52,7 +62,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M3] Multi-track audio (mic + system audio for recorded calls)
 - [M4] 3D graphing of equations — Apple Notes shipped this in iOS 26
 - [M5] Quick Note-style system-wide capture
-- [M5] Drag and drop between MystNotes and other apps on Mac
+- ~~[M5] Drag and drop between MystNotes and other apps on Mac~~ **Inbound done Sept 18, 2026** (images and PDFs dragged onto a page, plus ⌘V and a Files importer). Outbound — dragging a page or a lasso selection *out* — is still open, and still M5.
 - [M6] Localization beyond English
 - [M7] `automerge-swift` evaluation for multi-device CRDT sync
 - [M7] Read-only web share links backed by the neutral stroke renderer
