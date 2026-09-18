@@ -198,7 +198,7 @@ In order. Each gates the next.
 21. ~~Crash reporting~~ done — MetricKit subscriber + `AppLog` + Settings → Export Diagnostics (`Diagnostics.swift`). **Device verification still owed:** MetricKit payloads never arrive on the simulator or under the debugger; crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in the export.
 22. ~~Trash retention~~ done (Sept 18, 2026) — 30 days, `TrashRetention`, swept in the folder during a sync run and locally at launch, with a Trash section in Settings. Invariant 3's one exception; 14 tests.
 
-**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅, trash retention decided and implemented ✅ (30 days, `TrashRetention`, Sept 18, 2026).
+**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅, trash retention decided and implemented ✅ (30 days, `TrashRetention`, Sept 18, 2026 — that commit sits on `m1-images-and-shapes`, not on `m0-correctness`, because it was written on top of it; the merge order below picks it up either way).
 
 **Still owed before calling M0 done — all four need the iPad, none need more code:**
 
