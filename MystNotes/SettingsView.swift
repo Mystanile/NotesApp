@@ -19,6 +19,8 @@ struct SettingsView: View {
     @State private var diagnosticsMessage: String?
     @State private var confirmingRebuild = false
     @State private var diagnosticsArchive: URL?
+    @State private var trash = TrashRetention.Summary()
+    @State private var confirmingEmptyTrash = false
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -137,6 +139,31 @@ struct SettingsView: View {
             }
 
             Section {
+                if trash.isEmpty {
+                    Text("Nothing in the trash.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    LabeledContent("Items", value: "\(trash.count)")
+                    LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: Int64(trash.bytes), countStyle: .file))
+                    if let age = trash.age(at: Date()) {
+                        LabeledContent("Oldest", value: "\(max(Int(age / 86400), 0)) days")
+                    }
+                    Button("Empty Trash Now…", role: .destructive) { confirmingEmptyTrash = true }
+                        .confirmationDialog("Empty the trash on this device?",
+                                            isPresented: $confirmingEmptyTrash, titleVisibility: .visible) {
+                            Button("Empty Trash", role: .destructive) { emptyTrash() }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Deleted pages, conflict copies and unused files are removed for good. Anything another device still has in its own trash is unaffected.")
+                        }
+                }
+            } header: {
+                Text("Trash")
+            } footer: {
+                Text("Nothing here was deleted outright: deleted pages, the older side of a same-page conflict and files no page uses any more are kept for 30 days first, on this device and in the sync folder, then removed.")
+            }
+
+            Section {
                 if isSignedIn {
                     if !signedInDisplayName.isEmpty {
                         LabeledContent("Signed in as", value: signedInDisplayName)
@@ -160,6 +187,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .task { await refreshTrash() }
         .sheet(item: $diagnosticsArchive) { url in
             ShareSheet(items: [url])
         }
@@ -167,6 +195,28 @@ struct SettingsView: View {
             guard case .success(let url) = result else { return }
             SyncEngine.shared.chooseFolder(url)
         }
+    }
+
+    /// Both off the main actor: they stat a directory that can hold a
+    /// month of payloads.
+    private func refreshTrash() async {
+        let directories = localTrashDirectories
+        trash = await Task.detached(priority: .utility) {
+            TrashRetention.summary(of: directories)
+        }.value
+    }
+
+    private func emptyTrash() {
+        let directories = localTrashDirectories
+        Task {
+            await Task.detached(priority: .utility) { TrashRetention.emptyNow(directories) }.value
+            await refreshTrash()
+        }
+    }
+
+    private var localTrashDirectories: [URL] {
+        TrashRetention.localDirectories(payloads: FileStore.baseDirectory(),
+                                        mirror: SyncEnvironment.mirrorDirectory)
     }
 
     private var isSyncFailed: Bool {

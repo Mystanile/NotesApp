@@ -29,6 +29,10 @@ nonisolated struct SyncEnvironment {
     /// this long before it's moved to `trash/` - a notebook file that
     /// hasn't arrived yet may still be about to reference it.
     var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
+    /// How long a trashed payload is kept before the sweep removes it.
+    /// See `TrashRetention` for why 30 days and why this is the one place
+    /// a payload may be removed at all.
+    var trashRetentionPeriod: TimeInterval = TrashRetention.defaultPeriod
     /// True for the local mirror: the "folder" is on this device, the
     /// payloads it references are the local files themselves (nothing is
     /// copied in or out), and nothing else writes it (no pull before push).

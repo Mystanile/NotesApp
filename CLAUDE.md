@@ -36,7 +36,7 @@ Violating any of these is a bug, even if it compiles and the tests pass.
 
 1. **Never lose ink.** Every write is atomic and recoverable. If the app is killed mid-stroke, the last committed state must load cleanly.
 2. **Merge at page granularity or finer. Never rebuild a page tree wholesale.** This is invariant #1's most likely failure mode. Was violated until M0 task 5; `testPull_updatesPagesInPlace_neverRebuildsTheTree` guards it now.
-3. **Deletion is never `removeItem` on a payload.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink. As of M0 task 11 there is no `removeItem` on a payload anywhere; `DrawingStore.moveToTrash` is the one mechanism, and trash retention is an open decision in `BACKLOG.md`.
+3. **Deletion is never `removeItem` on a payload — with exactly one exception.** Move to `trash/`. Tombstones and stale snapshots must not be able to destroy ink. `DrawingStore.moveToTrash` is the one way in (M0 task 11). The one way out is `TrashRetention.sweep`, which removes a file that has been in a `trash/` for **30 days** (decided Sept 18, 2026) and refuses any directory not named `trash`. It runs in the sync folder while the folder is held, and locally at launch. Nothing else in the app may call `removeItem` on a payload; if you think you need to, you want `moveToTrash`.
 4. **The folder is the source of truth; SwiftData is a rebuildable index.** If the index is wrong, delete and reconstruct from the folder. The tested path is `LibraryRebuild` (Settings → Rebuild Index, M0 task 19): wipe, then pull. With no sync folder chosen it rebuilds from the local mirror, `Documents/Library/` — the same layout, metadata only, written by every debounced push (`SyncEnvironment.mirror`). Holds in both states now.
 5. **Ink is stored in the neutral stroke format, never as a raw `PKDrawing` blob as the source of truth.** `PKDrawing` may be cached, always regenerable. In force since M0 task 16b: `<id>.strokes` is the record and the only ink file that syncs; `<id>.drawing` is a local render cache keyed by the record's hash; `DrawingStore` is the only code that reads or writes either.
 6. **Stroke IDs are stable forever.** Links, transclusions, timeline events and cloze regions all point at stroke IDs. Regenerating them on load is a data-loss bug in disguise. **PencilKit's stroke ID API exists but is iOS 27+** — `PKStrokePath.id` and `init(controlPoints:creationDate:id:)` are both marked iOS/iPadOS/macOS 27.0+, so they are genuinely unavailable on the iOS 26.5 SDK. Verified against Apple's docs Sept 12, 2026. Adopt them when the deployment target can move; until then the neutral format (M0 task 16) owns the IDs.
@@ -60,7 +60,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Library:** `LibraryView` (516), `LibraryCells`, `FolderPickerView`, `TutorialNotebookFactory` (303)
 
-**Data:** `MystNotesModels`, `FileStore`, `DrawingStore`, `StrokeCodec` (neutral ink format + `StrokeIDMap`), `AppSettings`
+**Data:** `MystNotesModels`, `FileStore`, `DrawingStore`, `StrokeCodec` (neutral ink format + `StrokeIDMap`), `TrashRetention` (the 30-day sweep — the only `removeItem` on a payload), `AppSettings`
 
 **Sync:** `SyncEngine`, `SyncEnvironment`, `SyncFolder`, `SyncModels`, `SyncDebouncer`, `SyncFolderWatcher`, `SyncDiagnostics` (debug) — folder layout is documented at the top of `SyncModels.swift`
 
@@ -68,7 +68,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **App shell:** `MystnotesApp`, `ContentView`, `MystnotesWindowView`, `SettingsView`, `OnboardingView`, `LoginView`, `ShareSheet`, `Color+Hex`, `Diagnostics` (crash reports, log, export)
 
-**Tests:** `MystNotesTests/` — `SyncTestHarness` + `SyncTests` (two-library sync harness), `DurabilityTests` (+ `Fixtures/` schema fixture), `ShapeRecognizerTests`, `PageArtworkTests`, plus the codec, fidelity, watcher, debouncer, diagnostics and performance suites. Seams the tests drive: `SyncEnvironment` (sync), `DrawingStore` (ink file I/O), `BitmapStore` (injected renderer). Run on the iPad simulator.
+**Tests:** `MystNotesTests/` — `SyncTestHarness` + `SyncTests` (two-library sync harness), `DurabilityTests` (+ `Fixtures/` schema fixture), `ShapeRecognizerTests`, `PageArtworkTests`, `TrashRetentionTests`, plus the codec, fidelity, watcher, debouncer, diagnostics and performance suites. Seams the tests drive: `SyncEnvironment` (sync), `DrawingStore` (ink file I/O), `BitmapStore` (injected renderer). Run on the iPad simulator.
 
 ### Data model (`MystNotesModels.swift`)
 
@@ -196,8 +196,18 @@ In order. Each gates the next.
 19. ~~SwiftData index rebuild~~ done — `LibraryRebuild`, two tests (shape equality after rebuild; a rebuild never pushes and trashes unpushed ink).
 20. ~~Performance baseline~~ done except ink latency (needs the iPad) — numbers and thresholds in `Docs/PERFORMANCE_BASELINE.md`, tests in `PerformanceTests`. Findings: the record was ~6× PencilKit's size — now LZFSE-compressed (~2×); no-op sync cost is linear in payload bytes (persist hashes, backlog).
 21. ~~Crash reporting~~ done — MetricKit subscriber + `AppLog` + Settings → Export Diagnostics (`Diagnostics.swift`). **Device verification still owed:** MetricKit payloads never arrive on the simulator or under the debugger; crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in the export.
+22. ~~Trash retention~~ done (Sept 18, 2026) — 30 days, `TrashRetention`, swept in the folder during a sync run and locally at launch, with a Trash section in Settings. Invariant 3's one exception; 14 tests.
 
-**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅. **Still owed before calling M0 done:** task 8 (decided by `Docs/SPIKE_ICLOUD_CONFLICTS.md` §5), task 18 on real hardware, the ink-latency baseline, crash-report verification on device, and the trash-retention decision in `BACKLOG.md`. Then merge `m0-correctness` → `main`.
+**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅, trash retention decided and implemented ✅ (30 days, `TrashRetention`, Sept 18, 2026).
+
+**Still owed before calling M0 done — all four need the iPad, none need more code:**
+
+1. **Task 18, the two-device test on real hardware** against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync. Plus the spike checklist §3 clean offline round (`BACKLOG.md`), which has still not been run on a build free of the old-build saves and the launch hangs.
+2. **The ink-latency baseline** — Instruments, 30 s of continuous drawing at 120 Hz; the method is in `PERFORMANCE_BASELINE.md`. The invariant is that autosave, OCR and a debounced push never show up in the trace while the pencil is down.
+3. **Crash-report verification** — MetricKit payloads never arrive on the simulator or under the debugger. Crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in Settings → Export Diagnostics.
+4. **The remaining launch-time main-thread hang** (`BACKLOG.md`, "Open on the morning of Sept 13"). The build on the iPad captures the main thread's real stack into `Documents/diagnostics/app.log`; read it before guessing again.
+
+Then merge `custom-drawing-toolbar` → `m0-correctness` → `m1-images-and-shapes` → `main`, in that order.
 
 ---
 

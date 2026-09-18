@@ -732,6 +732,9 @@ nonisolated struct SyncRunner {
     ///   references it may simply not have arrived yet (iCloud delivers
     ///   files in no particular order, and a device can be offline for
     ///   days between uploading its payloads and its notebook file).
+    /// - Anything that has been in one of those `trash/` directories for
+    ///   `trashRetentionPeriod` is removed. That is the only removal of a
+    ///   payload anywhere in the app - see `TrashRetention`.
     private func pruneFolder(workingDir: URL, tombstones: [Tombstone], pending: Set<UUID>) {
         let fm = FileManager.default
         let notebooksDir = workingDir.appendingPathComponent("notebooks", isDirectory: true)
@@ -739,6 +742,17 @@ nonisolated struct SyncRunner {
 
         for stone in tombstones where stone.kind == .notebook {
             DrawingStore.moveToTrash(Self.notebookFileURL(for: stone.id, in: workingDir), tag: "deleted")
+        }
+
+        // The retention sweep, here because this is the one moment the
+        // folder is held and coordinated. Anything that has sat in a
+        // `trash/` for the whole period finally goes (`TrashRetention`).
+        for directory in [notebooksDir, filesDir] {
+            TrashRetention.sweep(
+                directory.appendingPathComponent(TrashRetention.directoryName, isDirectory: true),
+                olderThan: environment.trashRetentionPeriod,
+                now: environment.now()
+            )
         }
 
         // Known to be missing notebook files this round: their payloads

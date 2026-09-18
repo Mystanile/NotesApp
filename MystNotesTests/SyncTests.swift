@@ -687,6 +687,66 @@ final class SyncTests: XCTestCase {
         XCTAssertTrue(harness.folderPayloadNames().contains(newName), "a fresh orphan is still kept")
     }
 
+    /// The retention decision, end to end through a real sync run: a
+    /// payload that reached the folder's trash and has sat there for the
+    /// whole period is finally removed, and one that hasn't is not. This
+    /// is the only removal of a payload anywhere in the app.
+    func testSync_sweepsTheFolderTrashAfterTheRetentionPeriod() throws {
+        let ipad = try harness.makeDevice("iPad")
+        ipad.orphanGracePeriod = 3600
+        ipad.trashRetentionPeriod = 30 * 24 * 3600
+
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+        let oldInk = Data("first version".utf8)
+        harness.clock.advance(); try ipad.edit(page: page, ink: oldInk)
+        harness.clock.advance(); try ipad.sync()
+        let oldName = "\(PayloadHash.sha256(of: oldInk)).drawing"
+
+        // Supersede it and age it, so the orphan prune puts it in trash/.
+        harness.clock.advance(); try ipad.edit(page: page, ink: Data("second".utf8))
+        harness.clock.advance(); try ipad.sync()
+        try FileManager.default.setAttributes([.modificationDate: harness.clock.now.addingTimeInterval(-7200)],
+                                              ofItemAtPath: harness.folderFile("files/\(oldName)").path)
+        harness.clock.advance(); try ipad.edit(page: page, ink: Data("third".utf8))
+        harness.clock.advance(); try ipad.sync()
+
+        let trashed = try XCTUnwrap(harness.folderTrashNames().first { $0.hasPrefix(String(oldName.prefix(20))) },
+                                    "precondition: the orphan is in the folder's trash")
+
+        // A sync a fortnight later leaves it exactly where it is.
+        harness.clock.advance(seconds: 14 * 24 * 3600)
+        harness.clock.advance(); try ipad.edit(page: page, ink: Data("fourth".utf8))
+        harness.clock.advance(); try ipad.sync()
+        XCTAssertTrue(harness.folderTrashNames().contains(trashed),
+                      "two weeks in, a deleted page is still recoverable")
+
+        // Past thirty days, it goes.
+        harness.clock.advance(seconds: 17 * 24 * 3600)
+        harness.clock.advance(); try ipad.edit(page: page, ink: Data("fifth".utf8))
+        harness.clock.advance(); try ipad.sync()
+        XCTAssertFalse(harness.folderTrashNames().contains(trashed), "past the retention period it is removed")
+    }
+
+    /// Belt and braces on the same run: whatever the sweep takes, it never
+    /// takes a payload a page still references.
+    func testSync_sweepNeverTouchesLivePayloads() throws {
+        let ipad = try harness.makeDevice("iPad")
+        ipad.trashRetentionPeriod = 1
+        let notebook = try ipad.createNotebook(title: "A", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        let ink = Data("keep me".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[0], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+
+        harness.clock.advance(seconds: 3600)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: Data("other".utf8))
+        harness.clock.advance(); try ipad.sync()
+
+        XCTAssertEqual(harness.inkInFolder(forPageID: pages[0].id), ink)
+        XCTAssertEqual(ipad.ink(forPageID: pages[0].id), ink)
+    }
+
     func testPush_movesTombstonedNotebookFileToFolderTrash() throws {
         let ipad = try harness.makeDevice("iPad")
         let notebook = try ipad.createNotebook(title: "Gone", pageCount: 1)

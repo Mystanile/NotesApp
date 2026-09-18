@@ -65,6 +65,7 @@ final class SyncTestDevice {
     private(set) var resolvedConflicts: [URL] = []
     var indexHistoryLimit = 50
     var orphanGracePeriod: TimeInterval = 7 * 24 * 60 * 60
+    var trashRetentionPeriod: TimeInterval = TrashRetention.defaultPeriod
 
     private let syncFolder: URL
     private let clock: SyncTestClock
@@ -128,6 +129,7 @@ final class SyncTestDevice {
             now: { [clock] in clock.now },
             indexHistoryLimit: indexHistoryLimit,
             orphanGracePeriod: orphanGracePeriod,
+            trashRetentionPeriod: trashRetentionPeriod,
             conflictVersions: { [unowned self] url in self.plantedConflicts[url.standardizedFileURL] ?? [] },
             resolveConflicts: { [unowned self] url in
                 if self.plantedConflicts.removeValue(forKey: url.standardizedFileURL) != nil { self.resolvedConflicts.append(url) }
