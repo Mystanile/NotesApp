@@ -48,6 +48,23 @@ struct NotebookApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+        .commands {
+            #if targetEnvironment(macCatalyst) || canImport(UIKit)
+            // Zoom for the Mac (and a hardware keyboard on iPad), where a
+            // pinch isn't on offer: these land in the View menu on Mac and
+            // in the ⌘-key overlay on iPad. The canvas in the key window
+            // answers - see CanvasHostView.
+            CommandGroup(after: .sidebar) {
+                Divider()
+                Button("Zoom In") { CanvasZoomCommand.zoomIn.post() }
+                    .keyboardShortcut("=", modifiers: .command)
+                Button("Zoom Out") { CanvasZoomCommand.zoomOut.post() }
+                    .keyboardShortcut("-", modifiers: .command)
+                Button("Zoom to Fit") { CanvasZoomCommand.reset.post() }
+                    .keyboardShortcut("0", modifiers: .command)
+            }
+            #endif
+        }
 
         // A second, separate window scene: lets a notebook be opened in
         // its own standalone window (e.g. dragged into Split View next to

@@ -11,7 +11,8 @@ import PhotosUI
 
 /// The actual notebook-editing experience: one page's canvas at a time,
 /// a page-thumbnail strip for navigation, a custom drawing toolbar
-/// (undo/redo, pen/highlighter/eraser/lasso, the shape tool), draggable
+/// (undo/redo, pen/highlighter/eraser/lasso/fill, text box), hold-to-snap
+/// shapes (`ShapeHoldRecognizer`), draggable
 /// text/sticker/link elements, PDF/image import, and a distraction-free
 /// presentation mode. Elements/shapes/imports only apply to regular paged
 /// pages — whiteboard pages keep plain PencilKit drawing (their scroll/zoom
@@ -83,7 +84,9 @@ struct NotebookDetailView: View {
     @State private var drawingNeedsOCR = false
     @State private var showingPageStrip = true
 
-    @State private var isShapeModeArmed = false
+    /// Hold-to-snap: what the stroke in progress will snap to when the
+    /// pencil lifts, previewed over the page in the tool's own ink.
+    @State private var shapePreview: ShapeRecognizer.RecognizedShape?
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     /// The tool that was active before an Apple Pencil double-tap switched to
     /// the eraser, so a second double-tap can switch straight back to it.
@@ -141,6 +144,18 @@ struct NotebookDetailView: View {
         return sortedPages[currentPageIndex]
     }
 
+    /// Which page is on screen *and* how new it is, watched as one value so
+    /// a page turn and a remote edit to the page you're on can be told
+    /// apart. See the `.onChange` that reads it.
+    private struct PageStamp: Equatable {
+        var id: UUID?
+        var date: Date?
+    }
+
+    private var currentPageStamp: PageStamp {
+        PageStamp(id: currentPage?.id, date: currentPage?.modifiedAt)
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
@@ -166,13 +181,12 @@ struct NotebookDetailView: View {
                                         toolState: $toolState,
                                         canUndo: canUndo,
                                         canRedo: canRedo,
-                                        isShapeModeArmed: isShapeModeArmed,
-                                        isShapeToolAvailable: page.type != "whiteboard",
                                         isFillToolAvailable: page.type != "whiteboard",
+                                        isTextBoxAvailable: page.type != "whiteboard",
                                         containerSize: geo.size,
                                         onUndo: { canvasView.undoManager?.undo() },
                                         onRedo: { canvasView.undoManager?.redo() },
-                                        onToggleShapeMode: toggleShapeMode
+                                        onAddTextBox: addTextBlock
                                     )
                                     .frame(maxWidth: .infinity, alignment: .center)
                                 }
@@ -269,8 +283,21 @@ struct NotebookDetailView: View {
         // modifiedAt. Show it - unless the user has drawn on the canvas
         // since it loaded, in which case their strokes stay and the save
         // decides by date, like any same-page edit.
-        .onChange(of: currentPage?.modifiedAt) { _, newDate in
-            guard currentPage?.id == canvasPageID, !canvasIsDirty, newDate != ownSaveDate else { return }
+        //
+        // The page id travels with the date on purpose. Watching the date
+        // alone couldn't tell "this page just changed" from "a different
+        // page is now current", and a page turn changes it either way - so
+        // turning to a page that has a date (every imported or edited page
+        // does) ran a second loadCurrentPageDrawing() on top of the one the
+        // turn had already done, resetting the viewport and installing a
+        // second canvas in the middle of the first one's update. Turning to
+        // a never-edited page (modifiedAt nil, same as ownSaveDate's nil)
+        // stayed quiet, which is why it only ever went wrong coming *back*.
+        .onChange(of: currentPageStamp) { oldStamp, newStamp in
+            guard oldStamp.id == newStamp.id,
+                  newStamp.id == canvasPageID,
+                  !canvasIsDirty,
+                  newStamp.date != ownSaveDate else { return }
             loadCurrentPageDrawing()
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -296,13 +323,12 @@ struct NotebookDetailView: View {
                         toolState: $toolState,
                         canUndo: canUndo,
                         canRedo: canRedo,
-                        isShapeModeArmed: isShapeModeArmed,
-                        isShapeToolAvailable: page.type != "whiteboard",
                         isFillToolAvailable: page.type != "whiteboard",
+                        isTextBoxAvailable: page.type != "whiteboard",
                         containerSize: .zero,
                         onUndo: { canvasView.undoManager?.undo() },
                         onRedo: { canvasView.undoManager?.redo() },
-                        onToggleShapeMode: toggleShapeMode
+                        onAddTextBox: addTextBlock
                     )
                 }
             }
@@ -329,8 +355,8 @@ struct NotebookDetailView: View {
                         Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
                     }
                     if currentPage?.type != "whiteboard" {
+                        // Text boxes are on the drawing toolbar.
                         Section("Add to Page") {
-                            Button("Text Box") { addTextBlock() }
                             Button("Sticker") { showingStickerPicker = true }
                             Button("Link") { addLink() }
                         }
@@ -501,8 +527,18 @@ struct NotebookDetailView: View {
                 isZoomEnabled: adjustingImageFrame == nil,
                 onDrawingChanged: scheduleAutosave,
                 onLongPress: { beginAdjustingImage(on: page) },
-                onPencilDoubleTap: togglePencilEraser
+                onPencilDoubleTap: togglePencilEraser,
+                onShapePreview: { shapePreview = $0 }
             )
+
+            if let shapePreview {
+                // Drawn in page space through the viewport, like the ink it
+                // is about to become.
+                PageViewportLayer(viewport: viewport, pageSize: pageSize) { _ in
+                    ShapePreviewView(shape: shapePreview, tool: toolState.pkTool as? PKInkingTool)
+                }
+                .allowsHitTesting(false)
+            }
 
             PageViewportLayer(viewport: viewport, pageSize: pageSize) { scale in
                 PageElementsOverlayView(
@@ -512,15 +548,6 @@ struct NotebookDetailView: View {
                     onSave: scheduleAutosave,
                     onRequestLinkDestinationChange: { link in linkNeedingDestination = link }
                 )
-            }
-
-            if isShapeModeArmed && !isPresenting {
-                // Captured in canvas coordinates and converted to page
-                // coordinates on the way in, so a shape drawn while zoomed
-                // lands where it was drawn.
-                ShapeDrawingOverlay { points in
-                    addRecognizedShape(from: points.map(viewport.pagePoint(from:)))
-                }
             }
 
             if toolState.activeKind == .fill && !isPresenting {
@@ -1195,11 +1222,10 @@ struct NotebookDetailView: View {
     }
 
     /// The canvas needs real touches routed to a capture overlay instead
-    /// (see canvasSection's fill-tap overlay / ShapeDrawingOverlay) while
-    /// either the shape tool is armed or Fill is the active tool.
+    /// (see canvasSection's fill-tap overlay) while Fill is the active tool.
     private func updateCanvasInteractionEnabled() {
         canvasView.isUserInteractionEnabled =
-            !isShapeModeArmed && toolState.activeKind != .fill && adjustingImageFrame == nil
+            toolState.activeKind != .fill && adjustingImageFrame == nil
     }
 
     private func performFill(at point: CGPoint, on page: Page) {
@@ -1214,15 +1240,14 @@ struct NotebookDetailView: View {
     }
     #endif
 
-    // MARK: - Shape tool
+    // MARK: - Presentation
 
     /// Presentation mode is meant to be a clean, non-interactive view, but
-    /// the shape and fill tools work through transparent gesture-capture
-    /// overlays - left armed, those would sit invisibly over the presented
-    /// page and turn a stray tap into a drawn shape or a filled region.
-    /// Stand them down on the way in.
+    /// the fill tool works through a transparent gesture-capture overlay -
+    /// left armed, it would sit invisibly over the presented page and turn
+    /// a stray tap into a filled region. Stand it down on the way in.
     private func enterPresentationMode() {
-        isShapeModeArmed = false
+        shapePreview = nil
         adjustingImageFrame = nil
         croppingRect = nil
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1231,31 +1256,6 @@ struct NotebookDetailView: View {
 #endif
         isPresenting = true
     }
-
-    private func toggleShapeMode() {
-        isShapeModeArmed.toggle()
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        updateCanvasInteractionEnabled()
-#endif
-    }
-
-    #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func addRecognizedShape(from points: [CGPoint]) {
-        defer {
-            isShapeModeArmed = false
-            updateCanvasInteractionEnabled()
-        }
-        let ink = PKInk(.pen, color: toolState.penColor.fixedUIColor)
-        guard let stroke = ShapeRecognizer.recognizeStroke(from: points, ink: ink) else { return }
-        canvasView.setDrawingUndoably(PKDrawing(strokes: canvasView.drawing.strokes + [stroke]))
-        scheduleAutosave()
-    }
-    #else
-    // Dummy implementation for macOS native
-    private func addRecognizedShape(from points: [CGPoint]) {
-        // Do nothing
-    }
-    #endif
 
     // MARK: - Drawing persistence
 
@@ -1269,6 +1269,15 @@ struct NotebookDetailView: View {
         // stand the dependent layers down until it reports back rather than
         // letting them flash at the outgoing page's zoom.
         viewport.reset(for: page.id)
+        // The placement handles belong to the page they were opened on.
+        // Leaving a page with them up used to carry that rect onto the next
+        // page - and `ImportedPageBackgroundView` draws its artwork at
+        // `liveFrame` whenever one is set, so the incoming page's picture
+        // would be drawn in the outgoing page's box.
+        if page.id != canvasPageID {
+            adjustingImageFrame = nil
+            croppingRect = nil
+        }
         adoptImportedPageShapeIfNeeded(page)
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         var drawing = PKDrawing()

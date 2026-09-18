@@ -21,6 +21,10 @@ import PencilKit
 ///    Procreate-style shortcuts (two-finger tap = undo, three-finger tap =
 ///    redo, either one held = keep repeating, Apple Pencil (Pro) double-tap
 ///    = toggle eraser) to a host view, idempotently.
+///  - `CanvasZoomCommand` / `CanvasHostView.zoom(...)` - the Mac (and
+///    hardware-keyboard) ways to zoom: View-menu items with ⌘+ / ⌘- / ⌘0,
+///    and ⌘- or ⌥-scroll-wheel about the pointer. A pinch is the only zoom
+///    an iPad needs, but on a Mac the pointer has no second finger.
 
 // MARK: - Scribble to erase
 
@@ -179,13 +183,103 @@ final class PageCanvasView: PKCanvasView {
     override var undoManager: UndoManager? { pageUndoManager }
 }
 
+// MARK: - Zoom commands
+
+/// Whether the app is running on a Mac - Catalyst or "Designed for iPad" -
+/// where the input is a pointer rather than fingers and a Pencil.
+enum CanvasInput {
+    static let isMac: Bool = {
+        #if targetEnvironment(macCatalyst)
+        return true
+        #else
+        return ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
+    }()
+}
+
+/// A zoom request from the View menu / keyboard (`NotebookApp`'s commands).
+/// It's broadcast rather than routed, because the canvas that should answer
+/// is a UIKit view a SwiftUI menu can't see; the host in the key window
+/// picks it up.
+enum CanvasZoomCommand {
+    case zoomIn
+    case zoomOut
+    /// Back to the whole page on screen (a paged page) or 100% (a
+    /// whiteboard).
+    case reset
+
+    static let notification = Notification.Name("MystNotes.canvasZoomCommand")
+
+    func post() {
+        NotificationCenter.default.post(name: Self.notification, object: self)
+    }
+
+    /// ⌘+ / ⌘- step by this much.
+    static let stepFactor: CGFloat = 1.25
+}
+
 // MARK: - Canvas host container
 
 /// A transparent container the page's `PKCanvasView` is pinned inside. It
 /// exists purely so gesture recognizers have somewhere to live that isn't
 /// the canvas itself.
+///
+/// It also answers the pointer-driven navigation a Mac needs, where a plain
+/// drag is the pen and there's no second finger to pinch or pan with:
+///
+///  - the menu/keyboard `CanvasZoomCommand`s (⌘+ ⌘- ⌘0),
+///  - the scroll wheel / two-finger trackpad scroll, which pans, or zooms
+///    about the pointer with ⌘ or ⌥ held,
+///  - Space held + drag, which pans with the pointer (Figma / Photoshop).
+///
+/// All of it moves the canvas's own scroll view exactly like a pinch does,
+/// so PencilKit still re-renders the ink crisp at the new scale and the
+/// paged host's centring / viewport publishing happen through the usual
+/// scroll delegate callbacks.
 class CanvasHostView: UIView {
     private(set) weak var canvas: PKCanvasView?
+
+    private var zoomCommandObserver: NSObjectProtocol?
+    private var resignActiveObserver: NSObjectProtocol?
+    private var wheel: UIPanGestureRecognizer?
+    private lazy var wheelDelegate = WheelDelegate()
+    /// Present only while Space is held; see `updateDragPanOverlay`.
+    private var dragPanOverlay: UIView?
+    private var isSpaceHeld = false {
+        didSet { if isSpaceHeld != oldValue { updateDragPanOverlay() } }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        commonInit()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit()
+    }
+
+    private func commonInit() {
+        zoomCommandObserver = NotificationCenter.default.addObserver(
+            forName: CanvasZoomCommand.notification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let command = note.object as? CanvasZoomCommand else { return }
+            self.handle(command)
+        }
+        // ⌘-Tab away while holding Space and the key-up never arrives; don't
+        // leave the pan overlay sitting over the canvas eating the pen.
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.isSpaceHeld = false
+        }
+        installWheel()
+    }
+
+    deinit {
+        if let zoomCommandObserver { NotificationCenter.default.removeObserver(zoomCommandObserver) }
+        if let resignActiveObserver { NotificationCenter.default.removeObserver(resignActiveObserver) }
+    }
 
     /// Reparents `canvas` into this container (a view has one superview, so
     /// `addSubview` also removes it from a previous host) and pins it to the
@@ -206,6 +300,204 @@ class CanvasHostView: UIView {
             canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         self.canvas = canvas
+        // The wheel is ours (pan or zoom - see handleWheel), so the scroll
+        // view's own pan has to stand aside for it. It declines touches
+        // outright, so finger / Pencil panning on iPad is never held up.
+        if let wheel { canvas.panGestureRecognizer.require(toFail: wheel) }
+        // The overlay must stay on top of a newly embedded canvas.
+        if let dragPanOverlay { bringSubviewToFront(dragPanOverlay) }
+    }
+
+    // MARK: Zoom
+
+    /// The scale `CanvasZoomCommand.reset` returns to. 100% for a
+    /// whiteboard; the paged host overrides this with its fit scale.
+    var defaultZoomScale: CGFloat { 1 }
+
+    /// Only the canvas the user is looking at answers a menu command - with
+    /// a notebook open in a second window, both hosts hear the broadcast.
+    private func handle(_ command: CanvasZoomCommand) {
+        guard let window, window.isKeyWindow, !isHidden else { return }
+        switch command {
+        case .zoomIn:  zoom(by: CanvasZoomCommand.stepFactor, about: nil)
+        case .zoomOut: zoom(by: 1 / CanvasZoomCommand.stepFactor, about: nil)
+        case .reset:   setZoomScale(defaultZoomScale, about: nil)
+        }
+    }
+
+    /// Multiplies the current zoom, keeping the page point under
+    /// `anchor` (in this view's coordinates; nil = the middle of the view)
+    /// where it is - what a scroll-wheel zoom about the pointer needs.
+    func zoom(by factor: CGFloat, about anchor: CGPoint?) {
+        guard let canvas else { return }
+        setZoomScale(canvas.zoomScale * factor, about: anchor)
+    }
+
+    func setZoomScale(_ requested: CGFloat, about anchor: CGPoint?) {
+        // isScrollEnabled is how the parent stands the pinch down while an
+        // image is being placed; the keyboard shouldn't get around that.
+        guard let canvas, canvas.isScrollEnabled else { return }
+        let target = min(max(requested, canvas.minimumZoomScale), canvas.maximumZoomScale)
+        let current = canvas.zoomScale
+        guard abs(target - current) > 0.0001 else { return }
+
+        let anchor = anchor ?? CGPoint(x: bounds.midX, y: bounds.midY)
+        // The unzoomed content point under the anchor, which must stay put.
+        let contentPoint = CGPoint(
+            x: (anchor.x + canvas.contentOffset.x) / current,
+            y: (anchor.y + canvas.contentOffset.y) / current
+        )
+
+        // Setting the scale fires scrollViewDidZoom, which is where the
+        // paged host re-centres the page (via contentInset) - so the insets
+        // are right by the time the offset is clamped below.
+        canvas.setZoomScale(target, animated: false)
+
+        let wanted = CGPoint(x: contentPoint.x * target - anchor.x,
+                             y: contentPoint.y * target - anchor.y)
+        canvas.setContentOffset(clampedOffset(wanted), animated: false)
+    }
+
+    /// Moves the content by `delta` screen points (positive = content moves
+    /// right/down, the direction a finger drag carries it).
+    func pan(by delta: CGPoint) {
+        guard let canvas, canvas.isScrollEnabled, delta != .zero else { return }
+        let wanted = CGPoint(x: canvas.contentOffset.x - delta.x,
+                             y: canvas.contentOffset.y - delta.y)
+        let clamped = clampedOffset(wanted)
+        guard clamped != canvas.contentOffset else { return }
+        canvas.setContentOffset(clamped, animated: false)
+    }
+
+    /// `offset` kept inside the scrollable range, honouring the insets the
+    /// paged host centres the page with (so a page smaller than the view
+    /// stays put in the middle rather than sliding into a corner).
+    private func clampedOffset(_ offset: CGPoint) -> CGPoint {
+        guard let canvas else { return offset }
+        let inset = canvas.contentInset
+        let minOffset = CGPoint(x: -inset.left, y: -inset.top)
+        let maxOffset = CGPoint(
+            x: max(minOffset.x, canvas.contentSize.width - canvas.bounds.width + inset.right),
+            y: max(minOffset.y, canvas.contentSize.height - canvas.bounds.height + inset.bottom)
+        )
+        return CGPoint(x: min(max(offset.x, minOffset.x), maxOffset.x),
+                       y: min(max(offset.y, minOffset.y), maxOffset.y))
+    }
+
+    // MARK: Scroll wheel: pan, or ⌘ / ⌥ zoom
+
+    /// A pan recognizer that only ever sees scroll-wheel / trackpad-scroll
+    /// events (the delegate turns every touch away). An unmodified scroll
+    /// pans; with ⌘ or ⌥ held it zooms about the pointer.
+    ///
+    /// Panning is done here rather than left to the scroll view because
+    /// `UIScrollView`'s scroll-event handling is tangled up with its
+    /// touch-count rules and PencilKit's own recognizers, and on the Mac it
+    /// simply wasn't moving the page. Harmless on an iPad without a
+    /// trackpad: it never fires.
+    private func installWheel() {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleWheel(_:)))
+        recognizer.allowedScrollTypesMask = [.continuous, .discrete]
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = wheelDelegate
+        addGestureRecognizer(recognizer)
+        wheel = recognizer
+    }
+
+    @objc private func handleWheel(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began, .changed:
+            let delta = recognizer.translation(in: self)
+            recognizer.setTranslation(.zero, in: self)
+            let modifiers = recognizer.modifierFlags
+            if modifiers.contains(.command) || modifiers.contains(.alternate) {
+                guard delta.y != 0 else { return }
+                // Wheel up (content would move down) zooms in, like Maps / Figma.
+                zoom(by: exp(delta.y * 0.006), about: recognizer.location(in: self))
+            } else {
+                pan(by: delta)
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: Space + drag
+
+    /// Space held and the pointer drags the page around. PencilKit would
+    /// otherwise turn the drag into a stroke, so while Space is down a
+    /// transparent overlay sits over the canvas and takes the drag itself -
+    /// the canvas never sees it.
+    ///
+    /// The key presses arrive because the canvas is first responder and
+    /// forwards what it doesn't handle up to us, its superview.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if CanvasInput.isMac, presses.contains(where: { $0.key?.keyCode == .keyboardSpacebar }) {
+            isSpaceHeld = true
+            return
+        }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.key?.keyCode == .keyboardSpacebar }) {
+            isSpaceHeld = false
+            return
+        }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.key?.keyCode == .keyboardSpacebar }) {
+            isSpaceHeld = false
+            return
+        }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    private func updateDragPanOverlay() {
+        if isSpaceHeld {
+            guard dragPanOverlay == nil else { return }
+            let overlay = UIView(frame: bounds)
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            overlay.backgroundColor = .clear
+            let drag = UIPanGestureRecognizer(target: self, action: #selector(handleDragPan(_:)))
+            drag.maximumNumberOfTouches = 1
+            overlay.addGestureRecognizer(drag)
+            addSubview(overlay)
+            dragPanOverlay = overlay
+        } else {
+            dragPanOverlay?.removeFromSuperview()
+            dragPanOverlay = nil
+        }
+    }
+
+    @objc private func handleDragPan(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began, .changed:
+            let delta = recognizer.translation(in: self)
+            recognizer.setTranslation(.zero, in: self)
+            pan(by: delta)
+        default:
+            break
+        }
+    }
+
+    /// Lives outside the host so the host's own `UIGestureRecognizerDelegate`
+    /// conformance (subclasses have their own) doesn't get tangled up.
+    private final class WheelDelegate: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            false
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive event: UIEvent) -> Bool {
+            event.type == .scroll
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            false
+        }
     }
 }
 

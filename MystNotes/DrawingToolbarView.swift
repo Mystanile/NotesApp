@@ -50,8 +50,8 @@ struct DrawingToolState: Equatable {
 /// The GoodNotes/Notability-style drawing toolbar - our own custom UI in
 /// place of Apple's system `PKToolPicker`. Tapping a tool selects it;
 /// tapping the already-selected Pen/Highlighter/Eraser tool again opens a
-/// popover with that tool's options. Undo/redo and the shape tool live here
-/// too, since they're all part of the same "drawing controls" cluster
+/// popover with that tool's options. Undo/redo and the text-box button live
+/// here too, since they're all part of the same "drawing controls" cluster
 /// GoodNotes/Notability keep together.
 ///
 /// Two presentations of the same controls:
@@ -67,14 +67,14 @@ struct DrawingToolbarView: View {
     @Binding var toolState: DrawingToolState
     var canUndo: Bool
     var canRedo: Bool
-    var isShapeModeArmed: Bool
-    var isShapeToolAvailable: Bool
     var isFillToolAvailable: Bool
+    /// Text boxes only render on paged pages, not the whiteboard.
+    var isTextBoxAvailable: Bool
     /// The area the bar is allowed to be dragged around inside.
     var containerSize: CGSize
     var onUndo: () -> Void
     var onRedo: () -> Void
-    var onToggleShapeMode: () -> Void
+    var onAddTextBox: () -> Void
 
     @State private var openPopover: DrawingToolKind?
 
@@ -128,12 +128,9 @@ struct DrawingToolbarView: View {
 
             Divider().frame(height: 24)
 
-            iconButton(
-                "square.on.circle",
-                isOn: isShapeModeArmed,
-                disabled: !isShapeToolAvailable,
-                action: onToggleShapeMode
-            )
+            // Shapes have no button: draw one and hold the pencil still at
+            // the end, and it snaps (see ShapeHoldRecognizer).
+            iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox)
         }
     }
 

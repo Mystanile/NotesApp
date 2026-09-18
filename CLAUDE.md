@@ -20,7 +20,7 @@ Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASEL
 
 Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, lasso, shape recognition, fill/bucket tool, per-page canvas with real zoom, PDF and photo import with crop/rotate/resize, nested folders, notebook covers, thumbnail strip, four templates, whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
 
-**Two shipped tools are broken (M1).** The shape tool only makes ovals and lines at a fixed thickness — four separate bugs in `ShapeRecognizer.swift`, including a `stdDev/avgRadius < 0.28` threshold that classifies squares as circles (a square's coefficient of variation is ~0.10), and passing polygon corners to `PKStrokePath(controlPoints:)`, which treats them as cubic B-spline controls and rounds every corner. It should also trigger by holding the stroke, not by arming a toolbar button. The fill tool doesn't work and has been fixed twice; the leading hypothesis is that HEAD's page-zoom commit broke the coordinate-space assumption its own doc comment spells out. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md`.
+**One shipped tool is broken (M1).** ~~The shape tool~~ — rebuilt Sept 15, 2026: `ShapeRecognizer` (resample/corners/classify, sharp B-spline corners, tool width and colour), hold-to-snap via `ShapeHoldRecognizer` + `ShapeSnapController` on both canvases, no toolbar mode; 18 tests. Still owed on the iPad: that the host's recognizer receives the Pencil touch during a PencilKit stroke. The fill tool doesn't work and has been fixed twice; the leading hypothesis is that HEAD's page-zoom commit broke the coordinate-space assumption its own doc comment spells out. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md`.
 
 **Three things blocked shipping. As of Sept 12, 2026 (M0, `m0-correctness`) all three are closed in code; what remains is on hardware — see the M0 task list below.**
 
@@ -54,7 +54,7 @@ Two notes on the interim mapping. First, **you mostly don't need one**: when the
 
 Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a side effect of other work; if it's worth doing, do it as its own commit.
 
-**Canvas and drawing:** `PencilCanvasView` (393), `CanvasGestures` (751), `DrawingToolbarView` (273), `FillTool` (190), `ShapeRecognizer` (123), `ShapeDrawingOverlay`, `WhiteboardCanvasView` (158), `PageViewportLayer`, `PageGeometry` (100)
+**Canvas and drawing:** `PencilCanvasView`, `CanvasGestures`, `DrawingToolbarView`, `FillTool` (190), `ShapeRecognizer` (rewritten Sept 15), `ShapeHoldRecognizer` (hold-to-snap + `ShapeSnapController` + `ShapePreviewView`), `WhiteboardCanvasView`, `PageViewportLayer`, `PageGeometry` (100)
 
 **Pages and content:** `MystNotesDetailView` (1365 — the big one), `PageElementsOverlayView` (237), `PageBackgroundView`, `PageThumbnailView` (146), `PageRenderer` (121), `ImportedArtwork` (235), `ImportedPageBackgroundView` (120), `ImageCropOverlay`, `ImageAdjustOverlay`, `ImageAdjustToolbar`, `StickerPickerView`, `LinkDestinationPickerView`
 

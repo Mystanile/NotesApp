@@ -10,7 +10,9 @@ Both tools are shipped and visible in the toolbar. Neither works well enough to 
 
 ## Part 1 — Shape tool
 
-### Symptom
+**Done Sept 15, 2026.** `ShapeRecognizer` rewritten on the pipeline below (resample → closed-loop cut → corners by turning angle → classify; ellipse fit first because a long ellipse's ends read as corners). Line, arrow, circle, ellipse, triangle, square, rectangle (rotated kept; snapped to the axes within 7°), quad, pentagon and hexagon; low confidence returns `nil`. Polygon vertices carry multiplicity 3 in the control points and `testRectangleStroke_hasSharpCorners_andFollowsTheEdges` samples the built `PKStrokePath` to prove the corners are sharp. Width and colour come from the `PKInkingTool`, required parameter. `ShapeDrawingOverlay` and the armed mode are deleted; `ShapeHoldRecognizer` (custom `UIGestureRecognizer` on the host, 0.8 s still, haptic + `ShapePreviewView` through `PageViewportLayer`) and `ShapeSnapController` (swap in `canvasViewDrawingDidChange`, undoable) implement hold-to-snap on both canvases. 18 tests in `ShapeRecognizerTests`. **Owed on hardware:** that the recognizer on the host receives the Pencil's touch while PencilKit draws with it - verified for fingers by the shortcut recognizers, not yet for the Pencil.
+
+### Symptom (as of Sept 12)
 
 Only produces ovals and straight lines. Never triangles, arrows, or usable rectangles. Line thickness is always the same regardless of the selected pen. Requires arming a separate toolbar button.
 

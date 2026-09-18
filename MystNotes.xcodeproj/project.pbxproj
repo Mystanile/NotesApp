@@ -6,9 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		E8832436303B3D0000ACC8F5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E8832403303B3CCB00ACC8F5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E883240A303B3CCB00ACC8F5;
+			remoteInfo = Mystnotes;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
-		E8832430303B3D0000ACC8F5 /* MystnotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MystnotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E883240B303B3CCB00ACC8F5 /* Mystnotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mystnotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E8832430303B3D0000ACC8F5 /* MystnotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MystnotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -22,11 +32,6 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		E8832431303B3D0000ACC8F5 /* MystNotesTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MystNotesTests;
-			sourceTree = "<group>";
-		};
 		E883240D303B3CCB00ACC8F5 /* MystNotes */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -35,27 +40,22 @@
 			path = MystNotes;
 			sourceTree = "<group>";
 		};
+		E8832431303B3D0000ACC8F5 /* MystNotesTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MystNotesTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
-/* Begin PBXContainerItemProxy section */
-		E8832436303B3D0000ACC8F5 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E8832403303B3CCB00ACC8F5 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E883240A303B3CCB00ACC8F5;
-			remoteInfo = Mystnotes;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXFrameworksBuildPhase section */
-		E8832434303B3D0000ACC8F5 /* Frameworks */ = {
+		E8832408303B3CCB00ACC8F5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		E8832408303B3CCB00ACC8F5 /* Frameworks */ = {
+		E8832434303B3D0000ACC8F5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (

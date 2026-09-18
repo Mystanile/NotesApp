@@ -26,6 +26,10 @@ import AppKit
 /// scribble-to-erase from ever being mistaken for drawing, and matches how
 /// GoodNotes / Freeform behave with a Pencil paired.
 ///
+/// On a Mac there's no second finger to pinch with, so the host also
+/// answers the View menu's Zoom In / Zoom Out / Zoom to Fit (⌘+ ⌘- ⌘0) and
+/// ⌘/⌥-scroll-wheel - see `CanvasHostView`.
+///
 /// The canvas is pinned inside a `PagedCanvasHostView`; the finger/Pencil
 /// shortcut recognizers live on that host, not on the canvas, because
 /// recognizers added straight to a `PKCanvasView` are starved of touches by
@@ -114,6 +118,11 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
         )
     }
 
+    /// `CanvasZoomCommand.reset` (⌘0) puts the whole page back on screen.
+    override var defaultZoomScale: CGFloat {
+        canvas?.minimumZoomScale ?? 1
+    }
+
     /// One finger pans the page only when there's something to pan - that
     /// is, zoomed in past the fit.
     ///
@@ -122,10 +131,14 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     /// iPadOS's full-width back swipe anyway: a left-to-right drag anywhere
     /// on the page popped straight out of the notebook. Two fingers pan and
     /// pinch at every scale, the way Procreate moves its canvas.
+    ///
+    /// On a Mac the pointer is the only "finger" there is and there's no
+    /// edge swipe to lose to, so a drag always pans (and trackpad scrolling,
+    /// which carries no touches at all, is never held to a two-touch rule).
     private func updatePanTouchRequirement() {
         guard let canvas else { return }
         let zoomedIn = canvas.zoomScale > canvas.minimumZoomScale * 1.001
-        let required = zoomedIn ? 1 : 2
+        let required = (zoomedIn || CanvasInput.isMac) ? 1 : 2
         if canvas.panGestureRecognizer.minimumNumberOfTouches != required {
             canvas.panGestureRecognizer.minimumNumberOfTouches = required
         }
@@ -196,6 +209,10 @@ struct PencilCanvasView: UIViewRepresentable {
     var onLongPress: () -> Void = {}
     /// Apple Pencil (Pro) double-tap: parent toggles the eraser.
     var onPencilDoubleTap: () -> Void = {}
+    /// Hold-to-snap: the shape the current stroke will snap to when the
+    /// pencil lifts, or nil when there's none - drawn as a preview over the
+    /// page. See `ShapeHoldRecognizer`.
+    var onShapePreview: (ShapeRecognizer.RecognizedShape?) -> Void = { _ in }
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -214,6 +231,8 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.host = host
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installShortcuts(on: host)
+        context.coordinator.installShapeHold(on: host)
+        context.coordinator.shapeSnap.onPreview = onShapePreview
 
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity)
 
@@ -242,6 +261,8 @@ struct PencilCanvasView: UIViewRepresentable {
         configure(canvasView, context: context)
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installShortcuts(on: host)
+        context.coordinator.installShapeHold(on: host)
+        context.coordinator.shapeSnap.onPreview = onShapePreview
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity, forceRefit: canvasChanged)
 
         if canvasChanged {
@@ -253,6 +274,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     static func dismantleUIView(_ host: PagedCanvasHostView, coordinator: Coordinator) {
         coordinator.shortcuts.removeAll()
+        coordinator.removeShapeHold()
         host.viewport = nil
     }
 
@@ -292,8 +314,11 @@ struct PencilCanvasView: UIViewRepresentable {
         weak var canvas: PKCanvasView?
         weak var host: PagedCanvasHostView?
         let shortcuts = CanvasShortcutInstaller()
+        let shapeHold = ShapeHoldRecognizer()
+        let shapeSnap = ShapeSnapController()
         private weak var longPressRecognizer: UILongPressGestureRecognizer?
         private var isApplyingScribbleErase = false
+        private var isApplyingShapeSnap = false
 
         init(onDrawingChanged: @escaping () -> Void, onLongPress: @escaping () -> Void) {
             self.onDrawingChanged = onDrawingChanged
@@ -301,10 +326,26 @@ struct PencilCanvasView: UIViewRepresentable {
             super.init()
             shortcuts.onUndo = { [weak self] in self?.canvas?.undoManager?.undo() }
             shortcuts.onRedo = { [weak self] in self?.canvas?.undoManager?.redo() }
+            shapeSnap.attach(to: shapeHold)
         }
 
         func installShortcuts(on host: UIView) {
             shortcuts.install(on: host)
+        }
+
+        /// Idempotent, like the others. The recognizer reads the canvas for
+        /// its drawing policy and zoom, so it follows a swapped-in canvas.
+        func installShapeHold(on host: UIView) {
+            shapeHold.canvas = canvas
+            guard shapeHold.view !== host else { return }
+            shapeHold.view?.removeGestureRecognizer(shapeHold)
+            shapeHold.delegate = self
+            host.addGestureRecognizer(shapeHold)
+        }
+
+        func removeShapeHold() {
+            shapeHold.view?.removeGestureRecognizer(shapeHold)
+            shapeSnap.clear()
         }
 
         /// Idempotent: the host is re-passed on every SwiftUI update.
@@ -337,7 +378,17 @@ struct PencilCanvasView: UIViewRepresentable {
         // MARK: PKCanvasViewDelegate
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            if !isApplyingScribbleErase,
+            // A held stroke has just been committed: swap it for its shape
+            // before anything else looks at it.
+            if !isApplyingShapeSnap, shapeSnap.pending != nil {
+                isApplyingShapeSnap = true
+                defer { isApplyingShapeSnap = false }
+                if shapeSnap.applyIfPending(to: canvasView) {
+                    onDrawingChanged()
+                    return
+                }
+            }
+            if !isApplyingScribbleErase, !isApplyingShapeSnap,
                canvasView.tool is PKInkingTool,
                let latest = canvasView.drawing.strokes.last,
                ScribbleErase.isScribble(latest),

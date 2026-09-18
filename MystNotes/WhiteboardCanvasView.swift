@@ -41,6 +41,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
 
         context.coordinator.canvas = canvasView
         context.coordinator.installShortcuts(on: host)
+        context.coordinator.installShapeHold(on: host)
 
         DispatchQueue.main.async {
             // becomeFirstResponder can silently fail before the view is in a
@@ -66,6 +67,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         host.embed(canvasView)
         configure(canvasView, context: context)
         context.coordinator.installShortcuts(on: host)
+        context.coordinator.installShapeHold(on: host)
 
         if canvasChanged {
             DispatchQueue.main.async {
@@ -78,6 +80,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
 
     static func dismantleUIView(_ host: CanvasHostView, coordinator: Coordinator) {
         coordinator.shortcuts.removeAll()
+        coordinator.removeShapeHold()
     }
 
     private func configure(_ canvas: PKCanvasView, context: Context) {
@@ -113,25 +116,57 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         Coordinator(onDrawingChanged: onDrawingChanged)
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var onDrawingChanged: () -> Void
         weak var canvas: PKCanvasView?
         let shortcuts = CanvasShortcutInstaller()
+        // Hold-to-snap works here too; there's just no page-space overlay
+        // to preview in, so the haptic is the only cue before the lift.
+        let shapeHold = ShapeHoldRecognizer()
+        let shapeSnap = ShapeSnapController()
         private var isApplyingScribbleErase = false
+        private var isApplyingShapeSnap = false
 
         init(onDrawingChanged: @escaping () -> Void) {
             self.onDrawingChanged = onDrawingChanged
             super.init()
             shortcuts.onUndo = { [weak self] in self?.canvas?.undoManager?.undo() }
             shortcuts.onRedo = { [weak self] in self?.canvas?.undoManager?.redo() }
+            shapeSnap.attach(to: shapeHold)
         }
 
         func installShortcuts(on host: UIView) {
             shortcuts.install(on: host)
         }
 
+        func installShapeHold(on host: UIView) {
+            shapeHold.canvas = canvas
+            guard shapeHold.view !== host else { return }
+            shapeHold.view?.removeGestureRecognizer(shapeHold)
+            shapeHold.delegate = self
+            host.addGestureRecognizer(shapeHold)
+        }
+
+        func removeShapeHold() {
+            shapeHold.view?.removeGestureRecognizer(shapeHold)
+            shapeSnap.clear()
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            if !isApplyingScribbleErase,
+            if !isApplyingShapeSnap, shapeSnap.pending != nil {
+                isApplyingShapeSnap = true
+                defer { isApplyingShapeSnap = false }
+                if shapeSnap.applyIfPending(to: canvasView) {
+                    onDrawingChanged()
+                    return
+                }
+            }
+            if !isApplyingScribbleErase, !isApplyingShapeSnap,
                canvasView.tool is PKInkingTool,
                let latest = canvasView.drawing.strokes.last,
                ScribbleErase.isScribble(latest),
