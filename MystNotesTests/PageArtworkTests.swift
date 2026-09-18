@@ -317,6 +317,53 @@ final class PageArtworkTests: XCTestCase {
         XCTAssertEqual(base, base, "an unchanged page keeps its cached thumbnail")
     }
 
+    // MARK: - The page strip's sizing
+
+    /// The strip is resizable now, so the numbers the drag clamps to and
+    /// the height the cells get have to agree - and the default has to be
+    /// the strip people already have.
+    func testStripMetrics_defaultIsTodaysStrip_andClampsBothWays() {
+        XCTAssertEqual(PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight), 80,
+                       "the default strip is the 80pt thumbnail the app has always drawn")
+
+        XCTAssertEqual(PageStripMetrics.clamped(10), PageStripMetrics.minimumHeight)
+        XCTAssertEqual(PageStripMetrics.clamped(10_000), PageStripMetrics.maximumHeight)
+        XCTAssertEqual(PageStripMetrics.clamped(200), 200)
+
+        // Even at the extremes a cell is a positive, usable size.
+        for height in [PageStripMetrics.minimumHeight, PageStripMetrics.defaultHeight, PageStripMetrics.maximumHeight] {
+            XCTAssertGreaterThan(PageStripMetrics.thumbnailHeight(for: height), 24)
+            XCTAssertLessThan(PageStripMetrics.thumbnailHeight(for: height), height,
+                              "the chrome has to fit in the strip alongside the page")
+        }
+        XCTAssertGreaterThan(PageStripMetrics.thumbnailHeight(for: PageStripMetrics.maximumHeight),
+                             PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight),
+                             "dragging up has to actually make the pages bigger")
+    }
+
+    /// Resizing must re-render the bitmap, or a strip dragged large shows
+    /// blurry thumbnails - but in steps, or every intermediate height
+    /// during a drag would be its own cache entry and its own render.
+    func testThumbnailRequest_renderSizeStepsWithTheHeight() {
+        func request(atHeight height: CGFloat) -> PageThumbnailRequest {
+            PageThumbnailRequest(
+                pageID: UUID(), inkStamp: "-", template: "blank", backgroundRef: nil, pdfPageIndex: 0,
+                frameX: nil, frameY: nil, frameWidth: nil, frameHeight: nil,
+                cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil, rotationDegrees: nil,
+                nominal: CGSize(width: 780, height: 1040),
+                output: CGSize(width: (height * 2 / 80).rounded(.up) * 80 * 0.75,
+                               height: min((max(height * 2, 160) / 80).rounded(.up) * 80, 560))
+            )
+        }
+        // Nudging the drag by a point doesn't invalidate the cache...
+        XCTAssertEqual(request(atHeight: 100).output, request(atHeight: 104).output)
+        // ...but dragging it properly bigger does.
+        XCTAssertNotEqual(request(atHeight: 100).output, request(atHeight: 200).output)
+        XCTAssertGreaterThan(request(atHeight: 300).output.height, request(atHeight: 100).output.height)
+        // And it is bounded, so a huge strip can't ask for a huge bitmap.
+        XCTAssertEqual(request(atHeight: 5000).output.height, 560)
+    }
+
     // MARK: - Sniffing imports
 
     func testFileType_readsTheHeaderNotTheLabel() throws {

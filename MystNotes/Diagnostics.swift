@@ -94,12 +94,23 @@ nonisolated enum AppLog {
 /// diagnostic to show for it; the stack capture was added when a
 /// launch hang came back with checkpoint "(none)".
 nonisolated enum MainThreadWatchdog {
+    /// Long enough to be a hang worth a stack capture.
     static let threshold: TimeInterval = 3
+    /// Long enough to be *felt* - a stutter while drawing or switching
+    /// tools. Logged with the last checkpoint and nothing else, so it's
+    /// cheap enough to leave on: this is how a "it freezes sometimes"
+    /// report turns into a line naming what was running.
+    static let stallThreshold: TimeInterval = 0.4
+    /// How often the watchdog thread looks. The main thread is only
+    /// pinged when there's no outstanding ping, so this is what bounds
+    /// the resolution, not how often main is woken.
+    static let pollInterval: TimeInterval = 0.05
     private static let lock = NSLock()
     private static var lastCheckpoint = "(none)"
     private static var lastCheckpointAt = Date()
     private static var pingSent: Date?
     private static var reportedThisHang = false
+    private static var reportedStallThisHang = false
     private static var mainThread: pthread_t?
 
     static func checkpoint(_ label: String) {
@@ -117,7 +128,7 @@ nonisolated enum MainThreadWatchdog {
         installStackCapture()
         let thread = Thread {
             while true {
-                Thread.sleep(forTimeInterval: 0.5)
+                Thread.sleep(forTimeInterval: pollInterval)
                 lock.lock()
                 if let sent = pingSent {
                     let stalled = Date().timeIntervalSince(sent)
@@ -131,6 +142,13 @@ nonisolated enum MainThreadWatchdog {
                         }
                         continue
                     }
+                    if stalled >= stallThreshold, !reportedStallThisHang {
+                        reportedStallThisHang = true
+                        let note = "main thread stalled past \(Int(stallThreshold * 1000)) ms; last checkpoint '\(lastCheckpoint)'"
+                        lock.unlock()
+                        AppLog.note("stall", note)
+                        continue
+                    }
                     lock.unlock()
                     continue   // still waiting for the last ping
                 }
@@ -138,12 +156,17 @@ nonisolated enum MainThreadWatchdog {
                 lock.unlock()
                 DispatchQueue.main.async {
                     lock.lock()
-                    if let sent = pingSent, reportedThisHang {
-                        AppLog.note("hang", "main thread responsive again after \(Int(Date().timeIntervalSince(sent))) s")
-                    }
+                    let blocked = pingSent.map { Date().timeIntervalSince($0) } ?? 0
+                    let wasHang = reportedThisHang, wasStall = reportedStallThisHang
                     pingSent = nil
                     reportedThisHang = false
+                    reportedStallThisHang = false
                     lock.unlock()
+                    if wasHang {
+                        AppLog.note("hang", "main thread responsive again after \(Int(blocked)) s")
+                    } else if wasStall {
+                        AppLog.note("stall", "main thread free again after \(Int(blocked * 1000)) ms")
+                    }
                 }
             }
         }

@@ -5,6 +5,38 @@ import PencilKit
 import UIKit
 #endif
 
+/// The page strip's sizes, in one place because the view that draws the
+/// strip, the preference that persists its height and the thumbnail cells
+/// inside it all have to agree.
+///
+/// `height` throughout means the **whole strip**, chrome included, which is
+/// what the user is actually dragging. `thumbnailHeight` is what's left for
+/// the page itself.
+nonisolated enum PageStripMetrics {
+    /// The grabber, the page-number label, the gap above it and the
+    /// strip's bottom padding - everything in the strip that isn't the
+    /// page itself. 16 + 4 + ~13 + 8, with a point of slack.
+    static let chrome: CGFloat = 42
+    /// Today's strip: 80pt thumbnails, so an existing library opens
+    /// looking exactly as it did.
+    static let defaultHeight: CGFloat = 122
+    /// Below this a thumbnail stops being a legible page; dragging past it
+    /// hides the strip instead.
+    static let minimumHeight: CGFloat = 86
+    /// Past this the strip is eating the page you're drawing on.
+    static let maximumHeight: CGFloat = 340
+    /// The grab area at the top edge.
+    static let grabberHeight: CGFloat = 16
+
+    static func clamped(_ height: CGFloat) -> CGFloat {
+        min(max(height, minimumHeight), maximumHeight)
+    }
+
+    static func thumbnailHeight(for stripHeight: CGFloat) -> CGFloat {
+        max(clamped(stripHeight) - chrome, 24)
+    }
+}
+
 #if canImport(UIKit)
 /// Everything one thumbnail is made of, and its cache key. `inkStamp`
 /// carries the page's `modifiedAt` so a page that has just been drawn on
@@ -94,10 +126,20 @@ struct PageThumbnailView: View {
     let page: Page
     var importedDocument: ImportedDocument?
     var isSelected: Bool = false
+    /// How tall to draw it. The strip is resizable, so this is whatever the
+    /// user has dragged it to; the width follows the page's own shape.
+    var height: CGFloat = PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight)
 
     #if canImport(UIKit)
     private var store: BitmapStore<PageThumbnailRequest> { PageBitmaps.thumbnails }
     #endif
+
+    /// The cell takes the page's own shape rather than a fixed portrait
+    /// box, so a landscape page reads as landscape in the strip instead of
+    /// being letterboxed inside a tall one.
+    private var cellSize: CGSize {
+        CGSize(width: (height * PageGeometry.aspectRatio(page.aspectRatio)).rounded(), height: height)
+    }
 
     var body: some View {
         ZStack {
@@ -117,7 +159,7 @@ struct PageThumbnailView: View {
                     lineWidth: isSelected ? 2 : 1
                 )
         }
-        .frame(width: 60, height: 80)
+        .frame(width: cellSize.width, height: cellSize.height)
         #if canImport(UIKit)
         .task(id: LoadID(request: thumbnailRequest, generation: store.generation)) {
             MainThreadWatchdog.checkpoint("Thumbnail.task")
@@ -141,10 +183,17 @@ struct PageThumbnailView: View {
 
     /// The thumbnail bitmap, at the page's own proportions so a portrait
     /// template and a landscape one don't both come back the same shape.
+    ///
+    /// The pixel height follows the displayed height at 2x, but in steps of
+    /// 80: dragging the strip bigger has to re-render, and without the
+    /// quantisation every intermediate height during the drag would be its
+    /// own cache key and its own render.
     private var renderSize: CGSize {
         let nominal = nominalPageSize
-        let scale = 160 / max(nominal.height, 1)
-        return CGSize(width: max((nominal.width * scale).rounded(), 1), height: 160)
+        let wanted = max(height * 2, 160)
+        let output = min((wanted / 80).rounded(.up) * 80, 560)
+        let scale = output / max(nominal.height, 1)
+        return CGSize(width: max((nominal.width * scale).rounded(), 1), height: output)
     }
 
     private var thumbnailRequest: PageThumbnailRequest {

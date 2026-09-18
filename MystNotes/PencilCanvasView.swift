@@ -286,30 +286,40 @@ struct PencilCanvasView: UIViewRepresentable {
         host.viewport = nil
     }
 
+    /// Runs on **every** SwiftUI update of this representable - which is
+    /// every time anything in the (large) detail view changes, including
+    /// picking a colour. Each property is therefore only written when it
+    /// actually differs: re-setting `drawingPolicy` or
+    /// `overrideUserInterfaceStyle` makes PencilKit reconfigure its
+    /// recognizers and re-resolve traits, and none of that belongs on the
+    /// drawing path.
     private func configure(_ canvas: PKCanvasView, context: Context) {
-        canvas.drawingPolicy = .pencilOnly          // finger never draws
-        canvas.backgroundColor = .clear
-        canvas.isOpaque = false
-        canvas.delegate = context.coordinator
+        // finger never draws
+        if canvas.drawingPolicy != .pencilOnly { canvas.drawingPolicy = .pencilOnly }
+        if canvas.backgroundColor != .clear { canvas.backgroundColor = .clear }
+        if canvas.isOpaque { canvas.isOpaque = false }
+        if canvas.delegate !== context.coordinator { canvas.delegate = context.coordinator }
 
         // PencilKit auto-inverts ink in dark mode (it assumes a black
         // canvas); the page is always a light paper background, so pin the
         // canvas to light - see the dark-mode ink history in git.
-        canvas.overrideUserInterfaceStyle = .light
+        if canvas.overrideUserInterfaceStyle != .light { canvas.overrideUserInterfaceStyle = .light }
 
         // The page scrolls and zooms inside the canvas's own scroll view.
-        canvas.isScrollEnabled = isZoomEnabled
-        canvas.bouncesZoom = true
-        canvas.alwaysBounceVertical = false
-        canvas.alwaysBounceHorizontal = false
-        canvas.showsVerticalScrollIndicator = false
-        canvas.showsHorizontalScrollIndicator = false
+        if canvas.isScrollEnabled != isZoomEnabled { canvas.isScrollEnabled = isZoomEnabled }
+        if !canvas.bouncesZoom { canvas.bouncesZoom = true }
+        if canvas.alwaysBounceVertical { canvas.alwaysBounceVertical = false }
+        if canvas.alwaysBounceHorizontal { canvas.alwaysBounceHorizontal = false }
+        if canvas.showsVerticalScrollIndicator { canvas.showsVerticalScrollIndicator = false }
+        if canvas.showsHorizontalScrollIndicator { canvas.showsHorizontalScrollIndicator = false }
         // The nav bar / safe area must never nudge the page mid-stroke.
-        canvas.contentInsetAdjustmentBehavior = .never
+        if canvas.contentInsetAdjustmentBehavior != .never { canvas.contentInsetAdjustmentBehavior = .never }
         // Two fingers pan and pinch; one finger joins in only once you're
         // zoomed past the fit (see updatePanTouchRequirement). A finger
         // never inks either way.
-        canvas.panGestureRecognizer.maximumNumberOfTouches = 2
+        if canvas.panGestureRecognizer.maximumNumberOfTouches != 2 {
+            canvas.panGestureRecognizer.maximumNumberOfTouches = 2
+        }
     }
 
     func makeCoordinator() -> Coordinator {

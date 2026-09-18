@@ -111,6 +111,29 @@ nonisolated struct DrawingStore {
         return drawing
     }
 
+    /// The same save, off the caller's thread.
+    ///
+    /// `nonisolated static` and capture-free by construction, exactly like
+    /// `SyncEngine.runDetached` and for the same reason: this project
+    /// builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so a
+    /// `Task.detached` formed inside a main-actor type is inferred
+    /// main-actor and runs on the main thread anyway.
+    ///
+    /// Encoding a page's strokes, compressing them and writing three files
+    /// is tens of milliseconds on a real page. It ran on the main thread a
+    /// second after every stroke and again on every page turn - invariant
+    /// 10, and the reason the app stuttered while drawing.
+    ///
+    /// The caller is expected to stamp `Page.modifiedAt` only once this
+    /// returns, so nothing reads the page's ink back before the bytes are
+    /// there.
+    nonisolated static func saveDetached(_ store: DrawingStore, _ drawing: PKDrawing,
+                                         pageID: UUID) -> Task<Result<String, Error>, Never> {
+        Task.detached(priority: .userInitiated) {
+            Result { try store.save(drawing, pageID: pageID) }
+        }
+    }
+
     /// Atomically writes the record, then the cache, and returns the file
     /// name to keep in `Page.drawingFileRef`.
     @discardableResult
@@ -168,8 +191,13 @@ nonisolated struct DrawingStore {
 #endif
 
     /// Stage then rename, so the target is never partially written.
+    ///
+    /// The staging name is unique per write. Saves now happen off the main
+    /// thread, so two of them for the same page (an autosave landing as a
+    /// page turn saves) can be in flight at once, and a shared staging path
+    /// would let one write's fragment be renamed into place by the other.
     private func writeAtomically(_ data: Data, to target: URL) throws {
-        let staging = target.appendingPathExtension("tmp")
+        let staging = target.appendingPathExtension("\(UUID().uuidString).tmp")
         let fm = FileManager.default
         try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         do {

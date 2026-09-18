@@ -81,8 +81,17 @@ struct NotebookDetailView: View {
     /// under us" reload below can tell a pull from our autosave. Reloading
     /// after every autosave would reinstall the canvas mid-stroke.
     @State private var ownSaveDate: Date?
-    @State private var drawingNeedsOCR = false
-    @State private var showingPageStrip = true
+    /// The page strip's visibility and height, persisted (`AppSettings`)
+    /// so a strip you hid or dragged bigger stays that way - across page
+    /// turns, notebooks, windows and launches.
+    @AppStorage(AppSettings.Keys.pageStripVisible) private var showingPageStrip = true
+    @AppStorage(AppSettings.Keys.pageStripHeight) private var pageStripHeight = PageStripMetrics.defaultHeight
+    /// The height the current drag started from, and how far it has moved.
+    /// The live height is computed from these rather than written straight
+    /// to the stored preference - a drag would otherwise write to
+    /// `UserDefaults` on every frame.
+    @State private var pageStripDragStart: CGFloat?
+    @State private var pageStripDragTranslation: CGFloat = 0
 
     /// Hold-to-snap: what the stroke in progress will snap to when the
     /// pencil lifts, previewed over the page in the tool's own ink.
@@ -269,7 +278,10 @@ struct NotebookDetailView: View {
         #endif
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
-                saveCurrentPage()
+                // The one blocking save: the app may be suspended before an
+                // asynchronous write would land.
+                saveCurrentPage(blocking: true)
+                HandwritingIndexer.shared.flush(modelContext: modelContext)
             }
         }
         // A pull can insert or remove pages while this notebook is open,
@@ -278,6 +290,8 @@ struct NotebookDetailView: View {
         .onChange(of: currentPage?.id) { _, newID in
             guard newID != canvasPageID else { return }
             saveCurrentPage()
+            // The page being left doesn't have to wait out its OCR timer.
+            HandwritingIndexer.shared.flush(modelContext: modelContext)
             loadCurrentPageDrawing()
         }
         // A pull that brings a newer version of *this* page changes its
@@ -342,10 +356,11 @@ struct NotebookDetailView: View {
                 }
 
                 Button {
-                    showingPageStrip.toggle()
+                    withAnimation(.snappy) { showingPageStrip.toggle() }
                 } label: {
-                    Image(systemName: "rectangle.grid.1x2")
+                    Image(systemName: showingPageStrip ? "rectangle.grid.1x2.fill" : "rectangle.grid.1x2")
                 }
+                .help(showingPageStrip ? "Hide the page strip" : "Show the page strip")
 
                 Menu {
                     Section("New Page") {
@@ -642,7 +657,72 @@ struct NotebookDetailView: View {
 #endif
     }
 
+    /// The page strip, with a grabber along its top edge: drag to resize,
+    /// drag below the minimum to put it away, and the toolbar's pages
+    /// button brings it back. Both the height and the visibility persist.
     private var pageStrip: some View {
+        VStack(spacing: 0) {
+            pageStripGrabber
+            pageStripContent
+        }
+        .frame(height: liveStripHeight)
+        .background(.thinMaterial)
+        .transition(.move(edge: .bottom))
+    }
+
+    /// What the strip is actually this tall right now: the stored height,
+    /// or the in-progress drag.
+    private var liveStripHeight: CGFloat {
+        guard let start = pageStripDragStart else { return PageStripMetrics.clamped(pageStripHeight) }
+        return PageStripMetrics.clamped(start - pageStripDragTranslation)
+    }
+
+    private var pageStripGrabber: some View {
+        // A capsule, like every other resizable drawer on the platform.
+        Capsule()
+            .fill(Color.secondary.opacity(pageStripDragStart == nil ? 0.35 : 0.7))
+            .frame(width: 40, height: 5)
+            .frame(maxWidth: .infinity)
+            .frame(height: PageStripMetrics.grabberHeight)
+            // The whole bar is the grab area, not just the 5pt capsule.
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if pageStripDragStart == nil {
+                            pageStripDragStart = PageStripMetrics.clamped(pageStripHeight)
+                        }
+                        // Up is negative in screen coordinates, and up means
+                        // a taller strip.
+                        pageStripDragTranslation = value.translation.height
+                    }
+                    .onEnded { value in
+                        let start = pageStripDragStart ?? PageStripMetrics.clamped(pageStripHeight)
+                        let dragged = start - value.translation.height
+                        pageStripHeight = PageStripMetrics.clamped(dragged)
+                        pageStripDragStart = nil
+                        pageStripDragTranslation = 0
+                        // Dragged well below the minimum: put it away rather
+                        // than leaving a strip too short to read. The height
+                        // is kept at the minimum, so bringing it back gives
+                        // a usable strip.
+                        if dragged < PageStripMetrics.minimumHeight - 24 {
+                            withAnimation(.snappy) { showingPageStrip = false }
+                        }
+                    }
+            )
+            .onTapGesture(count: 2) { togglePageStripSize() }
+            .accessibilityLabel("Resize the page strip")
+            .accessibilityHint("Drag up for larger previews, down to hide")
+            .accessibilityAdjustableAction { direction in
+                let step: CGFloat = 40
+                pageStripHeight = PageStripMetrics.clamped(
+                    pageStripHeight + (direction == .increment ? step : -step)
+                )
+            }
+    }
+
+    private var pageStripContent: some View {
         // Lazy, emphatically: a plain HStack builds every page's thumbnail
         // the moment the notebook opens, and each one decodes that page's
         // ink record and rasterizes its background. A 200-page notebook did
@@ -650,6 +730,7 @@ struct NotebookDetailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 12) {
                 let documents = documentsByPageID
+                let thumbnailHeight = PageStripMetrics.thumbnailHeight(for: liveStripHeight)
                 ForEach(Array(sortedPages.enumerated()), id: \.element.id) { index, page in
                     Button {
                         jumpToPage(at: index)
@@ -657,7 +738,8 @@ struct NotebookDetailView: View {
                         VStack(spacing: 4) {
                             PageThumbnailView(page: page,
                                               importedDocument: documents[page.id],
-                                              isSelected: index == currentPageIndex)
+                                              isSelected: index == currentPageIndex,
+                                              height: thumbnailHeight)
                             Text("\(index + 1)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -675,9 +757,19 @@ struct NotebookDetailView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.bottom, 8)
         }
-        .background(.thinMaterial)
+    }
+
+    /// Double-tapping the grabber jumps between the size you had and a big
+    /// one, the way a double-click on a window edge does - so "let me
+    /// actually see these pages" is one gesture, not a drag.
+    private func togglePageStripSize() {
+        withAnimation(.snappy) {
+            pageStripHeight = pageStripHeight < PageStripMetrics.maximumHeight - 1
+                ? PageStripMetrics.maximumHeight
+                : PageStripMetrics.defaultHeight
+        }
     }
 
     // MARK: - Setup
@@ -1313,6 +1405,9 @@ struct NotebookDetailView: View {
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private func applyToolState() {
+        // Named in the log so a stall while switching tools or colours
+        // says so - see MainThreadWatchdog.
+        MainThreadWatchdog.checkpoint("DetailView.applyToolState")
         canvasView.tool = toolState.pkTool
         updateCanvasInteractionEnabled()
     }
@@ -1458,17 +1553,26 @@ struct NotebookDetailView: View {
     /// it. A canvas nobody drew on is never written: it may be blank only
     /// because its ink hasn't arrived yet, and writing it would replace
     /// that ink with nothing.
-    private func saveCurrentPage(force: Bool = false) {
+    /// `blocking` is for the one case that can't be asynchronous: the app
+    /// is going to the background and may be suspended before a background
+    /// write would land (invariant 1). Everywhere else the write goes off
+    /// the main thread.
+    private func saveCurrentPage(force: Bool = false, blocking: Bool = false) {
         MainThreadWatchdog.checkpoint("DetailView.saveCurrentPage")
         guard canvasIsDirty || force,
               let pageID = canvasPageID,
               let page = sortedPages.first(where: { $0.id == pageID }) else { return }
+        canvasIsDirty = false
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        save(canvasView.drawing, to: page)
+        let drawing = canvasView.drawing
+        if blocking {
+            saveBlocking(drawing, to: page)
+        } else {
+            Task { await save(drawing, to: page) }
+        }
 #else
         save(to: page)
 #endif
-        canvasIsDirty = false
     }
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -1476,14 +1580,38 @@ struct NotebookDetailView: View {
     /// passed together on purpose: the autosave that fires a second after
     /// a stroke must save the page that stroke was drawn on, even if a
     /// different page has been opened since.
-    private func save(_ drawing: PKDrawing, to page: Page) {
+    ///
+    /// The encode-compress-write is off the main thread (`saveDetached`);
+    /// only the SwiftData half runs here, because the model context is
+    /// main-actor. `markModified()` deliberately comes *after* the bytes
+    /// are on disk: it is what re-renders this page's thumbnail and what a
+    /// pull compares against, and neither may see a date newer than the
+    /// ink it stands for.
+    private func save(_ drawing: PKDrawing, to page: Page) async {
+        switch await DrawingStore.saveDetached(drawingStore, drawing, pageID: page.id).value {
+        case .success(let ref):
+            page.drawingFileRef = ref
+            page.markModified()
+            if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
+            do { try modelContext.save() } catch { AppLog.note("save", "metadata: \(error)") }
+        case .failure(let error):
+            AppLog.note("save", "drawing: \(error)")
+            // The ink is still in the canvas and still dirty as far as the
+            // next autosave is concerned, so it gets another go.
+            if page.id == canvasPageID { canvasIsDirty = true }
+        }
+    }
+
+    /// The same save, run here and now. Only for backgrounding.
+    private func saveBlocking(_ drawing: PKDrawing, to page: Page) {
         do {
             page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
             page.markModified()
             if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
             try modelContext.save()
         } catch {
-            print("Failed to save drawing: \(error)")
+            AppLog.note("save", "drawing (blocking): \(error)")
+            if page.id == canvasPageID { canvasIsDirty = true }
         }
     }
 #else
@@ -1497,8 +1625,6 @@ struct NotebookDetailView: View {
 
     private func scheduleAutosave() {
         refreshUndoRedoState()
-        // A stroke changed the canvas, so this page's OCR cache is stale.
-        drawingNeedsOCR = true
         // Only a user change reaches here (strokes, shapes, elements). The
         // canvas is now worth saving - and only to the page it was loaded for.
         canvasIsDirty = true
@@ -1514,18 +1640,19 @@ struct NotebookDetailView: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            save(canvas.drawing, to: pageToIndex)
+            if canvasPageID == pageToIndex.id { canvasIsDirty = false }
+            await save(canvas.drawing, to: pageToIndex)
 #else
             save(to: pageToIndex)
-#endif
             if canvasPageID == pageToIndex.id { canvasIsDirty = false }
-            // Re-recognize handwriting in the background (skips if the file
-            // hasn't changed since the last pass) so search stays up to date.
-            if drawingNeedsOCR {
-                drawingNeedsOCR = false
-                await HandwritingRecognizer.refreshOCR(for: pageToIndex, modelContext: modelContext)
-            }
+#endif
         }
+        // Handwriting recognition is on a much longer timer of its own.
+        // Awaiting it here meant a full Vision pass - render the page at
+        // 2x, composite it, recognize - every single second for as long as
+        // anyone kept writing, every one of them thrown away by the next
+        // stroke.
+        HandwritingIndexer.shared.schedule(pageToIndex, modelContext: modelContext)
     }
 
     private func refreshUndoRedoState() {

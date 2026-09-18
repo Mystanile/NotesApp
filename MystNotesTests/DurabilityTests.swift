@@ -314,6 +314,86 @@ final class DurabilityTests: XCTestCase {
         }
     }
 
+    // MARK: - Saving off the main thread
+
+    /// Invariant 10. Encoding a page's strokes, compressing them and
+    /// writing three files is tens of milliseconds on a real page, and it
+    /// ran on the main thread a second after every stroke and again on
+    /// every page turn. The rule in CLAUDE.md is that anything which must
+    /// run in the background gets a test that observes the thread.
+    func testSaveDetached_doesTheWorkOffTheMainThread() async throws {
+        final class ThreadProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var writes = 0
+            private(set) var onMain = 0
+            func record() { lock.lock(); writes += 1; if Thread.isMainThread { onMain += 1 }; lock.unlock() }
+        }
+        let probe = ThreadProbe()
+        var store = DrawingStore.inDirectory(directory)
+        store.write = { data, url in
+            probe.record()
+            try data.write(to: url)
+        }
+
+        let pageID = UUID()
+        let drawing = makeDrawing(strokes: 12)
+        let result = await DrawingStore.saveDetached(store, drawing, pageID: pageID).value
+
+        guard case .success(let name) = result else { return XCTFail("the save failed") }
+        XCTAssertEqual(name, DrawingStore.fileName(for: pageID))
+        XCTAssertGreaterThan(probe.writes, 0, "it actually wrote something")
+        XCTAssertEqual(probe.onMain, 0, "not one byte of it may be written on the main thread")
+
+        // ...and it is a real save, not a detour that skips the record.
+        let store2 = DrawingStore.inDirectory(directory, ids: StrokeIDCache())
+        assertStrokesEqual(try XCTUnwrap(store2.load(pageID: pageID)), drawing, "round trip")
+    }
+
+    /// Saves can now overlap - an autosave landing while a page turn saves
+    /// the same page - so the staging file each write uses has to be its
+    /// own. With one shared staging path they rename each other's
+    /// fragments into place.
+    func testConcurrentSavesOfTheSamePage_leaveAReadableRecord() async throws {
+        let store = DrawingStore.inDirectory(directory)
+        let pageID = UUID()
+        let first = makeDrawing(strokes: 30, xOffset: 0, seed: 1)
+        let second = makeDrawing(strokes: 30, xOffset: 300, seed: 500)
+
+        async let a = DrawingStore.saveDetached(store, first, pageID: pageID).value
+        async let b = DrawingStore.saveDetached(store, second, pageID: pageID).value
+        let results = await [a, b]
+        for result in results {
+            guard case .success = result else { return XCTFail("a concurrent save failed") }
+        }
+
+        // Whichever landed last, the record decodes and is one of the two -
+        // never a mixture, never a fragment.
+        let loaded = try XCTUnwrap(DrawingStore.inDirectory(directory, ids: StrokeIDCache()).load(pageID: pageID))
+        XCTAssertEqual(loaded.strokes.count, 30)
+        let matchesOne = (try? assertStrokesEqualReturningMatch(loaded, first)) == true
+            || (try? assertStrokesEqualReturningMatch(loaded, second)) == true
+        XCTAssertTrue(matchesOne, "the record is one whole drawing or the other")
+
+        // No staging files left behind.
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasSuffix(".tmp") }
+        XCTAssertTrue(leftovers.isEmpty, "staging files: \(leftovers)")
+    }
+
+    /// `assertStrokesEqual` fails the test rather than returning a Bool,
+    /// which is wrong for "one of these two"; this one just answers.
+    private func assertStrokesEqualReturningMatch(_ a: PKDrawing, _ b: PKDrawing) throws -> Bool {
+        guard a.strokes.count == b.strokes.count else { return false }
+        for (left, right) in zip(a.strokes, b.strokes) {
+            guard left.path.count == right.path.count else { return false }
+            for (p, q) in zip(left.path, right.path) where
+                abs(p.location.x - q.location.x) > 0.01 || abs(p.location.y - q.location.y) > 0.01 {
+                return false
+            }
+        }
+        return true
+    }
+
     private enum SimulatedKill: Error { case midWrite }
 
     /// Real strokes with real points, so the file is a genuine `PKDrawing`

@@ -17,6 +17,60 @@ import Vision
 /// changed since it was last recognized — compared via the drawing file's
 /// modification date against `Page.ocrUpdatedAt`. Unchanged pages keep their
 /// cached text and cost nothing on later searches.
+
+/// Debounces handwriting recognition so it doesn't run on every autosave.
+///
+/// OCR used to be awaited inside the 1-second autosave: renders the page at
+/// 2x, composites it and runs a full `VNRecognizeTextRequest` over it. That
+/// is a Vision pass per second for as long as someone keeps writing - all
+/// of it thrown away by the next stroke, and enough CPU and transient
+/// memory to cause the stutter (and the memory warnings that empty the
+/// bitmap caches) it was supposed to stay clear of.
+///
+/// One timer per page, so turning to another page doesn't cancel the OCR
+/// the page you left still owes. Nothing here is on the drawing path: the
+/// recognition itself is `nonisolated async` and runs on the global
+/// executor.
+@MainActor
+final class HandwritingIndexer {
+    static let shared = HandwritingIndexer()
+
+    /// Long enough to mean "stopped writing", short enough that search
+    /// finds what you wrote a moment ago.
+    static let delay: TimeInterval = 12
+
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// The page each pending timer is for, so `flush` can run them now
+    /// rather than dropping them.
+    private var pending: [UUID: Page] = [:]
+
+    /// Restarts `page`'s timer. Safe to call on every edit.
+    func schedule(_ page: Page, modelContext: ModelContext, delay: TimeInterval = HandwritingIndexer.delay) {
+        let pageID = page.id
+        tasks[pageID]?.cancel()
+        pending[pageID] = page
+        tasks[pageID] = Task { [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+            }
+            await HandwritingRecognizer.refreshOCR(for: page, modelContext: modelContext)
+            self?.tasks[pageID] = nil
+            self?.pending[pageID] = nil
+        }
+    }
+
+    /// Runs whatever is waiting, now. Leaving a page or going to the
+    /// background is a better moment for it than most - and it means a
+    /// page you wrote on and walked away from is still indexed.
+    func flush(modelContext: ModelContext) {
+        for (_, page) in pending {
+            schedule(page, modelContext: modelContext, delay: 0)
+        }
+    }
+}
+
+
 nonisolated enum HandwritingRecognizer {
     /// Recognizes the text in a page's ink. Returns nil when there is no
     /// drawing, it's blank, or recognition finds nothing. Runs the Vision

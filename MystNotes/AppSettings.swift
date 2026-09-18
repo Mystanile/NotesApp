@@ -17,6 +17,8 @@ nonisolated enum AppSettings {
         static let inkColorHex = "defaultInkColorHex"
         static let inkWidth = "defaultInkWidth"
         static let template = "defaultTemplate"
+        static let pageStripVisible = "pageStripVisible"
+        static let pageStripHeight = "pageStripHeight"
         static let appearance = "appearance"
         static let hasSeenOnboarding = "hasSeenOnboarding"
         static let hasSeededTutorialNotebook = "hasSeededTutorialNotebook"
@@ -190,6 +192,23 @@ nonisolated enum AppSettings {
     static var defaultTemplate: String {
         get { defaults.string(forKey: Keys.template) ?? "blank" }
         set { defaults.set(newValue, forKey: Keys.template) }
+    }
+
+    // MARK: Page strip
+
+    /// Whether the page-thumbnail strip along the bottom of a notebook is
+    /// showing, and how tall it is. Both persist: a strip you dragged
+    /// bigger (or hid) stays that way the next time you open a notebook,
+    /// and on every window. SwiftUI binds them live through `@AppStorage`
+    /// with these same keys.
+    static var pageStripVisible: Bool {
+        get { defaults.object(forKey: Keys.pageStripVisible) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.pageStripVisible) }
+    }
+
+    static var pageStripHeight: Double {
+        get { defaults.object(forKey: Keys.pageStripHeight) as? Double ?? PageStripMetrics.defaultHeight }
+        set { defaults.set(newValue, forKey: Keys.pageStripHeight) }
     }
 
     // MARK: Appearance
