@@ -65,6 +65,19 @@ Not timed against a threshold yet; these are the structural fixes and what they 
 
 **Still worth measuring on device:** opening a 200-page notebook, before and after the lazy strip. The simulator's disk makes the ink decode too cheap for the number to mean anything.
 
+## Per-second work while drawing (Sept 18, 2026)
+
+Reported as "the app freezes sometimes when switching between colours and stuff". Two things ran on the main thread on a one-second cycle for as long as anyone kept writing:
+
+| Was | Now |
+|---|---|
+| The autosave's `Task { }` inherited the main actor, so encoding a page's strokes, LZFSE-compressing them and writing three files ran on the main thread a second after every stroke — 23 ms for a 500-stroke page *in the simulator* (see the ink-files table), plus `modelContext.save()` | `DrawingStore.saveDetached`, off the main actor. `Page.modifiedAt` is stamped only once the bytes land, so nothing reads the ink back early. Backgrounding still saves synchronously on purpose — the app may be suspended before an async write lands |
+| Page turns saved the same way, synchronously | The same detached save; only backgrounding blocks |
+| Handwriting OCR was awaited inside that autosave: render the page at 2×, composite, full `VNRecognizeTextRequest` — a Vision pass per second, each thrown away by the next stroke | `HandwritingIndexer`, one 12-second timer per page, flushed when you leave the page or the app |
+| `PencilCanvasView.configure` re-set a dozen `PKCanvasView` properties on every SwiftUI update of the detail view, including `drawingPolicy` and `overrideUserInterfaceStyle` | each written only when it differs |
+
+**The instrument, for what's left.** `MainThreadWatchdog` reported only hangs past 3 s and polled every 500 ms, so a 400 ms stutter was invisible. It now polls every 50 ms and logs stalls past 400 ms with the last checkpoint (no stack capture — that stays at 3 s). `applyToolState` is a checkpoint, so a stall while switching tools or colours names itself in Settings → Export Diagnostics. **Read that log before changing anything else here.** The untested hypothesis still on the table is that rebuilding the toolbar — every `toolState` change re-evaluates the whole 1,500-line detail view — churns the popover it is presented from.
+
 ## Not measured here — needs the iPad
 
 | Measurement | How |

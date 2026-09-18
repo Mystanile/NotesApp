@@ -51,6 +51,8 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] `removeImage(from:)` clears `page.backgroundRef` and deletes the `ImportedDocument` but leaves the payload on disk. Correct per invariant 3 (never `removeItem` on a payload), but it is exactly the local-orphan case the trash-retention decision has to cover.
 - [M1] Dashed and dotted only exist for *snapped* shapes, because a freehand stroke's dashes would have to be recomputed on every sample as it grows. If dashed freehand is ever wanted, it is a post-processing pass at stroke commit, not a change to the live path.
 - [M1] `ShapeLineStyle` is session state on `DrawingToolState`, not persisted in `AppSettings` like the pen's ink type, colour and width. One line each way; do it with the next `AppSettings` change rather than on its own.
+- [M1] **Every `toolState` change re-evaluates the whole of `NotebookDetailView`** — 1,500 lines, including the toolbar the colour popover is presented from. The certain costs on that path are fixed (Sept 18), but if the stall log still points at `applyToolState`, the fix is to make `DrawingToolState` `@Observable` and read it from a small child view, so picking a colour invalidates the toolbar and nothing else. Don't do it on a hunch: read the `[stall]` lines first.
+- [M1] `ScribbleErase.isScribble` runs on the main thread on every stroke commit, interpolating the whole stroke at 4pt spacing. Small, but it is on the drawing path and belongs off it with everything else.
 - [M2] `BitmapStore` is the shape the graph canvas will want for node previews too — bounded, keyed by a value, `@Observable`, renderer injected. Don't write a third one.
 
 ## Parked from planning (Sept 12, 2026)
