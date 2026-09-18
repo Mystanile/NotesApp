@@ -24,106 +24,12 @@ nonisolated struct ArtworkRequest: Hashable, Sendable {
     var renderSize: CGSize
 }
 
-/// Renders and caches imported page artwork, once per request, for every
-/// view that wants it.
-///
-/// This replaces a plain `NSCache` read from inside the view's own load
-/// task, which had a hole that matched the reported bug exactly: **the
-/// finished bitmap could be thrown away**. The load compared the key it
-/// started with against the key the view now wanted and, if they had
-/// drifted, returned without caching *or* displaying the render it had just
-/// paid for. The view's `@State` stayed nil, its `.task(id:)` never re-fired
-/// because the body's key had not changed, and the page stayed white until
-/// something re-evaluated the body - which is what panning around it did.
-///
-/// Here a render is always kept: a correct bitmap for a key is valid no
-/// matter who asked for it. The store is `@Observable`, so a render landing
-/// re-evaluates every view showing that key, and `generation` re-fires their
-/// load tasks after a purge. Nothing is keyed to a particular view's
-/// lifetime, so nothing can strand.
-@MainActor
-@Observable
-final class PageArtworkStore {
-    static let shared = PageArtworkStore()
-
-    /// Bumped only when entries are dropped (memory pressure, or the LRU
-    /// bound). Views put it in their `.task` id, so a purge makes them ask
-    /// again instead of sitting on an empty cache.
-    private(set) var generation = 0
-
-    private var cache: [ArtworkRequest: UIImage] = [:]
-    /// Oldest first. Insertion order, not use order: bumping an entry on
-    /// read would mean mutating observable state from inside a view body.
-    private var order: [ArtworkRequest] = []
-    private var bytes = 0
-    private var inFlight: Set<ArtworkRequest> = []
-
-    /// A full page at 2.5x oversampling is roughly 20 MB, so this holds a
-    /// few pages either side of the one you're on.
-    private let byteLimit = 64 * 1024 * 1024
-
-    init() {
-        NotificationCenter.default.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.purge() }
-        }
-    }
-
-    /// The bitmap for `request`, if it has been rendered. Reading this from
-    /// a view body is what subscribes that body to the store.
-    func image(for request: ArtworkRequest) -> UIImage? {
-        cache[request]
-    }
-
-    /// Makes sure `request` is rendered, now or shortly. Idempotent: a
-    /// cached or already-running request does nothing, so a view may call
-    /// this as often as it likes.
-    func request(_ request: ArtworkRequest) {
-        guard cache[request] == nil, !inFlight.contains(request) else { return }
-        inFlight.insert(request)
-        Task { [weak self] in
-            let image = await Self.render(request).value
-            self?.finish(request, image: image)
-        }
-    }
-
-    private func finish(_ request: ArtworkRequest, image: UIImage?) {
-        inFlight.remove(request)
-        guard let image else { return }
-        cache[request] = image
-        order.removeAll { $0 == request }
-        order.append(request)
-        bytes += cost(of: image)
-        evictIfNeeded()
-    }
-
-    private func evictIfNeeded() {
-        var dropped = false
-        while bytes > byteLimit, order.count > 1 {
-            let oldest = order.removeFirst()
-            if let image = cache.removeValue(forKey: oldest) { bytes -= cost(of: image) }
-            dropped = true
-        }
-        if dropped { generation &+= 1 }
-    }
-
-    private func purge() {
-        guard !cache.isEmpty else { return }
-        cache.removeAll()
-        order.removeAll()
-        bytes = 0
-        generation &+= 1
-    }
-
-    private func cost(of image: UIImage) -> Int {
-        image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
-    }
-
-    /// Capture-free and off the main thread (invariant 10): rasterizing a
-    /// PDF page at 2.5x was a visible stall on every page turn.
-    nonisolated static func render(_ request: ArtworkRequest) -> Task<UIImage?, Never> {
-        Task.detached(priority: .userInitiated) {
+/// Rasterizes one page's imported artwork. Capture-free and off the main
+/// actor (invariant 10): rasterizing a PDF page at 2.5x was a visible stall
+/// on every page turn. `PageBitmaps.artwork` owns the caching.
+nonisolated enum ArtworkRenderer {
+    static func render(_ request: ArtworkRequest) async -> UIImage? {
+        await Task.detached(priority: .userInitiated) {
             guard let raw = ImportedArtwork.rasterized(
                 fileRef: request.backgroundRef,
                 pdfPageIndex: request.pdfPageIndex,
@@ -135,7 +41,7 @@ final class PageArtworkStore {
                 cropWidth: request.cropWidth, cropHeight: request.cropHeight,
                 rotationDegrees: request.rotationDegrees
             )
-        }
+        }.value
     }
 }
 #endif
@@ -164,7 +70,7 @@ struct ImportedPageBackgroundView: View {
     }
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private var store: PageArtworkStore { PageArtworkStore.shared }
+    private var store: BitmapStore<ArtworkRequest> { PageBitmaps.artwork }
 
     /// The background is laid out in page points and then scaled up by the
     /// canvas zoom, so it has to be rasterized above 1:1 or an imported PDF

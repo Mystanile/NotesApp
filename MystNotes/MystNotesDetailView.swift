@@ -432,7 +432,7 @@ struct NotebookDetailView: View {
             StickerPickerView { symbol in addSticker(symbol) }
         }
         .sheet(item: $linkNeedingDestination) { link in
-            LinkDestinationPickerView(pages: sortedPages) { destinationID in
+            LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID) { destinationID in
                 link.destinationPageID = destinationID
                 saveCurrentPage()
             }
@@ -643,14 +643,21 @@ struct NotebookDetailView: View {
     }
 
     private var pageStrip: some View {
+        // Lazy, emphatically: a plain HStack builds every page's thumbnail
+        // the moment the notebook opens, and each one decodes that page's
+        // ink record and rasterizes its background. A 200-page notebook did
+        // all 200 before showing anything.
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
+            LazyHStack(spacing: 12) {
+                let documents = documentsByPageID
                 ForEach(Array(sortedPages.enumerated()), id: \.element.id) { index, page in
                     Button {
                         jumpToPage(at: index)
                     } label: {
                         VStack(spacing: 4) {
-                            PageThumbnailView(page: page, isSelected: index == currentPageIndex)
+                            PageThumbnailView(page: page,
+                                              importedDocument: documents[page.id],
+                                              isSelected: index == currentPageIndex)
                             Text("\(index + 1)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -789,7 +796,16 @@ struct NotebookDetailView: View {
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private func document(for page: Page) -> ImportedDocument? {
-        allImportedDocuments.first { $0.page?.id == page.id }
+        documentsByPageID[page.id]
+    }
+
+    /// `ImportedDocument` has no inverse relationship from `Page`, so the
+    /// mapping is built here once per update rather than scanned once per
+    /// page - the page strip asks for every page in the notebook.
+    private var documentsByPageID: [UUID: ImportedDocument] {
+        allImportedDocuments.reduce(into: [:]) { result, doc in
+            if let id = doc.page?.id { result[id] = doc }
+        }
     }
 
     private func exportPageToPhotos() {

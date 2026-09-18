@@ -169,7 +169,7 @@ final class PageArtworkTests: XCTestCase {
     @MainActor
     func testStore_rendersOnceAndServesTheResult() async throws {
         let ref = try writeImage(size: CGSize(width: 400, height: 400))
-        let store = PageArtworkStore()
+        let store = BitmapStore<ArtworkRequest>(byteLimit: 64 * 1024 * 1024) { await ArtworkRenderer.render($0) }
         let request = ArtworkRequest(
             pageID: UUID(), backgroundRef: ref, pdfPageIndex: 0,
             cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil,
@@ -192,7 +192,7 @@ final class PageArtworkTests: XCTestCase {
     @MainActor
     func testStore_purgeBumpsTheGeneration_andTheImageComesBack() async throws {
         let ref = try writeImage(size: CGSize(width: 300, height: 300))
-        let store = PageArtworkStore()
+        let store = BitmapStore<ArtworkRequest>(byteLimit: 64 * 1024 * 1024) { await ArtworkRenderer.render($0) }
         let request = ArtworkRequest(
             pageID: UUID(), backgroundRef: ref, pdfPageIndex: 0,
             cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil,
@@ -213,7 +213,7 @@ final class PageArtworkTests: XCTestCase {
 
     @MainActor
     func testStore_missingFileDoesNotWedgeTheRequest() async throws {
-        let store = PageArtworkStore()
+        let store = BitmapStore<ArtworkRequest>(byteLimit: 64 * 1024 * 1024) { await ArtworkRenderer.render($0) }
         let request = ArtworkRequest(
             pageID: UUID(), backgroundRef: "does-not-exist.png", pdfPageIndex: 0,
             cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil,
@@ -225,6 +225,96 @@ final class PageArtworkTests: XCTestCase {
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertNil(store.image(for: request))
         store.request(request)
+    }
+
+    // MARK: - The bitmap store's contract
+
+    /// Three views asking for the same bitmap at once must cost one render,
+    /// and the result must outlive whoever asked for it.
+    @MainActor
+    func testStore_collapsesConcurrentRequests() async throws {
+        let renders = RenderCounter()
+        let store = BitmapStore<Int>(byteLimit: 1024 * 1024) { _ in
+            await renders.increment()
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            return UIImage(systemName: "star")
+        }
+
+        store.request(1)
+        store.request(1)
+        store.request(1)
+        try await waitUntil("the render lands") { store.image(for: 1) != nil }
+
+        // And a later ask is served without rendering again.
+        store.request(1)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let count = await renders.count
+        XCTAssertEqual(count, 1, "one render for one key, however many views want it")
+    }
+
+    @MainActor
+    func testStore_evictsOldestPastItsBudget_andSaysSo() async throws {
+        let store = BitmapStore<Int>(byteLimit: 1) { _ in
+            UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { context in
+                UIColor.red.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+            }
+        }
+        store.request(1)
+        try await waitUntil("the first render lands") { store.image(for: 1) != nil }
+        let generation = store.generation
+
+        store.request(2)
+        try await waitUntil("the second render lands") { store.image(for: 2) != nil }
+
+        XCTAssertNil(store.image(for: 1), "the oldest goes when the budget is blown")
+        XCTAssertNotEqual(store.generation, generation, "and the views are told, so they can ask again")
+    }
+
+    private actor RenderCounter {
+        private(set) var count = 0
+        func increment() { count += 1 }
+    }
+
+    // MARK: - Thumbnails
+
+    /// A page's strip thumbnail draws the same stack the editor does, so a
+    /// lined page looks lined in the strip. Nothing drew a template into a
+    /// thumbnail at all before.
+    func testThumbnail_showsTheTemplate() async throws {
+        let request = PageThumbnailRequest(
+            pageID: UUID(), inkStamp: "-", template: "grid", backgroundRef: nil, pdfPageIndex: 0,
+            frameX: nil, frameY: nil, frameWidth: nil, frameHeight: nil,
+            cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil, rotationDegrees: nil,
+            nominal: CGSize(width: 780, height: 1040), output: CGSize(width: 120, height: 160)
+        )
+        let rendered = await PageThumbnailRenderer.render(request)
+        let image = try XCTUnwrap(rendered, "a ruled page has a thumbnail even with no ink")
+        XCTAssertGreaterThan(try nonWhitePixels(image), 0)
+
+        var blank = request
+        blank.template = "blank"
+        let blankRender = await PageThumbnailRenderer.render(blank)
+        XCTAssertNil(blankRender, "a blank page with no ink and no artwork still has nothing to show")
+    }
+
+    /// An edit to one page must not invalidate every other page's
+    /// thumbnail: the ink stamp is per page.
+    func testThumbnailRequest_changesOnlyForThePageThatChanged() {
+        let base = PageThumbnailRequest(
+            pageID: UUID(), inkStamp: "a|1", template: "lined", backgroundRef: nil, pdfPageIndex: 0,
+            frameX: nil, frameY: nil, frameWidth: nil, frameHeight: nil,
+            cropX: nil, cropY: nil, cropWidth: nil, cropHeight: nil, rotationDegrees: nil,
+            nominal: CGSize(width: 780, height: 1040), output: CGSize(width: 120, height: 160)
+        )
+        var edited = base
+        edited.inkStamp = "a|2"
+        XCTAssertNotEqual(base, edited)
+
+        var otherPage = base
+        otherPage.pageID = UUID()
+        XCTAssertNotEqual(base, otherPage)
+        XCTAssertEqual(base, base, "an unchanged page keeps its cached thumbnail")
     }
 
     // MARK: - Sniffing imports
@@ -254,7 +344,7 @@ final class PageArtworkTests: XCTestCase {
     // MARK: - Waiting
 
     @MainActor
-    private func waitForImage(of request: ArtworkRequest, in store: PageArtworkStore,
+    private func waitForImage(of request: ArtworkRequest, in store: BitmapStore<ArtworkRequest>,
                               file: StaticString = #filePath, line: UInt = #line) async throws -> UIImage {
         try await waitUntil("the render lands", file: file, line: line) { store.image(for: request) != nil }
         return try XCTUnwrap(store.image(for: request), file: file, line: line)
