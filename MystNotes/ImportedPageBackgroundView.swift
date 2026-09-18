@@ -9,43 +9,147 @@ import PDFKit
 #endif
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
-/// Rasterized page artwork, kept between page turns.
-///
-/// Rendering is a one-shot, asynchronous job per page visit: nothing
-/// re-fires it, so anything that loses a result leaves the page white
-/// forever (the thumbnails survive the same hazard only because their key
-/// carries `modifiedAt` and so re-fires on every save). A cache means a
-/// page you have already looked at paints from memory the moment it comes
-/// back, before any task runs - and it takes a 2.5x PDF rasterization off
-/// every single page turn.
-///
-/// `NSCache` is documented as thread-safe and evicts itself under memory
-/// pressure; the cost is the bitmap's real byte size so the limit means
-/// something.
-nonisolated enum PageArtworkCache {
-    nonisolated(unsafe) private static let cache: NSCache<NSString, UIImage> = {
-        let cache = NSCache<NSString, UIImage>()
-        cache.totalCostLimit = 96 * 1024 * 1024
-        return cache
-    }()
 
-    static func image(for key: String) -> UIImage? {
-        cache.object(forKey: key as NSString)
+/// Everything a page's artwork bitmap depends on. Used as the cache key
+/// directly - a struct with a `renderSize` in it is exactly "this picture at
+/// this resolution", and there is no string to get subtly wrong.
+nonisolated struct ArtworkRequest: Hashable, Sendable {
+    var pageID: UUID
+    var backgroundRef: String
+    var pdfPageIndex: Int
+    var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
+    var rotationDegrees: Double?
+    /// In pixels, already rounded, so a layout pass that reports a size a
+    /// hair different doesn't invent a second entry for the same picture.
+    var renderSize: CGSize
+}
+
+/// Renders and caches imported page artwork, once per request, for every
+/// view that wants it.
+///
+/// This replaces a plain `NSCache` read from inside the view's own load
+/// task, which had a hole that matched the reported bug exactly: **the
+/// finished bitmap could be thrown away**. The load compared the key it
+/// started with against the key the view now wanted and, if they had
+/// drifted, returned without caching *or* displaying the render it had just
+/// paid for. The view's `@State` stayed nil, its `.task(id:)` never re-fired
+/// because the body's key had not changed, and the page stayed white until
+/// something re-evaluated the body - which is what panning around it did.
+///
+/// Here a render is always kept: a correct bitmap for a key is valid no
+/// matter who asked for it. The store is `@Observable`, so a render landing
+/// re-evaluates every view showing that key, and `generation` re-fires their
+/// load tasks after a purge. Nothing is keyed to a particular view's
+/// lifetime, so nothing can strand.
+@MainActor
+@Observable
+final class PageArtworkStore {
+    static let shared = PageArtworkStore()
+
+    /// Bumped only when entries are dropped (memory pressure, or the LRU
+    /// bound). Views put it in their `.task` id, so a purge makes them ask
+    /// again instead of sitting on an empty cache.
+    private(set) var generation = 0
+
+    private var cache: [ArtworkRequest: UIImage] = [:]
+    /// Oldest first. Insertion order, not use order: bumping an entry on
+    /// read would mean mutating observable state from inside a view body.
+    private var order: [ArtworkRequest] = []
+    private var bytes = 0
+    private var inFlight: Set<ArtworkRequest> = []
+
+    /// A full page at 2.5x oversampling is roughly 20 MB, so this holds a
+    /// few pages either side of the one you're on.
+    private let byteLimit = 64 * 1024 * 1024
+
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.purge() }
+        }
     }
 
-    static func store(_ image: UIImage, for key: String) {
-        let bytes = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
-        cache.setObject(image, forKey: key as NSString, cost: bytes)
+    /// The bitmap for `request`, if it has been rendered. Reading this from
+    /// a view body is what subscribes that body to the store.
+    func image(for request: ArtworkRequest) -> UIImage? {
+        cache[request]
+    }
+
+    /// Makes sure `request` is rendered, now or shortly. Idempotent: a
+    /// cached or already-running request does nothing, so a view may call
+    /// this as often as it likes.
+    func request(_ request: ArtworkRequest) {
+        guard cache[request] == nil, !inFlight.contains(request) else { return }
+        inFlight.insert(request)
+        Task { [weak self] in
+            let image = await Self.render(request).value
+            self?.finish(request, image: image)
+        }
+    }
+
+    private func finish(_ request: ArtworkRequest, image: UIImage?) {
+        inFlight.remove(request)
+        guard let image else { return }
+        cache[request] = image
+        order.removeAll { $0 == request }
+        order.append(request)
+        bytes += cost(of: image)
+        evictIfNeeded()
+    }
+
+    private func evictIfNeeded() {
+        var dropped = false
+        while bytes > byteLimit, order.count > 1 {
+            let oldest = order.removeFirst()
+            if let image = cache.removeValue(forKey: oldest) { bytes -= cost(of: image) }
+            dropped = true
+        }
+        if dropped { generation &+= 1 }
+    }
+
+    private func purge() {
+        guard !cache.isEmpty else { return }
+        cache.removeAll()
+        order.removeAll()
+        bytes = 0
+        generation &+= 1
+    }
+
+    private func cost(of image: UIImage) -> Int {
+        image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+    }
+
+    /// Capture-free and off the main thread (invariant 10): rasterizing a
+    /// PDF page at 2.5x was a visible stall on every page turn.
+    nonisolated static func render(_ request: ArtworkRequest) -> Task<UIImage?, Never> {
+        Task.detached(priority: .userInitiated) {
+            guard let raw = ImportedArtwork.rasterized(
+                fileRef: request.backgroundRef,
+                pdfPageIndex: request.pdfPageIndex,
+                targetSize: request.renderSize
+            ) else { return nil }
+            return ImportedArtwork.transformed(
+                raw,
+                cropX: request.cropX, cropY: request.cropY,
+                cropWidth: request.cropWidth, cropHeight: request.cropHeight,
+                rotationDegrees: request.rotationDegrees
+            )
+        }
     }
 }
 #endif
 
-/// Renders an imported PDF page or image as a page's background, in place
-/// of the plain paper-template background, whenever the page has a
-/// backgroundRef set. PDF pages are rasterized to a UIImage via PDFKit's
-/// built-in thumbnail renderer rather than an embedded interactive
-/// PDFView — simpler, and keeps the coordinate space straightforward to
-/// combine with the PencilKit annotation layer sitting on top of it.
+/// Renders an imported PDF page or photo **on top of** the page's paper,
+/// whenever the page has a `backgroundRef` set. It used to render *instead*
+/// of the paper, with its own white fill - which is why importing a photo
+/// made a lined or grid page go blank. The paper (`PageBackgroundView`) is
+/// drawn underneath by the detail view; this layer is transparent except
+/// where the artwork is.
+///
+/// PDF pages are rasterized to a UIImage via PDFKit rather than an embedded
+/// interactive PDFView - simpler, and it keeps the coordinate space
+/// straightforward to combine with the PencilKit annotation layer on top.
 struct ImportedPageBackgroundView: View {
     let page: Page
     /// While the adjust handles are up, the in-progress rect (in page
@@ -54,36 +158,14 @@ struct ImportedPageBackgroundView: View {
     var liveFrame: CGRect? = nil
 
     @Query private var allImportedDocuments: [ImportedDocument]
-    #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    @State private var image: UIImage?
-    #else
-    @State private var image: Any? = nil
-    #endif
 
     private var importedDocument: ImportedDocument? {
         allImportedDocuments.first { $0.page?.id == page.id }
     }
 
-    /// Reload when the page, the file, the PDF page inside it, its crop, or
-    /// its rotation changes - the frame isn't included, since resizing
-    /// doesn't need a re-render.
-    ///
-    /// The page id and `pdfPageIndex` are load-bearing. This view sits in a
-    /// fixed spot in the detail view, so SwiftUI keeps the same instance
-    /// (and its `@State image`) as you page through a notebook. Every page
-    /// of a ten-page PDF import shares one `backgroundRef` with no crop and
-    /// no rotation, so a key built from those alone was identical on all
-    /// ten, `.task(id:)` never re-fired, and page 1's bitmap stayed up on
-    /// every page.
-    private var imageKey: String {
-        let doc = importedDocument
-        let values: [Double?] = [doc?.rotationDegrees, doc?.cropX, doc?.cropY, doc?.cropWidth, doc?.cropHeight]
-        return ([page.id.uuidString, page.backgroundRef ?? "-", String(doc?.pdfPageIndex ?? 0)]
-                + values.map { $0.map { String(format: "%.4f", $0) } ?? "-" })
-            .joined(separator: "|")
-    }
-
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    private var store: PageArtworkStore { PageArtworkStore.shared }
+
     /// The background is laid out in page points and then scaled up by the
     /// canvas zoom, so it has to be rasterized above 1:1 or an imported PDF
     /// template turns to mush the moment you pinch in to write on it.
@@ -97,20 +179,30 @@ struct ImportedPageBackgroundView: View {
                       height: (pageSize.height * Self.oversampling).rounded())
     }
 
-    /// The cache key carries the pixel size the bitmap was made at, which
-    /// `imageKey` deliberately doesn't: a resized window must not be served
-    /// the old resolution.
-    private func cacheKey(for targetSize: CGSize) -> String {
-        let size = renderSize(for: targetSize)
-        return "\(imageKey)|\(Int(size.width))x\(Int(size.height))"
+    /// What this page's artwork is, at the size it needs to be drawn.
+    ///
+    /// The page id and `pdfPageIndex` are load-bearing: every page of a
+    /// ten-page PDF import shares one `backgroundRef` with no crop and no
+    /// rotation, so a key built from those alone was identical on all ten
+    /// and page 1's bitmap showed up on every one of them.
+    private func artworkRequest(for targetSize: CGSize) -> ArtworkRequest? {
+        guard let ref = page.backgroundRef else { return nil }
+        let doc = importedDocument
+        return ArtworkRequest(
+            pageID: page.id,
+            backgroundRef: ref,
+            pdfPageIndex: doc?.pdfPageIndex ?? 0,
+            cropX: doc?.cropX, cropY: doc?.cropY,
+            cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
+            rotationDegrees: doc?.rotationDegrees,
+            renderSize: renderSize(for: targetSize)
+        )
     }
-    #endif
 
     /// The artwork's placed rect. This is the image's *actual* on-page rect,
     /// not a box it's letterboxed inside - the image is drawn to exactly
     /// fill it, and resizing preserves aspect ratio, so the selection
     /// handles can hug the artwork the way Google Docs/Freeform do.
-    #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private func artworkFrame(for image: UIImage?, in size: CGSize) -> CGRect {
         if let liveFrame { return liveFrame }
         if let doc = importedDocument,
@@ -124,19 +216,28 @@ struct ImportedPageBackgroundView: View {
         // imports keep looking identical, just with an explicit frame.
         return ImportedArtwork.fittedRect(for: image, in: size)
     }
+
+    /// `.task(id:)` restarts on either of these changing: a different
+    /// picture, or the store dropping what it had.
+    private struct LoadID: Equatable {
+        var request: ArtworkRequest?
+        var generation: Int
+    }
     #endif
 
     var body: some View {
         GeometryReader { geometry in
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            // The cache is read here, not only in the task: coming back to a
-            // page that has already been rendered paints it in the same
-            // frame the page turn happens in, and a task that never lands
-            // can't leave a white sheet behind.
-            let shown = image ?? PageArtworkCache.image(for: cacheKey(for: geometry.size))
+            let request = artworkRequest(for: geometry.size)
+            // Read through the store, not a view-local @State: whoever
+            // rendered this bitmap, this view gets it, and it appears the
+            // frame it lands rather than only after something else happens
+            // to re-evaluate the body.
+            let shown = request.flatMap { store.image(for: $0) }
             let frame = artworkFrame(for: shown, in: geometry.size)
             ZStack(alignment: .topLeading) {
-                Color.white
+                // Deliberately no paper here - see the type's comment.
+                Color.clear
                 if let shown {
                     // Fills the frame exactly (no .scaledToFit letterboxing
                     // inside it) - the frame IS the image's rect, and
@@ -148,93 +249,14 @@ struct ImportedPageBackgroundView: View {
                         .offset(x: frame.minX, y: frame.minY)
                 }
             }
-            .task(id: imageKey) {
-                await loadImage(targetSize: geometry.size)
+            .task(id: LoadID(request: request, generation: store.generation)) {
+                if let request { store.request(request) }
             }
         #else
-            // On macOS without UIKit, show a placeholder or implement alternative
-            ZStack(alignment: .topLeading) {
-                Color.white
-                if image != nil {
-                    Rectangle()
-                        .fill(Color.blue.opacity(0.3))
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                }
-            }
-            .task(id: imageKey) {
-                await loadImage(targetSize: geometry.size)
-            }
+            // On macOS without UIKit there is no rasterizer; the paper
+            // underneath still renders.
+            Color.clear
         #endif
         }
     }
-
-    /// Everything the render needs, copied out of the model on the main
-    /// actor so the rasterization itself can leave it (invariant 10; same
-    /// shape as `PageThumbnailView.Inputs`). Rasterizing a PDF page at
-    /// 2.5x on the main thread was a visible stall on every page turn.
-    nonisolated struct Inputs: Sendable {
-        var backgroundRef: String
-        var pdfPageIndex: Int
-        var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
-        var rotationDegrees: Double?
-        var renderSize: CGSize
-    }
-
-    private func loadImage(targetSize: CGSize) async {
-        guard let ref = page.backgroundRef else {
-            image = nil
-            return
-        }
-        #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let key = imageKey
-        let cacheKey = cacheKey(for: targetSize)
-        if let cached = PageArtworkCache.image(for: cacheKey) {
-            image = cached
-            return
-        }
-        let doc = importedDocument
-        let inputs = Inputs(
-            backgroundRef: ref,
-            pdfPageIndex: doc?.pdfPageIndex ?? 0,
-            cropX: doc?.cropX, cropY: doc?.cropY, cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
-            rotationDegrees: doc?.rotationDegrees,
-            renderSize: renderSize(for: targetSize)
-        )
-        let rendered = await Self.render(inputs).value
-        // Staleness is decided by the key this render was started for, NOT
-        // by Task.isCancelled. A page turn does cancel this task, but so
-        // does anything else that takes the view out of the hierarchy for a
-        // moment - and since nothing re-fires the render, treating
-        // cancellation as "throw the bitmap away" left a correctly rendered
-        // PDF page showing a blank white sheet until the app was relaunched.
-        // The key still matching means this bitmap is the one the view
-        // wants; if the view is gone, the assignment is a harmless no-op.
-        guard key == imageKey else { return }
-        if let rendered { PageArtworkCache.store(rendered, for: cacheKey) }
-        image = rendered
-        #else
-        // Not available on native macOS (no UIKit image loading).
-        image = nil
-        #endif
-    }
-
-    #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    /// Capture-free: takes only the Sendable inputs. Crop and rotation are
-    /// applied here, by the same helper the thumbnails and exports use.
-    nonisolated static func render(_ inputs: Inputs) -> Task<UIImage?, Never> {
-        Task.detached(priority: .userInitiated) {
-            guard let raw = ImportedArtwork.rasterized(
-                fileRef: inputs.backgroundRef,
-                pdfPageIndex: inputs.pdfPageIndex,
-                targetSize: inputs.renderSize
-            ) else { return nil }
-            return ImportedArtwork.transformed(
-                raw,
-                cropX: inputs.cropX, cropY: inputs.cropY,
-                cropWidth: inputs.cropWidth, cropHeight: inputs.cropHeight,
-                rotationDegrees: inputs.rotationDegrees
-            )
-        }
-    }
-    #endif
 }

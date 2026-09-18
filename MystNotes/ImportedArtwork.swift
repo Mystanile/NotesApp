@@ -3,6 +3,7 @@ import CoreGraphics
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 import UIKit
 import PDFKit
+import ImageIO
 
 /// Placement math shared by the view that renders imported artwork and the
 /// overlay that lets you move/resize it, so both agree on exactly where the
@@ -122,9 +123,15 @@ nonisolated enum ImportedArtwork {
         }
     }
 
-    /// Loads the artwork as an image, rasterizing a PDF page if needed.
-    /// `targetSize` only guides PDF rasterization quality; photos come back
-    /// at their natural size.
+    /// Loads the artwork as an image at no more than `targetSize`,
+    /// rasterizing a PDF page if needed.
+    ///
+    /// Photos are decoded *down* to the size asked for rather than in full.
+    /// `UIImage(contentsOfFile:)` decodes every pixel the file has, so a
+    /// 12-megapixel photo cost ~48 MB whether it was filling a page or a
+    /// 60x80 thumbnail in the page strip - against a 96 MB artwork cache,
+    /// which is why the cache thrashed and pages kept having to re-render
+    /// their own background.
     static func rasterized(fileRef: String, pdfPageIndex: Int, targetSize: CGSize) -> UIImage? {
         let url = FileStore.url(for: fileRef)
         if fileRef.lowercased().hasSuffix(".pdf") {
@@ -132,7 +139,47 @@ nonisolated enum ImportedArtwork {
                   let page = document.page(at: pdfPageIndex) else { return nil }
             return render(page, within: targetSize)
         }
-        return UIImage(contentsOfFile: url.path)
+        return downsampled(at: url, to: targetSize) ?? UIImage(contentsOfFile: url.path)
+    }
+
+    /// The largest dimension worth decoding for `targetSize`. Zero or
+    /// nonsense means "no limit", and the full image is decoded.
+    private static func maxPixelSize(for targetSize: CGSize) -> CGFloat? {
+        let longest = max(targetSize.width, targetSize.height)
+        guard longest.isFinite, longest >= 1 else { return nil }
+        return longest.rounded()
+    }
+
+    /// ImageIO decodes straight to the requested size, so the full-size
+    /// bitmap never exists. `WithTransform` applies the file's EXIF
+    /// orientation, which `UIImage(contentsOfFile:)` did for us.
+    private static func downsampled(at url: URL, to targetSize: CGSize) -> UIImage? {
+        guard let limit = maxPixelSize(for: targetSize),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: limit
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
+
+    /// An image file's pixel size from its metadata, with the EXIF
+    /// orientation applied - no decode at all.
+    private static func imageFileSize(at url: URL) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+              width > 0, height > 0 else { return nil }
+        // Orientations 5-8 are the quarter turns; they swap the axes.
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        return (5...8).contains(orientation)
+            ? CGSize(width: height, height: width)
+            : CGSize(width: width, height: height)
     }
 
     /// Draws a PDF page at the largest size that fits inside `bounding`,
@@ -204,7 +251,9 @@ nonisolated enum ImportedArtwork {
                   let page = document.page(at: pdfPageIndex) else { return nil }
             return naturalSize(of: page)
         }
-        return UIImage(contentsOfFile: url.path)?.size
+        // Metadata only: this is called to seed a placement and to give an
+        // imported page its shape, neither of which needs the pixels.
+        return imageFileSize(at: url) ?? UIImage(contentsOfFile: url.path)?.size
     }
 
     /// The artwork's shape (width / height), used to give an imported page

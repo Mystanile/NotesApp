@@ -27,6 +27,8 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     var onDrawingChanged: () -> Void = {}
     /// Apple Pencil (Pro) double-tap: parent toggles the eraser.
     var onPencilDoubleTap: () -> Void = {}
+    /// Solid / dashed / dotted for shapes made by holding a stroke still.
+    var shapeLineStyle: ShapeLineStyle = .solid
 
     static let boardSize: CGFloat = 3000
     private static let contentSize = CGSize(width: boardSize, height: boardSize)
@@ -42,6 +44,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         context.coordinator.canvas = canvasView
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
+        context.coordinator.shapeSnap.lineStyle = shapeLineStyle
 
         DispatchQueue.main.async {
             // becomeFirstResponder can silently fail before the view is in a
@@ -68,6 +71,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         configure(canvasView, context: context)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
+        context.coordinator.shapeSnap.lineStyle = shapeLineStyle
 
         if canvasChanged {
             DispatchQueue.main.async {

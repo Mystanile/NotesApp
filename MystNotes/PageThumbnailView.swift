@@ -35,6 +35,7 @@ struct PageThumbnailView: View {
             page.drawingFileRef ?? "-",
             page.modifiedAt.map { String($0.timeIntervalSince1970) } ?? "-",
             page.backgroundRef ?? "-",
+            page.template,
             String(doc?.pdfPageIndex ?? 0),
             frame,
             String(format: "%.4f", page.aspectRatio ?? -1)
@@ -93,6 +94,7 @@ struct PageThumbnailView: View {
     /// checkpoint "(none)") - invariant 10.
     nonisolated struct Inputs: Sendable {
         var pageID: UUID
+        var template: String
         var backgroundRef: String?
         var pdfPageIndex: Int
         var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
@@ -105,7 +107,8 @@ struct PageThumbnailView: View {
     private func loadThumbnail() async {
         let doc = importedDocument
         let inputs = Inputs(
-            pageID: page.id, backgroundRef: page.backgroundRef, pdfPageIndex: doc?.pdfPageIndex ?? 0,
+            pageID: page.id, template: page.template, backgroundRef: page.backgroundRef,
+            pdfPageIndex: doc?.pdfPageIndex ?? 0,
             frameX: doc?.frameX, frameY: doc?.frameY, frameWidth: doc?.frameWidth, frameHeight: doc?.frameHeight,
             cropX: doc?.cropX, cropY: doc?.cropY, cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
             rotationDegrees: doc?.rotationDegrees,
@@ -127,10 +130,10 @@ struct PageThumbnailView: View {
                                                        rotationDegrees: inputs.rotationDegrees) }
             }
 
-            guard let backgroundImage else {
-                // Ink only: keep fitting to the ink's own bounds, which frames a
-                // small sketch legibly instead of shrinking it into a mostly
-                // empty page.
+            if backgroundImage == nil, PageTemplate.isEmpty(inputs.template) {
+                // Ink only, on blank paper: keep fitting to the ink's own
+                // bounds, which frames a small sketch legibly instead of
+                // shrinking it into a mostly empty page.
                 guard let drawing else { return nil }
                 let bounds = drawing.bounds.isEmpty
                     ? CGRect(x: 0, y: 0, width: 300, height: 400)
@@ -138,12 +141,14 @@ struct PageThumbnailView: View {
                 return drawing.image(from: bounds, scale: 0.5)
             }
 
-            // With a background, both layers must share one coordinate space, so
-            // render the whole page area rather than cropping to the ink.
+            // Ruled paper or a background means the layers have to share one
+            // coordinate space, so render the whole page area rather than
+            // cropping to the ink.
             let nominal = inputs.nominal
             let artworkRect = ImportedArtwork.placedRect(
                 x: inputs.frameX, y: inputs.frameY, width: inputs.frameWidth, height: inputs.frameHeight, in: nominal
             ) ?? ImportedArtwork.fittedRect(for: backgroundImage, in: nominal)
+
 
             let inkImage = drawing.map { $0.image(from: CGRect(origin: .zero, size: nominal), scale: 1) }
 
@@ -157,7 +162,10 @@ struct PageThumbnailView: View {
                 let scaleY = output.height / nominal.height
                 context.cgContext.scaleBy(x: scaleX, y: scaleY)
 
-                backgroundImage.draw(in: artworkRect)
+                // Paper, then artwork, then ink - the same stack the editor
+                // draws, so the thumbnail shows the ruling too.
+                PageTemplate.draw(inputs.template, in: nominal, context: context.cgContext)
+                backgroundImage?.draw(in: artworkRect)
                 inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
             }
         }

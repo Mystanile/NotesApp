@@ -24,6 +24,10 @@ struct DrawingToolState: Equatable {
     var eraserType: PKEraserTool.EraserType = .vector
     var eraserWidth: Double = 20
     var fillColor: Color = .yellow
+    /// Solid / dashed / dotted, for shapes made by holding a stroke still
+    /// (`ShapeHoldRecognizer`). Freehand ink is always solid - PencilKit
+    /// has no dashed ink, and a dashed shape is many short strokes.
+    var shapeLineStyle: ShapeLineStyle = .solid
 
     var pkTool: PKTool {
         switch activeKind {
@@ -230,6 +234,7 @@ struct DrawingToolbarView: View {
 
                 colorRow(selection: $toolState.penColor)
                 widthSlider(label: "Width", value: $toolState.penWidth, range: 1...20)
+                shapeStyleRow
             }
         case .highlighter:
             VStack(alignment: .leading, spacing: 16) {
@@ -254,6 +259,26 @@ struct DrawingToolbarView: View {
             }
         case .lasso:
             EmptyView()
+        }
+    }
+
+    /// The line style snapped shapes are drawn in. It lives in the pen
+    /// options because that's where the rest of "what my mark looks like"
+    /// is, and it's labelled for shapes because freehand ink can't be
+    /// dashed - see `ShapeLineStyle`.
+    @ViewBuilder
+    private var shapeStyleRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Shapes (hold a stroke to snap)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Shape line", selection: $toolState.shapeLineStyle) {
+                ForEach(ShapeLineStyle.allCases, id: \.self) { style in
+                    Text(style.label).tag(style)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
     }
 

@@ -110,6 +110,7 @@ struct NotebookDetailView: View {
     @State private var showingPDFImporter = false
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     @State private var showingImagePicker = false
+    @State private var showingImageFileImporter = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     #endif
 
@@ -373,6 +374,14 @@ struct NotebookDetailView: View {
                                 importTarget = .currentPage
                                 showingImagePicker = true
                             }
+                            // The one a Mac actually needs: pictures live
+                            // in Finder and Files, not in Photos.
+                            Button("Image from Files onto This Page") {
+                                importTarget = .currentPage
+                                showingImageFileImporter = true
+                            }
+                            Button("Paste Image") { pasteImageFromClipboard() }
+                                .disabled(!pasteboardHasImage)
                         }
                         Button("PDF as New Pages") {
                             importTarget = .newPages
@@ -381,6 +390,10 @@ struct NotebookDetailView: View {
                         Button("Photo as New Page") {
                             importTarget = .newPages
                             showingImagePicker = true
+                        }
+                        Button("Image from Files as New Page") {
+                            importTarget = .newPages
+                            showingImageFileImporter = true
                         }
                     }
                 } label: {
@@ -429,6 +442,13 @@ struct NotebookDetailView: View {
                 importPDF(from: url)
             }
         }
+        // Images and PDFs both: the type is decided by the file's own
+        // header, so picking a PDF here still imports it as a PDF.
+        .fileImporter(isPresented: $showingImageFileImporter, allowedContentTypes: [.image, .pdf]) { result in
+            if case .success(let url) = result {
+                importFile(from: url)
+            }
+        }
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
         .sheet(item: $pdfExportURL) { export in
             ShareSheet(items: [export.url])
@@ -467,7 +487,8 @@ struct NotebookDetailView: View {
             WhiteboardCanvasView(
                 canvasView: $canvasView,
                 onDrawingChanged: scheduleAutosave,
-                onPencilDoubleTap: togglePencilEraser
+                onPencilDoubleTap: togglePencilEraser,
+                shapeLineStyle: toolState.shapeLineStyle
             )
 #else
             // Placeholder for macOS native
@@ -505,13 +526,16 @@ struct NotebookDetailView: View {
 
             PageViewportLayer(viewport: viewport, pageSize: pageSize) { _ in
                 ZStack {
+                    // Paper first, always. An imported photo is something
+                    // placed *on* the page, not a replacement for it - the
+                    // old either/or here is why importing an image wiped
+                    // the lined/grid/dotted template.
+                    PageBackgroundView(template: page.template)
                     if page.backgroundRef != nil {
-                        // Per-page identity: without it the same view (and
-                        // its rendered bitmap) is reused across page turns.
+                        // Per-page identity: without it the same view is
+                        // reused across page turns.
                         ImportedPageBackgroundView(page: page, liveFrame: adjustingImageFrame)
                             .id(page.id)
-                    } else {
-                        PageBackgroundView(template: page.template)
                     }
                 }
                 .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
@@ -528,14 +552,17 @@ struct NotebookDetailView: View {
                 onDrawingChanged: scheduleAutosave,
                 onLongPress: { beginAdjustingImage(on: page) },
                 onPencilDoubleTap: togglePencilEraser,
-                onShapePreview: { shapePreview = $0 }
+                onShapePreview: { shapePreview = $0 },
+                shapeLineStyle: toolState.shapeLineStyle,
+                onPasteImage: { data in importDroppedOrPasted(data, onto: page) }
             )
 
             if let shapePreview {
                 // Drawn in page space through the viewport, like the ink it
                 // is about to become.
                 PageViewportLayer(viewport: viewport, pageSize: pageSize) { _ in
-                    ShapePreviewView(shape: shapePreview, tool: toolState.pkTool as? PKInkingTool)
+                    ShapePreviewView(shape: shapePreview, tool: toolState.pkTool as? PKInkingTool,
+                                     lineStyle: toolState.shapeLineStyle)
                 }
                 .allowsHitTesting(false)
             }
@@ -1013,33 +1040,49 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to update imported page shape")
     }
 
+    /// Writes the import into the library off the main actor and returns
+    /// its stored filename.
+    nonisolated private static func writeImport(_ data: Data, extension ext: String) async -> String? {
+        await Task.detached(priority: .userInitiated) { () -> String? in
+            let storedFilename = "\(UUID().uuidString).\(ext)"
+            let destination = FileStore.baseDirectory().appendingPathComponent(storedFilename)
+            do {
+                try data.write(to: destination, options: .atomic)
+                return storedFilename
+            } catch {
+                AppLog.note("import", "Failed to write imported file: \(error)")
+                return nil
+            }
+        }.value
+    }
+
     private func importPDF(from sourceURL: URL) {
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
-
-        guard let document = PDFDocument(url: sourceURL) else {
-            print("Could not open PDF at \(sourceURL)")
+        guard let data = try? Data(contentsOf: sourceURL) else {
+            exportMessage = "Couldn't read \(sourceURL.lastPathComponent)."
             return
         }
+        let target = importTarget
+        Task { await importPDF(data: data, target: target) }
+    }
 
-        let directory = FileStore.baseDirectory()
-        let storedFilename = "\(UUID().uuidString).pdf"
-        let destinationURL = directory.appendingPathComponent(storedFilename)
-
-        do {
-            if let data = document.dataRepresentation() {
-                try data.write(to: destinationURL)
-            } else {
-                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            }
-        } catch {
-            print("Failed to copy imported PDF: \(error)")
+    /// The PDF import proper. Takes bytes rather than a URL so a PDF that
+    /// was pasted or dragged in goes down exactly the same path as one
+    /// picked from Files.
+    private func importPDF(data: Data, target: ImportTarget) async {
+        guard let document = PDFDocument(data: data) else {
+            exportMessage = "That file isn't a PDF Mystnotes can read."
+            return
+        }
+        guard let storedFilename = await Self.writeImport(data, extension: "pdf") else {
+            exportMessage = "Couldn't save the imported PDF."
             return
         }
 
         saveCurrentPage()
 
-        if importTarget == .currentPage, let page = currentPage {
+        if target == .currentPage, let page = currentPage {
             // Only the first PDF page can go onto an existing page; the
             // rest would need pages of their own, which is what
             // "as New Pages" is for.
@@ -1098,30 +1141,37 @@ struct NotebookDetailView: View {
     }
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func importImage(from item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let uiImage = UIImage(data: data),
-              let jpegData = uiImage.jpegData(compressionQuality: 0.9) else {
+
+    /// Every way an image can arrive funnels through here: the Photos
+    /// picker, the Files/Finder importer, ⌘V, and a drag onto the page.
+    /// Before this there was only the Photos picker, which on a Mac is the
+    /// one place a Mac user's pictures generally are *not*.
+    ///
+    /// The bytes are written exactly as they came. The old path decoded to
+    /// a `UIImage` and re-encoded JPEG at 0.9 on the main actor - lossy for
+    /// a PNG screenshot, and a full decode of a 12-megapixel photo on the
+    /// thread that has to stay clear for ink (invariant 10).
+    private func importImage(data: Data, target: ImportTarget) async {
+        guard let kind = ImportedFileType.of(data) else {
+            exportMessage = "That file isn't an image Mystnotes can read."
             return
         }
-
-        let directory = FileStore.baseDirectory()
-        let storedFilename = "\(UUID().uuidString).jpg"
-        let destinationURL = directory.appendingPathComponent(storedFilename)
-
-        do {
-            try jpegData.write(to: destinationURL)
-        } catch {
-            print("Failed to save imported image: \(error)")
+        // A pasted or dropped PDF is a document, not a picture: it goes
+        // through the PDF path so multi-page imports still work.
+        if kind.isPDF {
+            await importPDF(data: data, target: target)
+            return
+        }
+        guard let storedFilename = await Self.writeImport(data, extension: kind.fileExtension) else {
+            exportMessage = "Couldn't save the imported image."
             return
         }
 
         saveCurrentPage()
 
-        if importTarget == .currentPage, let page = currentPage {
+        if target == .currentPage, let page = currentPage {
             applyBackground(storedFilename, sourceType: "image", pdfPageIndex: 0, to: page, fullBleed: false)
             beginAdjustingImage(on: page)
-            selectedPhotoItem = nil
             return
         }
 
@@ -1144,8 +1194,52 @@ struct NotebookDetailView: View {
         currentPageIndex = newIndex
         viewport.reset(for: page.id)
         installFreshCanvas(forPageID: page.id)
-        selectedPhotoItem = nil
     }
+
+    private func importImage(from item: PhotosPickerItem) async {
+        defer { selectedPhotoItem = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+        await importImage(data: data, target: importTarget)
+    }
+
+    /// A file chosen in the Files/Finder importer. Images and PDFs both
+    /// arrive here, and the sniffed type decides which way they go - so
+    /// picking a PDF from the image importer still does the right thing.
+    private func importFile(from url: URL) {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            exportMessage = "Couldn't read \(url.lastPathComponent)."
+            return
+        }
+        let target = importTarget
+        Task { await importImage(data: data, target: target) }
+    }
+
+    /// Whether the Import menu's Paste Image item should be live. A
+    /// silent check - see `CanvasPasteboard`.
+    private var pasteboardHasImage: Bool { CanvasPasteboard.hasImage }
+
+    /// The menu route to the same thing ⌘V does. The keyboard route goes
+    /// through the responder chain instead (`CanvasHostView.paste`), which
+    /// is the only way to get the system Edit menu's own Paste item to
+    /// reach the canvas.
+    private func pasteImageFromClipboard() {
+        guard let data = CanvasPasteboard.payload() else {
+            exportMessage = "There's no image on the clipboard."
+            return
+        }
+        Task { await importImage(data: data, target: .currentPage) }
+    }
+
+    /// ⌘V, or a picture dragged onto the page from Finder / Files / another
+    /// app. Always lands on the page you're looking at - that's where you
+    /// dropped it.
+    private func importDroppedOrPasted(_ data: Data, onto page: Page) {
+        guard !isPresenting else { return }
+        Task { await importImage(data: data, target: .currentPage) }
+    }
+
     #else
     // Dummy implementation for macOS native
     private func importImage(from item: PhotosPickerItem) async {

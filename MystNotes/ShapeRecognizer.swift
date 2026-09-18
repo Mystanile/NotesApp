@@ -5,6 +5,23 @@ import UIKit
 #endif
 import PencilKit
 
+/// How a snapped shape is drawn. PencilKit has no dashed ink, so a dashed
+/// or dotted shape is built as many short strokes along the same outline -
+/// see `ShapeRecognizer.strokes(for:spec:)`. It only applies to snapped
+/// shapes; freehand ink is always solid, because the dashes would have to
+/// be recomputed on every sample as the stroke grew.
+nonisolated enum ShapeLineStyle: String, CaseIterable, Codable, Sendable {
+    case solid, dashed, dotted
+
+    var label: String {
+        switch self {
+        case .solid: return "Solid"
+        case .dashed: return "Dashed"
+        case .dotted: return "Dotted"
+        }
+    }
+}
+
 /// Turns a freehand stroke into a clean geometric one, the way the
 /// hold-to-snap shape tool in GoodNotes and Apple Notes does. The pipeline
 /// is the standard one (`Docs/TOOL_FIXES.md` Part 1):
@@ -14,12 +31,17 @@ import PencilKit
 /// 2. decide open vs closed from the endpoint gap relative to the path
 ///    length (tolerant of overshoot and undershoot);
 /// 3. find corners by turning angle;
-/// 4. classify on the corner count: 0 closed → circle/ellipse, 3 → triangle,
-///    4 → rectangle (rotated allowed) or a general quad, 5–6 → polygon;
-///    open with no corners and a straight fit → line; open with a V at the
-///    end → arrow;
+/// 4. classify: an open path is a **line first** - fitted over its whole
+///    length, whatever corners were found - then an arrow, and only an
+///    arrow when there is a real head that doubles back; closed with no
+///    corners → circle/ellipse, 3 → triangle, 4 → rectangle (rotated
+///    allowed) or a general quad, 5-6 → polygon;
 /// 5. bail out (`nil`) when nothing fits. A shape tool that guesses wrong
 ///    is worse than one that leaves the stroke alone.
+///
+/// Lines, arrow shafts and rectangles snap to the axes (and to 45°) when
+/// they are drawn within a few degrees of them, so a line meant to be
+/// horizontal comes out horizontal.
 ///
 /// Corners come out sharp because polygon vertices are repeated three
 /// times in the `PKStrokePath` control points: the path is a cubic
@@ -44,6 +66,25 @@ nonisolated enum ShapeRecognizer {
         /// Vertices that must render as sharp corners (polygons), as
         /// indices into `outline`. Empty for curves.
         var cornerIndices: [Int]
+        /// Whether `outline` closes back on its first point. Closed curves
+        /// need their spline wrapped past the join rather than pinned to
+        /// the endpoints.
+        var isClosed: Bool = false
+    }
+
+    /// Everything the ink of a snapped shape is made of. Built by
+    /// `spec(matching:tool:style:)` from the stroke the user actually drew,
+    /// so the snapped shape is the same weight as the freehand one it
+    /// replaces rather than a constant.
+    struct InkSpec {
+        var ink: PKInk
+        /// Brush size in drawing points.
+        var size: CGFloat
+        /// Pressure the reconstructed points carry. Copied from the source
+        /// stroke: pinning it to 1 is what made every snapped shape come
+        /// out at the tool's heaviest possible weight.
+        var force: CGFloat
+        var style: ShapeLineStyle = .solid
     }
 
     // MARK: - Tuning
@@ -71,9 +112,16 @@ nonisolated enum ShapeRecognizer {
     /// Rectangle when every interior angle is within this of 90°.
     private static let rightAngleTolerance: CGFloat = 16 * .pi / 180
     /// Snap a rectangle to the axes when it is within this of them.
-    private static let axisSnapTolerance: CGFloat = 7 * .pi / 180
+    private static let axisSnapTolerance: CGFloat = 10 * .pi / 180
     /// Square when the two side lengths are within this fraction.
     private static let squareTolerance: CGFloat = 0.12
+    /// A line (or an arrow's shaft) within this of horizontal or vertical
+    /// is straightened onto it. Generous on purpose: "I meant that to be
+    /// horizontal" is the single most common thing asked of a shape tool.
+    private static let lineAxisTolerance: CGFloat = 10 * .pi / 180
+    /// ...and this much for the 45° diagonals, which are asked for less
+    /// often and are easier to hit by accident.
+    private static let lineDiagonalTolerance: CGFloat = 6 * .pi / 180
 
     // MARK: - Entry points
 
@@ -118,31 +166,166 @@ nonisolated enum ShapeRecognizer {
         return resample(Array(points[best.i...best.j]), count: sampleCount)
     }
 
-    /// The recognized shape as ink. Width and colour come from the active
-    /// tool and nowhere else - the old fixed 4-point width was bug 3.
-    static func stroke(for shape: RecognizedShape, tool: PKInkingTool) -> PKStroke {
-        let width = max(tool.width, 0.5)
-        var controlPoints: [CGPoint] = []
-        controlPoints.reserveCapacity(shape.outline.count * 3)
+    // MARK: - Ink
+
+    /// The ink a snapped shape should be drawn in, taken from the freehand
+    /// stroke it is replacing.
+    ///
+    /// Size and force come from the stroke's own points (the median, so one
+    /// heavy sample at the start doesn't set the weight for the whole
+    /// shape). That is the fix for "snapped shapes are always thick and the
+    /// width slider doesn't change them": the previous version built every
+    /// shape at `tool.width` with `force: 1`, which is the tool's heaviest
+    /// possible mark, while the stroke beside it was drawn at whatever
+    /// pressure the hand used. Matching the source stroke makes the two the
+    /// same weight by construction, whatever the tool and whatever the
+    /// slider says.
+    ///
+    /// `tool` is the fallback for a shape with no source stroke (the live
+    /// preview, and the tests).
+    static func spec(matching source: PKStroke?, tool: PKInkingTool?, style: ShapeLineStyle = .solid) -> InkSpec {
+        let fallbackWidth = max(tool?.width ?? 4, 0.5)
+        let fallbackInk = tool?.ink ?? PKInk(.pen, color: .black)
+        guard let source, !source.path.isEmpty else {
+            return InkSpec(ink: fallbackInk, size: fallbackWidth, force: 1, style: style)
+        }
+        let sizes = source.path.map { $0.size.width }.sorted()
+        let forces = source.path.map(\.force).sorted()
+        return InkSpec(
+            ink: source.ink,
+            size: max(sizes[sizes.count / 2], 0.5),
+            force: forces[forces.count / 2],
+            style: style
+        )
+    }
+
+    /// The recognized shape as ink: one stroke when it's solid, one per
+    /// dash when it isn't.
+    static func strokes(for shape: RecognizedShape, spec: InkSpec) -> [PKStroke] {
         let corners = Set(shape.cornerIndices)
-        for (index, point) in shape.outline.enumerated() {
+        let flags = shape.outline.indices.map { corners.contains($0) }
+
+        switch spec.style {
+        case .solid:
+            let padded = padded(shape.outline, isCorner: flags, closed: shape.isClosed)
+            return [buildStroke(padded.points, isCorner: padded.flags, spec: spec)]
+        case .dashed, .dotted:
+            let dash = dashLengths(for: spec)
+            return dashes(along: shape.outline, isCorner: flags, dash: dash.on, gap: dash.off)
+                .map { segment in
+                    let padded = padded(segment.points, isCorner: segment.flags, closed: false)
+                    return buildStroke(padded.points, isCorner: padded.flags, spec: spec)
+                }
+        }
+    }
+
+    /// Single-stroke convenience: a solid shape in the tool's own ink, for
+    /// callers with no source stroke in hand.
+    static func stroke(for shape: RecognizedShape, tool: PKInkingTool) -> PKStroke {
+        let spec = InkSpec(ink: tool.ink, size: max(tool.width, 0.5), force: 1, style: .solid)
+        return strokes(for: shape, spec: spec)[0]
+    }
+
+    /// Dash and gap in drawing points, scaled off the brush so a fat pen
+    /// gets proportionally longer dashes instead of a smear.
+    private static func dashLengths(for spec: InkSpec) -> (on: CGFloat, off: CGFloat) {
+        switch spec.style {
+        case .solid: return (.greatestFiniteMagnitude, 0)
+        case .dashed: return (max(spec.size * 4, 6), max(spec.size * 3, 4.5))
+        // A "dot" is a stroke barely longer than it is wide; the brush's
+        // own round cap is what makes it round.
+        case .dotted: return (max(spec.size * 0.35, 0.5), max(spec.size * 2, 3))
+        }
+    }
+
+    /// Cuts `outline` into dash-length runs separated by gaps, carrying the
+    /// corner flags along so a dash that spans a vertex still has a sharp
+    /// one.
+    private static func dashes(along outline: [CGPoint], isCorner: [Bool], dash: CGFloat, gap: CGFloat)
+        -> [(points: [CGPoint], flags: [Bool])] {
+        guard outline.count > 1, dash > 0, gap > 0 else { return [] }
+        var result: [(points: [CGPoint], flags: [Bool])] = []
+        var current: (points: [CGPoint], flags: [Bool]) = ([outline[0]], [isCorner[0]])
+        var drawn: CGFloat = 0          // length accumulated in the current run
+        var inking = true
+
+        func closeRun() {
+            if inking, current.points.count > 1 { result.append(current) }
+            current = ([], [])
+        }
+
+        for i in 1..<outline.count {
+            var from = outline[i - 1]
+            let to = outline[i]
+            var remaining = distance(from, to)
+            while remaining > 0 {
+                let target = (inking ? dash : gap) - drawn
+                if remaining < target {
+                    drawn += remaining
+                    if inking {
+                        current.points.append(to)
+                        current.flags.append(isCorner[i])
+                    }
+                    remaining = 0
+                } else {
+                    // The run ends part-way along this segment.
+                    let t = target / remaining
+                    let cut = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
+                    if inking {
+                        current.points.append(cut)
+                        current.flags.append(false)
+                        closeRun()
+                    } else {
+                        current = ([cut], [false])
+                    }
+                    inking.toggle()
+                    drawn = 0
+                    remaining -= target
+                    from = cut
+                }
+            }
+        }
+        closeRun()
+        return result
+    }
+
+    /// Pads a polyline's control points so the B-spline actually reaches
+    /// its ends: an open path pins its endpoints by tripling them, a closed
+    /// curve wraps two points past the join instead (pinning a closed curve
+    /// would put a visible kink where it meets itself).
+    private static func padded(_ points: [CGPoint], isCorner: [Bool], closed: Bool)
+        -> (points: [CGPoint], flags: [Bool]) {
+        guard points.count > 1 else { return (points, isCorner) }
+        var result = points
+        var flags = isCorner
+        if closed, !isCorner.contains(true) {
+            for offset in 1...min(2, points.count - 1) {
+                result.append(points[offset])
+                flags.append(false)
+            }
+            return (result, flags)
+        }
+        if !flags[0] {
+            result.insert(contentsOf: [points[0], points[0]], at: 0)
+            flags.insert(contentsOf: [false, false], at: 0)
+        }
+        if !(flags.last ?? false) {
+            result.append(contentsOf: [points[points.count - 1], points[points.count - 1]])
+            flags.append(contentsOf: [false, false])
+        }
+        return (result, flags)
+    }
+
+    private static func buildStroke(_ points: [CGPoint], isCorner: [Bool], spec: InkSpec) -> PKStroke {
+        var controlPoints: [CGPoint] = []
+        controlPoints.reserveCapacity(points.count * 3)
+        for (index, point) in points.enumerated() {
             controlPoints.append(point)
-            if corners.contains(index) {
+            if isCorner[index] {
                 // Multiplicity three: a sharp vertex in a cubic B-spline.
                 controlPoints.append(point)
                 controlPoints.append(point)
             }
-        }
-        // The endpoints of an open B-spline are pulled toward the second
-        // and second-to-last control points; tripling the ends puts the
-        // curve exactly on them.
-        if !corners.contains(0) {
-            controlPoints.insert(contentsOf: [shape.outline[0], shape.outline[0]], at: 0)
-        }
-        let lastIndex = shape.outline.count - 1
-        if !corners.contains(lastIndex) {
-            controlPoints.append(shape.outline[lastIndex])
-            controlPoints.append(shape.outline[lastIndex])
         }
 
         var strokePoints: [PKStrokePoint] = []
@@ -155,37 +338,77 @@ nonisolated enum ShapeRecognizer {
             strokePoints.append(PKStrokePoint(
                 location: point,
                 timeOffset: timeOffset,
-                size: CGSize(width: width, height: width),
+                size: CGSize(width: spec.size, height: spec.size),
                 opacity: 1,
-                force: 1,
+                force: spec.force,
                 azimuth: 0,
                 altitude: .pi / 2
             ))
         }
         let path = PKStrokePath(controlPoints: strokePoints, creationDate: Date())
-        return PKStroke(ink: tool.ink, path: path)
+        return PKStroke(ink: spec.ink, path: path)
     }
 
     // MARK: - Classification
 
+    /// An open path is a line if it fits one, whatever corners the turning
+    /// angle found - a slightly shaky hand puts a "corner" in the middle of
+    /// a perfectly good line, and sending that to the arrow recognizer is
+    /// how a line became an arrow.
     private static func recognizeOpen(_ points: [CGPoint], length: CGFloat) -> RecognizedShape? {
+        if let line = recognizeLine(points) { return line }
         let corners = cornerIndices(points, closed: false)
-        let start = points[0], end = points[points.count - 1]
-
-        if corners.isEmpty {
-            let chord = distance(start, end)
-            guard chord > 0 else { return nil }
-            let deviation = points.map { distanceFromSegment($0, start, end) }.max() ?? 0
-            guard deviation / chord < lineDeviation else { return nil }
-            return RecognizedShape(kind: .line, outline: [start, end], cornerIndices: [0, 1])
-        }
-
+        guard !corners.isEmpty else { return nil }
         return recognizeArrow(points, corners: corners, length: length)
     }
 
-    /// An arrow drawn in one stroke: a straight shaft, then a V (or one
-    /// barb) at the far end. All the corners sit in the last part of the
-    /// path and the shaft is most of it.
+    private static func recognizeLine(_ points: [CGPoint]) -> RecognizedShape? {
+        let start = points[0], end = points[points.count - 1]
+        let chord = distance(start, end)
+        guard chord > 0 else { return nil }
+        let deviation = points.map { distanceFromSegment($0, start, end) }.max() ?? 0
+        guard deviation / chord < lineDeviation else { return nil }
+        let snapped = axisSnapped(from: start, to: end)
+        return RecognizedShape(kind: .line, outline: [snapped.0, snapped.1], cornerIndices: [0, 1])
+    }
+
+    /// Straightens a segment onto the nearest axis (or 45° diagonal) when
+    /// it is already within a few degrees of it, keeping its midpoint and
+    /// its length - so a near-horizontal line comes out horizontal without
+    /// either end jumping.
+    static func axisSnapped(from a: CGPoint, to b: CGPoint) -> (CGPoint, CGPoint) {
+        let length = distance(a, b)
+        guard length > 0 else { return (a, b) }
+        let angle = atan2(b.y - a.y, b.x - a.x)
+
+        var snapped: CGFloat?
+        for step in 0..<8 {
+            let candidate = CGFloat(step) * .pi / 4 - .pi
+            // Both directions of the same axis are equally good; compare
+            // against every multiple of 45° over the full turn.
+            let delta = abs(angleDifference(angle, candidate))
+            let isAxis = step % 2 == 0
+            if delta < (isAxis ? lineAxisTolerance : lineDiagonalTolerance) {
+                snapped = candidate
+                break
+            }
+        }
+        guard let theta = snapped else { return (a, b) }
+        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        let half = length / 2
+        return (
+            CGPoint(x: mid.x - cos(theta) * half, y: mid.y - sin(theta) * half),
+            CGPoint(x: mid.x + cos(theta) * half, y: mid.y + sin(theta) * half)
+        )
+    }
+
+    /// An arrow drawn in one stroke: a straight shaft, then a head at the
+    /// far end that **doubles back** along it. That last part is what makes
+    /// this strict - a wobble near the end of a line produces a corner and
+    /// a "head" that carries straight on, and the old version manufactured
+    /// barbs for it out of a floor value. A head has to come back toward
+    /// the tail, and be a real fraction of the shaft, or this is not an
+    /// arrow.
     private static func recognizeArrow(_ points: [CGPoint], corners: [Int], length: CGFloat) -> RecognizedShape? {
         guard (1...3).contains(corners.count) else { return nil }
         let firstCorner = corners[0]
@@ -193,30 +416,44 @@ nonisolated enum ShapeRecognizer {
         let tail = points[0]
         let shaftEnd = points[firstCorner]
         let shaftLength = distance(tail, shaftEnd)
-        guard shaftLength > length * 0.5 else { return nil }
+        guard shaftLength > length * 0.45 else { return nil }
         let shaftDeviation = points[0...firstCorner].map { distanceFromSegment($0, tail, shaftEnd) }.max() ?? 0
         guard shaftDeviation / shaftLength < lineDeviation * 1.5 else { return nil }
 
         // The head is everything after the shaft. Its tip is the point
-        // farthest along the shaft's direction; the barbs' length is how
-        // far the head's points stray from the tip.
+        // farthest along the shaft's direction.
         let head = Array(points[firstCorner...])
+        guard head.count > 2 else { return nil }
         let direction = normalized(CGVector(dx: shaftEnd.x - tail.x, dy: shaftEnd.y - tail.y))
-        guard let tip = head.max(by: { projection($0, from: tail, along: direction) < projection($1, from: tail, along: direction) })
+        guard let tip = head.max(by: {
+            projection($0, from: tail, along: direction) < projection($1, from: tail, along: direction)
+        }) else { return nil }
+
+        // Measured, never floored: how far the head strays from the tip,
+        // and how far back along the shaft it comes.
+        let barbLength = head.map { distance($0, tip) }.max() ?? 0
+        let tipProjection = projection(tip, from: tail, along: direction)
+        let backtrack = tipProjection - (head.map { projection($0, from: tail, along: direction) }.min() ?? tipProjection)
+        guard barbLength > shaftLength * 0.1,        // a real head, not a wobble
+              barbLength < shaftLength * 0.6,        // ...and not a second line
+              backtrack > shaftLength * 0.06         // it comes back on itself
         else { return nil }
-        let barbLength = max(head.map { distance($0, tip) }.max() ?? 0, shaftLength * 0.12)
-        // A head that's as long as the shaft is a bent line, not an arrow.
-        guard barbLength < shaftLength * 0.6 else { return nil }
+
+        // The shaft gets the same axis snap a line does, and the head is
+        // rebuilt around the snapped tip so the arrow stays straight.
+        let snapped = axisSnapped(from: tail, to: tip)
+        let snappedTail = snapped.0, snappedTip = snapped.1
+        let snappedDirection = normalized(CGVector(dx: snappedTip.x - snappedTail.x, dy: snappedTip.y - snappedTail.y))
 
         let barbAngle: CGFloat = 30 * .pi / 180
-        let back = CGVector(dx: -direction.dx, dy: -direction.dy)
+        let back = CGVector(dx: -snappedDirection.dx, dy: -snappedDirection.dy)
         let left = rotate(back, by: barbAngle)
         let right = rotate(back, by: -barbAngle)
-        let leftBarb = CGPoint(x: tip.x + left.dx * barbLength, y: tip.y + left.dy * barbLength)
-        let rightBarb = CGPoint(x: tip.x + right.dx * barbLength, y: tip.y + right.dy * barbLength)
+        let leftBarb = CGPoint(x: snappedTip.x + left.dx * barbLength, y: snappedTip.y + left.dy * barbLength)
+        let rightBarb = CGPoint(x: snappedTip.x + right.dx * barbLength, y: snappedTip.y + right.dy * barbLength)
         // Drawn as one stroke: shaft to the tip, out one barb, back to the
         // tip, out the other. Every vertex is a corner.
-        let outline = [tail, tip, leftBarb, tip, rightBarb]
+        let outline = [snappedTail, snappedTip, leftBarb, snappedTip, rightBarb]
         return RecognizedShape(kind: .arrow, outline: outline, cornerIndices: Array(outline.indices))
     }
 
@@ -262,14 +499,12 @@ nonisolated enum ShapeRecognizer {
         // doesn't visibly rotate away from the freehand one.
         let startAngle = atan2((points[0].y - center.y) / radiusY, (points[0].x - center.x) / radiusX)
         let samples = 72
-        // Two extra wrap points past the closing one: an open B-spline's
-        // ends are pulled toward their neighbours, and these put that pull
-        // onto points the loop already covers.
-        let outline = (0...(samples + 2)).map { i -> CGPoint in
+        let outline = (0...samples).map { i -> CGPoint in
             let angle = startAngle + (CGFloat(i) / CGFloat(samples)) * 2 * .pi
             return CGPoint(x: center.x + radiusX * cos(angle), y: center.y + radiusY * sin(angle))
         }
-        return RecognizedShape(kind: isCircle ? .circle : .ellipse, outline: outline, cornerIndices: [])
+        return RecognizedShape(kind: isCircle ? .circle : .ellipse, outline: outline,
+                               cornerIndices: [], isClosed: true)
     }
 
     private static func recognizeQuadrilateral(_ vertices: [CGPoint]) -> RecognizedShape? {
@@ -327,7 +562,8 @@ nonisolated enum ShapeRecognizer {
             return nil
         }
         let outline = vertices + [vertices[0]]
-        return RecognizedShape(kind: kind, outline: outline, cornerIndices: Array(outline.indices))
+        return RecognizedShape(kind: kind, outline: outline,
+                               cornerIndices: Array(outline.indices), isClosed: true)
     }
 
     // MARK: - Corners
@@ -434,6 +670,14 @@ nonisolated enum ShapeRecognizer {
 
     static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
         hypot(a.x - b.x, a.y - b.y)
+    }
+
+    /// Signed difference between two angles, wrapped into (-π, π].
+    private static func angleDifference(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+        var delta = a - b
+        while delta > .pi { delta -= 2 * .pi }
+        while delta <= -.pi { delta += 2 * .pi }
+        return delta
     }
 
     private static func distanceFromSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {

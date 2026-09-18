@@ -256,6 +256,177 @@ final class ShapeRecognizerTests: XCTestCase {
         XCTAssertEqual(stroke.ink.inkType, .pen)
     }
 
+    // MARK: - Axis snapping
+
+    func testLine_nearlyHorizontal_comesOutHorizontal() {
+        var rng = Jitter(seed: 21)
+        // Drawn 4 degrees off horizontal - inside the snap tolerance.
+        let points = (0...80).map { i -> CGPoint in
+            let t = CGFloat(i) / 80
+            let x = 60 + 300 * t
+            return CGPoint(x: x + rng.next(0.8), y: 200 + 300 * t * tan(4 * .pi / 180) + rng.next(0.8))
+        }
+        let shape = ShapeRecognizer.recognize(points)
+        XCTAssertEqual(shape?.kind, .line)
+        let outline = shape!.outline
+        XCTAssertEqual(outline[0].y, outline[1].y, accuracy: 0.001, "a near-horizontal line must come out horizontal")
+        // The length and the middle of the line are kept, so neither end jumps.
+        XCTAssertEqual(hypot(outline[1].x - outline[0].x, outline[1].y - outline[0].y),
+                       ShapeRecognizer.distance(points[0], points[points.count - 1]), accuracy: 2)
+    }
+
+    func testLine_nearlyVertical_comesOutVertical() {
+        var rng = Jitter(seed: 22)
+        let points = (0...80).map { i -> CGPoint in
+            let t = CGFloat(i) / 80
+            return CGPoint(x: 200 + 260 * t * tan(5 * .pi / 180) + rng.next(0.8), y: 90 + 260 * t + rng.next(0.8))
+        }
+        let shape = ShapeRecognizer.recognize(points)
+        XCTAssertEqual(shape?.kind, .line)
+        XCTAssertEqual(shape!.outline[0].x, shape!.outline[1].x, accuracy: 0.001)
+    }
+
+    func testLine_deliberatelyAtAnAngle_isLeftAtThatAngle() {
+        var rng = Jitter(seed: 23)
+        // 25 degrees: nowhere near an axis or a diagonal, so it must not move.
+        let angle: CGFloat = 25 * .pi / 180
+        let points = (0...80).map { i -> CGPoint in
+            let t = CGFloat(i) / 80
+            return CGPoint(x: 60 + 300 * t * cos(angle) + rng.next(0.8),
+                           y: 100 + 300 * t * sin(angle) + rng.next(0.8))
+        }
+        let shape = ShapeRecognizer.recognize(points)
+        XCTAssertEqual(shape?.kind, .line)
+        let outline = shape!.outline
+        let snapped = atan2(outline[1].y - outline[0].y, outline[1].x - outline[0].x)
+        XCTAssertEqual(snapped, angle, accuracy: 2 * .pi / 180)
+    }
+
+    // MARK: - Line vs arrow
+
+    /// The reported bug: a line with a bit of a hook at the end came back as
+    /// an arrow, because any corner at all sent the stroke to the arrow
+    /// recognizer, which then manufactured barbs from a floor value rather
+    /// than measuring one.
+    func testWobblyLine_isALine_notAnArrow() {
+        var rng = Jitter(seed: 31)
+        var points = (0...70).map { i -> CGPoint in
+            let t = CGFloat(i) / 70
+            return CGPoint(x: 60 + 320 * t + rng.next(1.2), y: 300 + rng.next(1.2))
+        }
+        // A small hook at the very end, the way a hand lifts off the page.
+        for i in 1...5 {
+            points.append(CGPoint(x: 380 + CGFloat(i) * 1.2, y: 300 - CGFloat(i) * 1.4))
+        }
+        let shape = ShapeRecognizer.recognize(points)
+        XCTAssertEqual(shape?.kind, .line, "a hook on the end of a line is not an arrowhead")
+    }
+
+    func testShortHeadedStroke_isNotAnArrow() {
+        // A line with a tiny 6pt kink back at the end: measured, that head
+        // is 2% of the shaft, far short of a real arrowhead.
+        let tail = CGPoint(x: 50, y: 200), tip = CGPoint(x: 350, y: 200)
+        let shape = ShapeRecognizer.recognize(handDrawn([tail, tip, CGPoint(x: 344, y: 200)], closed: false, jitter: 0.4))
+        XCTAssertNotEqual(shape?.kind, .arrow)
+    }
+
+    // MARK: - Ink
+
+    /// The reported bug: snapped shapes were always drawn at the tool's
+    /// maximum weight (`size` = tool width, `force` = 1) whatever the stroke
+    /// beside them looked like, so every shape came out thick and no slider
+    /// seemed to change it. The replacement takes its weight from the stroke
+    /// it replaces.
+    func testSpec_takesWeightFromTheStrokeItReplaces() {
+        let source = strokeOfPoints(sizes: [2, 3, 3, 3, 9], forces: [0.4, 0.5, 0.5, 0.5, 0.9],
+                                    ink: PKInk(.pencil, color: .red))
+        let spec = ShapeRecognizer.spec(matching: source, tool: PKInkingTool(.pen, color: .black, width: 18))
+        XCTAssertEqual(spec.size, 3, accuracy: 0.001, "the median point size, not the tool's width")
+        XCTAssertEqual(spec.force, 0.5, accuracy: 0.001, "the median force, not a hardcoded 1")
+        XCTAssertEqual(spec.ink.inkType, .pencil, "and the ink of the stroke, not of the tool")
+    }
+
+    func testSpec_fallsBackToTheToolWhenThereIsNoSourceStroke() {
+        let spec = ShapeRecognizer.spec(matching: nil, tool: PKInkingTool(.monoline, color: .blue, width: 7))
+        XCTAssertEqual(spec.size, 7)
+        XCTAssertEqual(spec.ink.inkType, .monoline)
+    }
+
+    func testSnappedStrokeCarriesTheSourceWeight() {
+        let corners = [CGPoint(x: 100, y: 100), CGPoint(x: 300, y: 100), CGPoint(x: 300, y: 250), CGPoint(x: 100, y: 250)]
+        let shape = ShapeRecognizer.RecognizedShape(kind: .rectangle, outline: corners + [corners[0]],
+                                                    cornerIndices: [0, 1, 2, 3, 4], isClosed: true)
+        let source = strokeOfPoints(sizes: [5, 5, 5], forces: [0.3, 0.3, 0.3], ink: PKInk(.pen, color: .green))
+        let spec = ShapeRecognizer.spec(matching: source, tool: nil)
+        let strokes = ShapeRecognizer.strokes(for: shape, spec: spec)
+        XCTAssertEqual(strokes.count, 1)
+        for point in strokes[0].path {
+            XCTAssertEqual(point.size.width, 5, accuracy: 0.001)
+            XCTAssertEqual(point.force, 0.3, accuracy: 0.001)
+        }
+    }
+
+    // MARK: - Dashed and dotted
+
+    func testDashedLine_isManyStrokesAlongTheSameLine() {
+        let shape = ShapeRecognizer.RecognizedShape(kind: .line,
+                                                    outline: [CGPoint(x: 0, y: 50), CGPoint(x: 200, y: 50)],
+                                                    cornerIndices: [0, 1])
+        let spec = ShapeRecognizer.InkSpec(ink: PKInk(.pen, color: .black), size: 4, force: 0.5, style: .dashed)
+        let strokes = ShapeRecognizer.strokes(for: shape, spec: spec)
+
+        XCTAssertGreaterThan(strokes.count, 4, "a dashed line is several strokes")
+        var inked: CGFloat = 0
+        for stroke in strokes {
+            for point in stroke.path.interpolatedPoints(by: .distance(1)) {
+                XCTAssertEqual(point.location.y, 50, accuracy: 0.5, "every dash sits on the line")
+                XCTAssertGreaterThanOrEqual(point.location.x, -0.5)
+                XCTAssertLessThanOrEqual(point.location.x, 200.5)
+            }
+            inked += ShapeRecognizer.distance(stroke.path.first!.location, stroke.path.last!.location)
+        }
+        // Dash 16, gap 12: a bit over half the line is ink.
+        XCTAssertEqual(inked / 200, 16.0 / 28.0, accuracy: 0.12)
+    }
+
+    func testDottedLine_isMoreAndShorterMarksThanDashed() {
+        let shape = ShapeRecognizer.RecognizedShape(kind: .line,
+                                                    outline: [CGPoint(x: 0, y: 0), CGPoint(x: 300, y: 0)],
+                                                    cornerIndices: [0, 1])
+        let ink = PKInk(.pen, color: .black)
+        let dashed = ShapeRecognizer.strokes(for: shape, spec: .init(ink: ink, size: 4, force: 1, style: .dashed))
+        let dotted = ShapeRecognizer.strokes(for: shape, spec: .init(ink: ink, size: 4, force: 1, style: .dotted))
+        XCTAssertGreaterThan(dotted.count, dashed.count)
+        let dotLength = ShapeRecognizer.distance(dotted[0].path.first!.location, dotted[0].path.last!.location)
+        XCTAssertLessThan(dotLength, 3, "a dot is barely longer than the brush is wide")
+    }
+
+    func testSolidCircleIsOneStroke_dottedCircleIsMany() {
+        let shape = ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 200, y: 200), rx: 100, ry: 100, jitter: 0))!
+        let ink = PKInk(.pen, color: .black)
+        XCTAssertEqual(ShapeRecognizer.strokes(for: shape, spec: .init(ink: ink, size: 3, force: 1, style: .solid)).count, 1)
+        let dotted = ShapeRecognizer.strokes(for: shape, spec: .init(ink: ink, size: 3, force: 1, style: .dotted))
+        XCTAssertGreaterThan(dotted.count, 20)
+        // Still a circle: every dot is on it.
+        for stroke in dotted {
+            for point in stroke.path {
+                XCTAssertEqual(hypot(point.location.x - 200, point.location.y - 200), 100, accuracy: 2)
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func strokeOfPoints(sizes: [CGFloat], forces: [CGFloat], ink: PKInk) -> PKStroke {
+        let points = zip(sizes, forces).enumerated().map { index, pair in
+            PKStrokePoint(location: CGPoint(x: CGFloat(index) * 10, y: 0),
+                          timeOffset: Double(index) * 0.01,
+                          size: CGSize(width: pair.0, height: pair.0),
+                          opacity: 1, force: pair.1, azimuth: 0, altitude: .pi / 2)
+        }
+        return PKStroke(ink: ink, path: PKStrokePath(controlPoints: points, creationDate: Date()))
+    }
+
     func testCircleStroke_staysOnTheCircle() {
         let shape = ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 200, y: 200), rx: 100, ry: 100, jitter: 0))!
         let stroke = ShapeRecognizer.stroke(for: shape, tool: PKInkingTool(.marker, color: .red, width: 10))

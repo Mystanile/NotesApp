@@ -4,6 +4,7 @@ import CoreGraphics
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 import PencilKit
+import UniformTypeIdentifiers
 
 /// Shared canvas-interaction helpers used by both `PencilCanvasView` (paged
 /// pages) and `WhiteboardCanvasView`:
@@ -308,6 +309,49 @@ class CanvasHostView: UIView {
         if let dragPanOverlay { bringSubviewToFront(dragPanOverlay) }
     }
 
+    // MARK: Paste and drop
+
+    /// An image (or PDF) arrived by ⌘V or by being dragged onto the page.
+    /// Raw file bytes; the parent sniffs the type and imports it.
+    ///
+    /// On a Mac the Photos picker is the *only* way images could get in,
+    /// which meant anything in Finder or Files was unreachable. Both of
+    /// these routes are handled here, on the host view, because both are
+    /// UIKit responder-chain business: `PKCanvasView` is the first
+    /// responder and implements neither, so the action walks up to us.
+    var onPasteImage: ((Data) -> Void)? {
+        didSet { updateDropInteraction() }
+    }
+    private var dropInteraction: UIDropInteraction?
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) {
+            // `hasImage` and not a read: reading the pasteboard is what
+            // raises the system's "pasted from" banner, and this is called
+            // every time the Edit menu is built.
+            return onPasteImage != nil && CanvasPasteboard.hasImage
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        guard let data = CanvasPasteboard.payload() else { return }
+        onPasteImage?(data)
+    }
+
+    private func updateDropInteraction() {
+        if onPasteImage != nil, dropInteraction == nil {
+            let interaction = UIDropInteraction(delegate: self)
+            addInteraction(interaction)
+            dropInteraction = interaction
+        } else if onPasteImage == nil, let interaction = dropInteraction {
+            removeInteraction(interaction)
+            dropInteraction = nil
+        }
+    }
+
+
+
     // MARK: Zoom
 
     /// The scale `CanvasZoomCommand.reset` returns to. 100% for a
@@ -501,6 +545,75 @@ class CanvasHostView: UIView {
     }
 }
 
+/// Dragging a picture out of Finder, Files or another app and onto the page
+/// - the gesture a Mac user reaches for first.
+extension CanvasHostView: UIDropInteractionDelegate {
+    func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+        session.canLoadObjects(ofClass: UIImage.self)
+            || session.hasItemsConforming(toTypeIdentifiers: [UTType.image.identifier, UTType.pdf.identifier])
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction,
+                         sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        UIDropProposal(operation: .copy)
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+        guard let onPasteImage else { return }
+        // The file's own bytes, so a PNG stays a PNG and a PDF is still a
+        // PDF; loading it as a UIImage would throw both away.
+        for identifier in [UTType.pdf.identifier, UTType.image.identifier] {
+            guard let item = session.items.first(where: {
+                $0.itemProvider.hasItemConformingToTypeIdentifier(identifier)
+            }) else { continue }
+            item.itemProvider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+                guard let data else { return }
+                DispatchQueue.main.async { onPasteImage(data) }
+            }
+            return
+        }
+        // Something that is only offered as an image object (a drag out of
+        // another app's canvas, say).
+        session.loadObjects(ofClass: UIImage.self) { images in
+            guard let image = images.first as? UIImage, let data = image.pngData() else { return }
+            onPasteImage(data)
+        }
+    }
+}
+
+
+// MARK: - Pasteboard
+
+/// Reading an image off the system pasteboard, for ⌘V on the canvas and for
+/// the Import menu's "Paste Image".
+///
+/// Two levels on purpose: `hasImage` is a cheap, silent check (used to
+/// enable the menu item and the Edit menu's Paste), while `payload()`
+/// actually reads - which is what raises iOS's "pasted from" banner, so it
+/// only happens when someone really did paste.
+enum CanvasPasteboard {
+    /// Best first: the original bytes beat a re-encode of
+    /// `UIPasteboard.image`.
+    private static let types = ["com.adobe.pdf", "public.png", "public.jpeg",
+                                "public.heic", "com.compuserve.gif", "public.tiff"]
+
+    static var hasImage: Bool {
+        let pasteboard = UIPasteboard.general
+        return pasteboard.hasImages || pasteboard.hasURLs
+            || types.contains { pasteboard.contains(pasteboardTypes: [$0]) }
+    }
+
+    static func payload() -> Data? {
+        let pasteboard = UIPasteboard.general
+        for type in types {
+            if let data = pasteboard.data(forPasteboardType: type) { return data }
+        }
+        // A file copied in Finder arrives as a URL, not as pixels.
+        if let url = pasteboard.urls?.first, let data = try? Data(contentsOf: url) { return data }
+        return pasteboard.image?.pngData()
+    }
+}
+
 // MARK: - Finger / Pencil shortcut recognizers
 
 /// Procreate's undo/redo gesture: a **single** tap with N fingers, and
@@ -514,6 +627,7 @@ class CanvasHostView: UIView {
 /// this replaces - those were being starved by PencilKit and, even when they
 /// weren't, a two-finger *double* tap is a much harder gesture to land than
 /// the single tap Procreate actually uses.
+
 final class MultiFingerTapRecognizer: UIGestureRecognizer {
 
     /// Exactly this many fingers, so a three-finger redo never also fires

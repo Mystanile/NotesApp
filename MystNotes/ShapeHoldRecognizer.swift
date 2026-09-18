@@ -12,8 +12,8 @@ import PencilKit
 ///
 /// `UILongPressGestureRecognizer` can't do this - its `allowableMovement`
 /// is measured from the *first* touch point, and the user has drawn a whole
-/// shape before they hold. This one restarts a timer every time the pencil
-/// moves; if the timer fires with the pencil still down, that's a hold.
+/// shape before they hold. This one tracks where the pencil went still and
+/// how long ago that was.
 ///
 /// It sits on the canvas host view next to the undo/redo tap recognizers,
 /// is a pure observer (never cancels or delays anyone's touches, recognizes
@@ -21,31 +21,53 @@ import PencilKit
 /// goes so recognition can happen the moment the hold registers - before
 /// PencilKit has committed the stroke, which it only does on touch-up.
 ///
+/// **Two independent things can notice the hold**, which is what makes it
+/// fire reliably:
+///
+///  - a timer, now scheduled in the *common* run-loop modes. It used to be
+///    a plain `Timer.scheduledTimer`, which only runs in `.default` - so
+///    while the run loop was in tracking mode (which is exactly when a
+///    pencil is down) it simply never fired, and the hold was missed;
+///  - the touch stream itself. A resting Apple Pencil still delivers
+///    `touchesMoved` continuously from its own jitter, so the elapsed-time
+///    check there catches a hold even if the timer is starved.
+///
 /// Callbacks are in the canvas's *drawing* coordinates (page points), so
 /// they line up with `PKDrawing` whatever the zoom.
 final class ShapeHoldRecognizer: UIGestureRecognizer {
 
     /// The pencil has been still for `holdDuration` with a stroke drawn.
-    var onHold: ([CGPoint]) -> Void = { _ in }
+    /// Returning false means "nothing recognizable yet" - the hold isn't
+    /// taken, and the recognizer keeps offering as the stroke grows, so a
+    /// shape that needed one more corner still snaps instead of needing
+    /// the whole gesture to be started again.
+    var onHold: ([CGPoint]) -> Bool = { _ in false }
     /// The pencil moved again after a hold: whatever was pending is off.
     var onHoldBroken: () -> Void = {}
+    /// A new stroke has started. Anything left over from the last one is
+    /// stale.
+    var onBegin: () -> Void = {}
     /// The stroke ended (lifted or cancelled). `held` says whether a hold
     /// was in effect at the time.
     var onEnd: (_ held: Bool) -> Void = { _ in }
 
     /// How long the pencil has to stay still. Long enough that a natural
     /// pause mid-stroke doesn't fire it; short enough not to feel like a
-    /// wait.
-    var holdDuration: TimeInterval = 0.8
+    /// wait. GoodNotes sits around here too.
+    var holdDuration: TimeInterval = 0.5
     /// Movement below this (in screen points) is the hand's tremor, not a
-    /// move; it doesn't restart the timer.
-    var stillnessTolerance: CGFloat = 4
+    /// move. A pencil held still by a human hand drifts several points -
+    /// at the old 4pt this restarted the clock over and over and the hold
+    /// often never registered at all.
+    var stillnessTolerance: CGFloat = 9
     /// The canvas whose drawing coordinates the points are reported in.
     weak var canvas: PKCanvasView?
 
     private var activeTouch: UITouch?
     private var points: [CGPoint] = []
-    private var restLocation: CGPoint?
+    /// Where the current period of stillness started, and when.
+    private var anchor: CGPoint?
+    private var anchorTime: CFTimeInterval = 0
     private var timer: Timer?
     private var didHold = false
 
@@ -54,6 +76,8 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
         cancelsTouchesInView = false
         delaysTouchesBegan = false
         delaysTouchesEnded = false
+        // Without this a pencil touch and the finger touches around it are
+        // treated as different gestures and ours is never offered the pen.
         requiresExclusiveTouchType = false
     }
 
@@ -72,9 +96,9 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
         }
         activeTouch = touch
         points = [drawingLocation(of: touch)]
-        restLocation = touch.location(in: view)
         didHold = false
-        restartTimer()
+        restAt(touch.location(in: view))
+        onBegin()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -85,15 +109,19 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
             points.append(drawingLocation(of: sample))
         }
         let location = touch.location(in: view)
-        if let rest = restLocation, hypot(location.x - rest.x, location.y - rest.y) <= stillnessTolerance {
+        guard let anchor else { return restAt(location) }
+
+        if hypot(location.x - anchor.x, location.y - anchor.y) > stillnessTolerance {
+            if didHold {
+                didHold = false
+                onHoldBroken()
+            }
+            restAt(location)
             return
         }
-        restLocation = location
-        if didHold {
-            didHold = false
-            onHoldBroken()
-        }
-        restartTimer()
+        // Still within the tolerance of where it went quiet: this is the
+        // hold, if it has lasted long enough.
+        checkForHold()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -108,10 +136,7 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
         guard let touch = activeTouch, touches.contains(touch) else { return }
         stopTimer()
         let held = didHold
-        activeTouch = nil
-        points = []
-        restLocation = nil
-        didHold = false
+        clearTouchState()
         // .failed rather than .recognized: failing resets the recognizer
         // without cancelling anyone else's touches.
         state = .failed
@@ -121,23 +146,47 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
     override func reset() {
         super.reset()
         stopTimer()
+        clearTouchState()
+    }
+
+    private func clearTouchState() {
         activeTouch = nil
         points = []
-        restLocation = nil
+        anchor = nil
         didHold = false
     }
 
     deinit {
-        stopTimer()
+        timer?.invalidate()
     }
 
     // MARK: Hold
 
+    /// The pencil is (newly) at rest here; the hold clock starts again.
+    private func restAt(_ location: CGPoint) {
+        anchor = location
+        anchorTime = CACurrentMediaTime()
+        restartTimer()
+    }
+
     private func restartTimer() {
         stopTimer()
-        timer = Timer.scheduledTimer(withTimeInterval: holdDuration, repeats: false) { [weak self] _ in
-            self?.timerFired()
-        }
+        // Target/selector rather than the closure form: the closure is
+        // `@Sendable` and this recognizer is main-actor, so the closure
+        // version can't touch it without an isolation dance. A one-shot
+        // timer holds its target only until it fires.
+        let timer = Timer(timeInterval: holdDuration, target: self,
+                          selector: #selector(holdTimerFired), userInfo: nil, repeats: false)
+        // `.common` and not the default mode: a pencil down on the canvas
+        // puts the run loop in tracking mode, where a default-mode timer
+        // does not fire at all. This one line is most of why the hold was
+        // unreliable.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    @objc private func holdTimerFired() {
+        checkForHold()
     }
 
     private func stopTimer() {
@@ -145,13 +194,23 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
         timer = nil
     }
 
-    private func timerFired() {
+    /// Fires the hold if the pencil is down, has been still long enough,
+    /// and has actually drawn something.
+    private func checkForHold() {
         guard activeTouch != nil, !didHold else { return }
+        guard CACurrentMediaTime() - anchorTime >= holdDuration else { return }
         // A still pencil that hasn't drawn anything yet is a dot, not a
         // shape being held.
         guard ShapeRecognizer.pathLength(points) >= ShapeRecognizer.minimumPathLength else { return }
-        didHold = true
-        onHold(points)
+        if onHold(points) {
+            didHold = true
+            stopTimer()
+        } else {
+            // Nothing recognizable yet. Offer again after another interval
+            // rather than giving up for the rest of the stroke.
+            anchorTime = CACurrentMediaTime()
+            restartTimer()
+        }
     }
 
     // MARK: Geometry
@@ -189,22 +248,36 @@ final class ShapeSnapController {
     private(set) var pending: ShapeRecognizer.RecognizedShape?
     /// Shows or hides the preview of what the stroke will snap to.
     var onPreview: (ShapeRecognizer.RecognizedShape?) -> Void = { _ in }
+    /// Solid / dashed / dotted, pushed in from the toolbar's pen options.
+    var lineStyle: ShapeLineStyle = .solid
+
+    /// How long after the pencil lifts a pending shape is still applied.
+    /// The commit normally lands on the same run-loop turn; this only has
+    /// to outlast a busy one. A new stroke clears it regardless, which is
+    /// the real protection against a stale shape landing on later ink.
+    private static let commitWindow: TimeInterval = 1.5
+
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
-    private var expiry: Task<Void, Never>?
+    private var liftedAt: CFTimeInterval?
 
     func attach(to recognizer: ShapeHoldRecognizer) {
-        recognizer.onHold = { [weak self] points in self?.hold(points) }
+        recognizer.onHold = { [weak self] points in self?.hold(points) ?? false }
         recognizer.onHoldBroken = { [weak self] in self?.clear() }
+        recognizer.onBegin = { [weak self] in self?.clear() }
         recognizer.onEnd = { [weak self] held in self?.strokeEnded(held: held) }
     }
 
-    private func hold(_ points: [CGPoint]) {
-        guard let shape = ShapeRecognizer.recognize(points) else { return }
+    /// Returns whether the hold was taken - false means nothing was
+    /// recognized, and the recognizer will offer again as the stroke grows.
+    private func hold(_ points: [CGPoint]) -> Bool {
+        guard let shape = ShapeRecognizer.recognize(points) else { return false }
         pending = shape
+        liftedAt = nil
         // The haptic is what tells the hand the hold registered, before it
         // lifts.
         haptic.impactOccurred()
         onPreview(shape)
+        return true
     }
 
     private func strokeEnded(held: Bool) {
@@ -212,35 +285,41 @@ final class ShapeSnapController {
             clear()
             return
         }
-        // The commit is expected on this same run-loop turn or the next.
-        // If it never comes (the stroke was cancelled), don't let a stale
-        // shape replace some later stroke.
-        expiry?.cancel()
-        expiry = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            self?.clear()
-        }
+        liftedAt = CACurrentMediaTime()
+        onPreview(nil)
     }
 
     /// Called from `canvasViewDrawingDidChange`. If a snap is pending, the
     /// stroke just committed (the last one) is replaced with the recognized
-    /// shape, undoably, in the ink of the tool that drew it. Returns whether
-    /// it did.
+    /// shape, undoably, in the ink of the stroke it replaces. Returns
+    /// whether it did.
     func applyIfPending(to canvasView: PKCanvasView) -> Bool {
-        guard let shape = pending else { return false }
-        clear()
-        guard let tool = canvasView.tool as? PKInkingTool,
+        // `liftedAt` being nil is fine: PencilKit commits the stroke on
+        // touch-up, and whether that lands before or after our own
+        // `touchesEnded` is not ordered. Requiring the lift first would
+        // drop the snap whenever the commit won the race.
+        guard let shape = pending,
+              liftedAt.map({ CACurrentMediaTime() - $0 < Self.commitWindow }) ?? true,
               !canvasView.drawing.strokes.isEmpty else { return false }
+        clear()
+
         var strokes = canvasView.drawing.strokes
-        strokes[strokes.count - 1] = ShapeRecognizer.stroke(for: shape, tool: tool)
+        let source = strokes.removeLast()
+        // Weight, pressure and ink all come from the stroke being replaced,
+        // so the shape is the same mark the hand just made. `tool` is only
+        // the fallback for a source stroke with no points.
+        let spec = ShapeRecognizer.spec(
+            matching: source,
+            tool: canvasView.tool as? PKInkingTool,
+            style: lineStyle
+        )
+        strokes.append(contentsOf: ShapeRecognizer.strokes(for: shape, spec: spec))
         canvasView.setDrawingUndoably(PKDrawing(strokes: strokes))
         return true
     }
 
     func clear() {
-        expiry?.cancel()
-        expiry = nil
+        liftedAt = nil
         if pending != nil {
             pending = nil
             onPreview(nil)
@@ -254,6 +333,7 @@ final class ShapeSnapController {
 struct ShapePreviewView: View {
     var shape: ShapeRecognizer.RecognizedShape
     var tool: PKInkingTool?
+    var lineStyle: ShapeLineStyle = .solid
 
     var body: some View {
         Canvas { context, _ in
@@ -263,7 +343,21 @@ struct ShapePreviewView: View {
             for point in shape.outline.dropFirst() { path.addLine(to: point) }
             let color = tool.map { Color(uiColor: $0.color) } ?? .accentColor
             let width = tool?.width ?? 3
-            context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            context.stroke(
+                path,
+                with: .color(color),
+                style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dashPattern(width: width))
+            )
+        }
+    }
+
+    /// Mirrors `ShapeRecognizer`'s dash lengths so the preview is what you
+    /// get.
+    private func dashPattern(width: CGFloat) -> [CGFloat] {
+        switch lineStyle {
+        case .solid: return []
+        case .dashed: return [max(width * 4, 6), max(width * 3, 4.5)]
+        case .dotted: return [max(width * 0.35, 0.5), max(width * 2, 3)]
         }
     }
 }

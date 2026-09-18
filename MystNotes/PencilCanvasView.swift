@@ -213,6 +213,10 @@ struct PencilCanvasView: UIViewRepresentable {
     /// pencil lifts, or nil when there's none - drawn as a preview over the
     /// page. See `ShapeHoldRecognizer`.
     var onShapePreview: (ShapeRecognizer.RecognizedShape?) -> Void = { _ in }
+    /// Solid / dashed / dotted for those snapped shapes.
+    var shapeLineStyle: ShapeLineStyle = .solid
+    /// An image arrived by paste (⌘V) or a drag from Finder/Files.
+    var onPasteImage: (Data) -> Void = { _ in }
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -233,6 +237,8 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
+        context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        host.onPasteImage = onPasteImage
 
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity)
 
@@ -263,6 +269,8 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
+        context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        host.onPasteImage = onPasteImage
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity, forceRefit: canvasChanged)
 
         if canvasChanged {

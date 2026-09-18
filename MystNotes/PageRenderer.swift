@@ -38,9 +38,14 @@ enum PageRenderer {
             $0.image(from: CGRect(origin: .zero, size: nominal), scale: scale)
         }
 
+        let template = page.template
         return UIGraphicsImageRenderer(size: nominal, format: format).image { context in
             UIColor.white.setFill()
             context.fill(CGRect(origin: .zero, size: nominal))
+            // The paper's own ruling, under everything - an export of a
+            // lined page used to come out blank whether or not anything had
+            // been imported onto it.
+            PageTemplate.draw(template, in: nominal, context: context.cgContext)
 
             if let backgroundImage {
                 let rect = ImportedArtwork.placedRect(
