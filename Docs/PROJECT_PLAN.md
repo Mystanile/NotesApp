@@ -301,16 +301,16 @@ Smaller than it was, because the toolbar, export, image editing, settings and on
 - ~~**Real PDF annotation.**~~ **Done Sept 25, 2026, except text selection.** The premise was out of date: `b22cda6` already kept the whole PDF (no JPEG) and put its text in search. What was left: the page was a 2.5x bitmap, soft as soon as you zoomed in to write, and export flattened it to a bitmap with no text. Now a PDF page is redrawn as vectors by a `CATiledLayer` at the zoom it's shown at, and export draws it as vectors, so an exported PDF keeps its real text. Selecting, copying and highlighting PDF text is in `BACKLOG.md`.
 - ~~**Rebuild the shape tool**~~ **Done Sept 15, 2026; second pass Sept 18** (`Docs/TOOL_FIXES.md` Part 1). Classifier with corner detection, sharp corners via control-point multiplicity, rotated rectangles, triangles and arrows, hold-to-snap replacing the armed mode, `ShapeDrawingOverlay` deleted. The second pass fixed what field use found: the hold timer never firing in tracking mode, lines classified as arrows, shapes drawn at the tool's heaviest mark rather than the weight of the stroke they replace, no axis snap on lines, and no dashed/dotted option. 29 tests. Still owed on the iPad: that the recognizer gets the Pencil's touch during a PencilKit stroke.
 - ~~**Images on a page**~~ **Done Sept 18, 2026** (`Docs/TOOL_FIXES.md` Part 3). An import no longer replaces the page's template — paper, template, artwork, ink is one stack shared by the editor, the thumbnails and the exporter, neither of which drew a template at all before. Artwork loading moved to a shared `BitmapStore` that can't drop a completed render, which is what left pages white after a page turn. Import now also accepts Files/Finder, ⌘V and a drag, with the type read from the file's own header.
-- **Fix or hide the fill tool** (`Docs/TOOL_FIXES.md` Part 2): instrument first to find where the tap coordinate goes wrong under page zoom, then fix. If it isn't quick, remove it from the toolbar until it works.
-- Lasso upgrades: cross-page move, **convert to text** (the Vision pipeline already exists), resize, recolor, copy as image
-- Per-page templates, custom page sizes, imported templates, a starting template library. `Page.aspectRatio` means the model is half done, and `PageTemplate` (Sept 18) is now the single renderer any new ruling plugs into.
-- Favorites, bookmarks, page outline / jump bar
+- ~~**Fix or hide the fill tool**~~ **Done Sept 25, 2026** (`Docs/TOOL_FIXES.md` Part 2): the strokes were too thin to render; now one erasable stroke per fill, confirmed on the iPad.
+- ~~Lasso upgrades~~ **Done Sept 25, 2026:** convert to text, resize (pinch and corner handles), recolour, copy as image. Cross-page move is cut, turn the page, paste.
+- ~~Per-page templates, custom page sizes, imported templates~~ **Done Sept 25, 2026:** Engineering and Cornell paper, sizes for new pages, a page's paper changeable, New Page Like This for an imported PDF template.
+- ~~Favorites, bookmarks, page outline / jump bar~~ **Done Sept 25, 2026**, plus searchable page names.
 - Text formatting in typed blocks: bold/italic, headings, bullets, checklists — **and font, size, colour; reported Sept 12, 2026: today a text block can only be typed into and moved**
-- Stickers: resize (and rotate) — **reported Sept 12, 2026: today they can only be moved**
-- Scribble-to-erase; toolbar customization; pen presets
-- Export additions: layered PDF, markdown for typed content, whole-library zip
-- Note lock via Face ID
-- Off-device backup target
+- ~~Stickers: resize (and rotate)~~ **Done Sept 25, 2026.**
+- Scribble-to-erase (already built); ~~toolbar customization; pen presets~~ **done Sept 25, 2026**
+- Export additions: ~~markdown for typed content, whole-library zip~~ **done Sept 25, 2026**; "layered PDF" still needs defining
+- ~~Note lock via Face ID~~ **Done Sept 25, 2026.**
+- ~~Off-device backup target~~ **Done Sept 25, 2026:** a daily zip in the sync folder's layout to any folder Files reaches; restorable.
 
 **Exit:** a GoodNotes user can do a full day of classes without hitting a wall.
 

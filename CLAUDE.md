@@ -16,9 +16,9 @@ Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASEL
 
 ## Current state (read this before proposing anything)
 
-**~14,200 lines of Swift in 56 app files, plus ~4,400 lines of tests in 14 files (171 tests, all green). All earlier branches merged into `main` on Sept 25, 2026; M1 work branches off `main`. Far more is built than a phase list suggests.**
+**~16,900 lines of Swift in 66 app files, plus ~6,300 lines of tests in 30 files (231 tests, all green). All earlier branches merged into `main` on Sept 25, 2026. The M1 batch of Sept 25 sits unmerged on `m1-batch-2026-09-25` (on top of `m1-artwork-editing`), waiting for a pass on the iPad. Far more is built than a phase list suggests.**
 
-Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, our own lasso (move, pinch-resize, rotate, cut/copy/paste/duplicate — `InkSelection`, Sept 19, 2026; the whiteboard still has PencilKit's), shape recognition (hold-to-snap, solid/dashed/dotted), fill/bucket tool, per-page canvas with real zoom, PDF and image import from Photos / Files / ⌘V / drag with crop/rotate/resize (any number per page, stacked — Sept 19, 2026), nested folders, notebook covers, thumbnail strip, four templates (drawn under imported artwork, and in thumbnails and exports), whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
+Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, our own lasso (move, pinch-resize, rotate, cut/copy/paste/duplicate — `InkSelection`, Sept 19, 2026; the whiteboard still has PencilKit's), shape recognition (hold-to-snap, solid/dashed/dotted), fill/bucket tool, per-page canvas with real zoom, PDF and image import from Photos / Files / ⌘V / drag with crop/rotate/resize (any number per page, stacked — Sept 19, 2026), nested folders, notebook covers, thumbnail strip, four templates (drawn under imported artwork, and in thumbnails and exports), whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync. Added Sept 25, 2026 (`m1-batch-2026-09-25`): the mouse draws on a Mac, stickers resize/rotate, stickers/links/text in exports and thumbnails with working PDF links, lasso recolour/copy-as-image/convert-to-text, Engineering and Cornell paper, page sizes, favourites/bookmarks/page names/outline, Markdown and whole-library export, note lock, document scanning, pen presets, text-box lists, lasso corner handles, toolbar choices, daily backup, trash restore, New Page Like This.
 
 **~~One shipped tool is broken (M1).~~ Both are fixed.** ~~The shape tool~~ — rebuilt Sept 15, 2026 and given a second pass Sept 18 after field use: the hold timer was scheduled in the default run-loop mode, which never fires while a pencil is down (`.common` now, plus an elapsed-time check in `touchesMoved`); a line with a hook on the end came back as an arrow; snapped shapes were drawn at the tool's heaviest possible mark instead of the weight of the stroke they replace; lines didn't snap to the axes; there were no dashed or dotted shapes. All fixed, 29 tests. Still owed on the iPad: that the host's recognizer receives the Pencil touch during a PencilKit stroke. ~~The fill tool~~ fixed Sept 25, 2026 after logging on the iPad showed the coordinates were right all along: its strokes were too thin for PencilKit to draw (`TOOL_FIXES.md` Part 2). Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md` — part 4 is the lasso rebuild (Sept 19), part 3 covers the imported-image bugs fixed Sept 18 (a photo import wiped the page template; artwork vanished on page turns; no Files/paste/drag import on a Mac).
 
@@ -133,6 +133,9 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - **An incremental `xcodebuild test` has run stale app code after an app-source edit** — twice on Sept 25, 2026, once each way (a new test passed that should have failed; a fix showed no effect). When a result is surprising, or when proving a test fails without a fix, run `xcodebuild clean test`.
 - **A `CATiledLayer` under a SwiftUI `.scaleEffect` draws its tiles at zoom × screen scale**, including when the zoom changes while it's on screen (measured Sept 25, 2026). That is what keeps imported PDFs sharp without moving them into the canvas's scroll view. Its tiles draw on background threads, so the layer subclass is `nonisolated` with a lock (`PDFTileLayer`).
 - **A test that needs something on screen needs a window with a scene:** `UIWindow(windowScene:)` from `UIApplication.shared.connectedScenes`. `UIWindow(frame:)` is never shown, and nothing in it draws.
+- **A test run chained with `;` commits even when it fails.** Gate a commit on the run: write the result to a file and `grep -q "TEST SUCCEEDED"` before `git commit` (Sept 25, 2026: one commit went in over a timing failure that later passed).
+- **The 200-notebook performance test is load-sensitive.** 10 s alone, 46 s once in a full run while Xcode indexed. Before treating a failure as a regression, rerun it alone on a quiet machine.
+- **Driving the Mac app: only as a copy under another bundle id** (`PRODUCT_BUNDLE_IDENTIFIER=com.mozynas.Mystnotes.agenttest`), which has its own empty container and no sync folder - the real app's container is the user's library. Mouse events through a CGEvent helper; check the topmost window at the point before every click (a terminal takes focus when it prints).
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
@@ -181,13 +184,16 @@ Already done early: shape tool rebuild (Sept 15/18), images on a page with stack
 
 1. ~~**Fill tool**~~ — done Sept 25, 2026, confirmed on the iPad (`TOOL_FIXES.md` Part 2): one erasable stroke per fill, the pen's colour, pan/zoom while selected, no gap at the outline.
 2. ~~**Real PDF annotation**~~ — done Sept 25, 2026 on `m1-pdf-vectors`: PDF pages sharp at every zoom (vector tiles over the bitmap), export keeps the PDF's real text. Owed: a look on the iPad zoomed to 5x. Text selection is in the backlog.
-3. Lasso: convert to text, recolor, cross-page move, copy as image.
-4. Per-page templates, custom page sizes, imported templates.
-5. Favorites, bookmarks, page outline.
-6. Sticker resize and rotate; stickers and link anchors in exports.
-7. Pen on Mac (reproduce first).
-8. Export additions: layered PDF, markdown, whole-library zip.
-9. Note lock via Face ID; off-device backup target.
+3. ~~Lasso~~ — recolour, copy as image, convert to text done Sept 25 (`LassoActionsTests`); cross-page move is cut, turn the page, paste. Corner handles for a Mac.
+4. ~~Templates~~ — Engineering and Cornell paper, page sizes for new pages, change a page's paper, New Page Like This for an imported template.
+5. ~~Favourites, bookmarks, page outline~~ — plus page names (searchable). Syncs.
+6. ~~Stickers~~ — resize/rotate (syncs); stickers and link anchors in exports, real PDF links.
+7. ~~Pen on Mac~~ — `.pencilOnly` meant nothing drew on a Mac; verified with a test-bundle copy on this Mac.
+8. ~~Export additions~~ — Markdown, whole-library zip. "Layered PDF" is still undefined; the export is vector PDF under a raster ink layer.
+9. ~~Note lock; off-device backup~~ — Face ID/passcode gate; daily backup in the sync layout to a chosen folder, restorable.
+10. Also done: document scanning (searchable), pen presets, bullets/checklists in text boxes, toolbar choices, trash restore.
+
+**Owed on the iPad before M1 exits** — none of it can be checked in the simulator: the `[adjust]` log from one image resize (the resize-preview bug didn't reproduce; `BACKLOG.md`), sticker pinch/rotate, lasso corner handles and toolbar, Convert to Text on real handwriting, Rotate Page, Delete Page undo, note lock with Face ID, scanning, and a backup to a real Dropbox/Drive folder.
 
 **M1 exit:** a GoodNotes user can do a full day of classes without hitting a wall.
 

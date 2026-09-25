@@ -10,7 +10,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 - [M1, from M0] `MystNotesDetailView` is 1365 lines. Not urgent, but it will fight you during M2/M3. Split it as its own commit when it starts hurting, not as a side effect.
 - [M1] `copyFiles` is best-effort and silently skips a file that hasn't synced yet. Surface that as a visible "N files still downloading" state rather than a silent partial pull.
-- [M1] Export currently covers page and notebook. Add whole-library export as the trust feature.
+- ~~[M1] Export currently covers page and notebook. Add whole-library export as the trust feature.~~ **Done Sept 25, 2026** (Settings > Export Library).
 - [M2] `Link` has an anchor rect already — reuse it for graph edge anchors rather than inventing a second anchoring model
 - [M3] `Page.ocrUpdatedAt` vs drawing file mtime is the existing staleness check. The stroke timeline gives a better signal; revisit then.
 - [?] `LoginView` exists but there's no backend. Decide whether it stays, becomes a local profile, or gets removed before ship.
@@ -35,11 +35,11 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 ## Reported during the first two-device run (Sept 12, 2026)
 
-- [M1] Pen on Mac: reported as not usable. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
+- ~~[M1] Pen on Mac: reported as not usable.~~ **Fixed Sept 25, 2026:** both canvases were `.pencilOnly`. Strokes *were* drawn on the Mac in the same session, so this is a specific tool or input path. Reproduce first. See PROJECT_PLAN M5 note.
 - ~~[M1] Typed text blocks: no font, size, bold/italic, colour controls - only typing and moving.~~ **Done Sept 15, 2026**: font design (system/serif/rounded/mono), size, bold, italic, colour, and a corner resize handle; typography syncs (`TextBlockDTO` optionals, `testTextBlockTypography_reachesTheOtherDevice_andOldSnapshotsStillDecode`) and exports (`PageRenderer.drawTextBlocks`).
-- [M1] Page thumbnails don't composite typed text blocks (export does, since Sept 15). At 60×80 it hardly shows. **Thumbnails got their real cache Sept 18 (`PageBitmaps.thumbnails`), so the reason to wait is gone** — add it to `PageThumbnailRenderer.render` next to the artwork draw.
-- [M1] Stickers and link anchors aren't drawn in exports either (invariant 9). Same shape as `PageRenderer.drawTextBlocks`.
-- [M1] Stickers: no resize or rotate - only move.
+- ~~[M1] Page thumbnails don't composite typed text blocks~~ **Done Sept 25, 2026** (`PageElements`). (export does, since Sept 15). At 60×80 it hardly shows. **Thumbnails got their real cache Sept 18 (`PageBitmaps.thumbnails`), so the reason to wait is gone** — add it to `PageThumbnailRenderer.render` next to the artwork draw.
+- ~~[M1] Stickers and link anchors aren't drawn in exports either~~ **Done Sept 25, 2026**, with real PDF links. (invariant 9). Same shape as `PageRenderer.drawTextBlocks`.
+- ~~[M1] Stickers: no resize or rotate - only move.~~ **Done Sept 25, 2026.**
 - ~~[M0, open] iPad freezes on entering Airplane Mode~~ **Closed Sept 13, 2026, verified on device** ("didn't freeze"; log shows every sync run and the watcher setup on the background thread). It was never Airplane Mode: four successive launch-time main-thread hangs, 6–8 s each, in sync setup — the runner, `startWatchingFolder`, the `start` closure capturing `self`, the watcher closure capturing a `@MainActor` callback — each hit while the test was starting. Root cause for all four: default MainActor isolation making `Task.detached` closures main-actor whenever they capture anything main-actor-typed. Rule and test in CLAUDE.md. One launch hang remains with checkpoint "(none)" — before sync starts; launch-path checkpoints added and thumbnails moved off main to find/fix it.
 - ~~[M1] `FillTool` computes its flood fill in a `Task.detached` formed inside a main-actor view, so under default MainActor isolation it runs on the main thread. A hitch on large fills, same species as the sync engine bug; move the computation into a `nonisolated` static.~~ **Not so, measured Sept 25, 2026:** `FillToolTests` logs the flood on a background thread, not on main.
 - [M1] PencilKit crash in undo on the whiteboard canvas (`-[PKTiledView updateTilesForVisibleRect…]` under `WhiteboardCanvasView` undo, Sept 10 crash log). Reproduce: draw on a whiteboard, undo via the shortcut. Likely undoing across a canvas swap.
@@ -82,9 +82,18 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Text blocks, stickers and link anchors keep their size when a page rotates while the ink scales with the page (by 1/aspect). Scaling them too is one more multiply each, if it looks wrong in use.
 - [M1] Two background ink saves of one page aren't ordered (`saveDetached` tasks), so an older one can land last. Pre-existing; Rotate Page saves blocking but can't stop an older detached save still in flight. A per-page serial queue in `DrawingStore` would close it.
 
+## Left from the M1 batch (Sept 25, 2026)
+
+- [M1] A pull that holds pages back because their files haven't downloaded still reports "synced". The pages are retried on the next pull, but the status should say "waiting for N pages". Needs `SyncRunner.run` to report its deferred set; a sync change, so it wants a failing test first.
+- [M1] The whiteboard still has PencilKit's lasso: no recolour, convert, handles. Installing `InkSelectionController` there needs its viewport checked on screen first.
+- [M1] "Layered PDF" export isn't defined. Today: vector PDF artwork, raster ink on top, text and stickers drawn over. Decide what layers mean (optional content groups a reader can toggle?) before building.
+- [M1] Scanned pages' text is an invisible layer in the PDF; selecting it in the app isn't possible until PDF text selection exists (see above).
+- [M1] Pen presets and toolbar choices live in `UserDefaults` per device, not in the sync folder. Syncing them would need a settings file in the folder.
+- [M1] A notebook locked on another device, on a device with no passcode, can't be opened there at all (by design). Settings says so on the lock screen; revisit if it bites.
+
 ## Parked from planning (Sept 12, 2026)
 
-- [M1] Scanned document capture with `VisionKit` + Live Text — Apple Notes parity, cheap
+- ~~[M1] Scanned document capture with `VisionKit` + Live Text~~ **Done Sept 25, 2026**, with an invisible text layer so scans are searchable.
 - [M1] Collapsible sections, tables, checklists in typed content
 - [M2] Graph clustering / level-of-detail rendering — only needed above ~1000 nodes, benchmark first
 - [M2] Auto-suggested links from semantic similarity — depends on M4 embeddings, so sequence after
