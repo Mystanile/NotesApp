@@ -82,7 +82,16 @@ struct LibraryView: View {
         }
         .modifier(SearchableModifier(text: $searchText, enabled: parentFolder == nil))
         .sheet(isPresented: $showingSettings) {
-            SettingsView()
+            // A stack for Settings' own links (Restore Pages), and a Done
+            // for a Mac, where a sheet can't be swiped away.
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingSettings = false }
+                        }
+                    }
+            }
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .sheet(item: $pdfExportURL) { export in

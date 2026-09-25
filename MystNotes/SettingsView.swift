@@ -174,6 +174,9 @@ struct SettingsView: View {
             }
 
             Section {
+                #if canImport(UIKit)
+                NavigationLink("Restore Pages…") { RestoreTrashView(directories: localTrashDirectories) }
+                #endif
                 if trash.isEmpty {
                     Text("Nothing in the trash.")
                         .foregroundStyle(.secondary)
