@@ -284,6 +284,43 @@ final class InkSelectionController: NSObject {
         UIPasteboard.general.setData(InkSelection.pasteboardData(for: strokes), forPasteboardType: InkSelection.pasteboardType)
     }
 
+    /// The selection in another colour; still selected, one undo step.
+    func recolor(_ color: UIColor) {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
+        canvas.setDrawingUndoably(InkSelection.recoloring(canvas.drawing, indices: indices, to: color))
+        onDrawingChanged()
+    }
+
+    /// The selection as a picture on the clipboard, for other apps.
+    func copySelectionAsImage() {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing),
+              let image = InkSelection.image(of: InkSelection.strokes(of: canvas.drawing, indices: indices)) else { return }
+        UIPasteboard.general.image = image
+    }
+
+    /// The selected strokes and their bounds, for Convert to Text.
+    var selectedStrokes: (strokes: [PKStroke], bounds: CGRect)? {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return nil }
+        return (InkSelection.strokes(of: canvas.drawing, indices: indices), InkSelection.bounds(of: canvas.drawing, indices: indices))
+    }
+
+    /// Removes exactly these strokes - matched by id, not by what happens
+    /// to be selected now - or nothing, if any of them has gone or changed
+    /// since. Convert to Text reads the ink for a second or two; the user
+    /// may have moved on.
+    @discardableResult
+    func delete(exactly strokes: [PKStroke]) -> Bool {
+        guard let canvas else { return false }
+        let wanted = strokes.map(StrokeIDMap.Fingerprint.init)
+        let present = canvas.drawing.strokes.map(StrokeIDMap.Fingerprint.init)
+        let indices = wanted.compactMap { present.firstIndex(of: $0) }
+        guard indices.count == wanted.count else { return false }
+        canvas.setDrawingUndoably(InkSelection.removing(canvas.drawing, indices: indices))
+        clear()
+        onDrawingChanged()
+        return true
+    }
+
     func cutSelection() {
         copySelection()
         delete()

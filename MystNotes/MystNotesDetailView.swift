@@ -641,6 +641,9 @@ struct NotebookDetailView: View {
                         onPaste: { inkSelection.paste() },
                         onDuplicate: { inkSelection.duplicate() },
                         onDelete: { inkSelection.delete() },
+                        onRecolor: { inkSelection.recolor($0.fixedUIColor) },
+                        onCopyAsImage: { inkSelection.copySelectionAsImage() },
+                        onConvertToText: { convertSelectionToText(on: page) },
                         onDone: { inkSelection.clear() }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1611,6 +1614,58 @@ struct NotebookDetailView: View {
     #endif
 
     // MARK: - Page elements
+
+    /// Lasso → Convert to Text: the selection's handwriting, read by the
+    /// same Vision pipeline search uses, becomes a text box where the ink
+    /// was, and the ink goes - one undo step that brings the ink back and
+    /// takes the box away.
+    private func convertSelectionToText(on page: Page) {
+        guard let selection = inkSelection.selectedStrokes else { return }
+        let canvas = canvasView
+        Task {
+            let recognized = await HandwritingRecognizer.text(in: PKDrawing(strokes: selection.strokes), separator: "\n")
+            guard canvasView === canvas else { return }
+            guard let text = recognized?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                exportMessage = "Couldn't read any handwriting in the selection."
+                return
+            }
+            canvas.undoManager?.beginUndoGrouping()
+            defer {
+                canvas.undoManager?.endUndoGrouping()
+                refreshUndoRedoState()
+            }
+            guard inkSelection.delete(exactly: selection.strokes) else { return }
+            let lines = max(text.split(separator: "\n").count, 1)
+            var block = TextBlockSnapshot(id: UUID(), content: text)
+            block.frame = CGRect(x: selection.bounds.minX - 6, y: selection.bounds.minY - 6,
+                                 width: max(selection.bounds.width + 12, 120), height: selection.bounds.height + 12)
+            block.fontSize = min(max(Double(selection.bounds.height) / Double(lines) * 0.6, 12), 48)
+            setTextBlock(block, present: true, on: page)
+        }
+    }
+
+    /// Adds or removes one text box and registers the opposite on the
+    /// page's undo stack (so undo registers redo).
+    private func setTextBlock(_ snapshot: TextBlockSnapshot, present: Bool, on page: Page) {
+        if present {
+            let block = TypedTextBlock(content: snapshot.content, page: page)
+            block.id = snapshot.id
+            (block.frameX, block.frameY) = (snapshot.frame.minX, snapshot.frame.minY)
+            (block.frameWidth, block.frameHeight) = (snapshot.frame.width, snapshot.frame.height)
+            block.fontSize = snapshot.fontSize
+            modelContext.insert(block)
+            page.textBlocks = (page.textBlocks ?? []) + [block]
+        } else if let block = page.textBlocks?.first(where: { $0.id == snapshot.id }) {
+            page.textBlocks?.removeAll { $0.id == snapshot.id }
+            modelContext.delete(block)
+        }
+        page.markModified()
+        saveMetadata("Failed to save text block")
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in
+            setTextBlock(snapshot, present: !present, on: page)
+        }
+    }
 
     private func addTextBlock() {
         guard let page = currentPage else { return }

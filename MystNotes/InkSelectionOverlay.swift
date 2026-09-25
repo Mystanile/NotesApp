@@ -46,7 +46,12 @@ struct InkSelectionToolbar: View {
     var onPaste: () -> Void
     var onDuplicate: () -> Void
     var onDelete: () -> Void
+    var onRecolor: (Color) -> Void = { _ in }
+    var onCopyAsImage: () -> Void = {}
+    var onConvertToText: () -> Void = {}
     var onDone: () -> Void
+
+    private let colors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
 
     var body: some View {
         HStack(spacing: 4) {
@@ -56,6 +61,21 @@ struct InkSelectionToolbar: View {
                 .disabled(!canPaste)
                 .opacity(canPaste ? 1 : 0.4)
             iconButton("plus.square.on.square", help: "Duplicate", action: onDuplicate)
+            Divider().frame(height: 24)
+            Menu {
+                ForEach(colors, id: \.self) { color in
+                    Button { onRecolor(color) } label: {
+                        Label { Text(color.description.capitalized) } icon: {
+                            Image(systemName: "circle.fill").foregroundStyle(color)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "paintpalette").font(.system(size: 17)).frame(width: 36, height: 34)
+            }
+            .help("Colour")
+            iconButton("photo", help: "Copy as Image", action: onCopyAsImage)
+            iconButton("character.textbox", help: "Convert to Text", action: onConvertToText)
             Divider().frame(height: 24)
             iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
             Divider().frame(height: 24)

@@ -50,6 +50,34 @@ nonisolated enum InkSelection {
 
     // MARK: Changing
 
+    /// The selected strokes in `color`, keeping each one's own opacity (a
+    /// highlighter stays see-through) and ink type. Only the ink changes,
+    /// so every stroke keeps its creation date and seed - its id.
+    static func recoloring(_ drawing: PKDrawing, indices: [Int], to color: UIColor) -> PKDrawing {
+        var strokes = drawing.strokes
+        for index in indices {
+            var alpha: CGFloat = 1
+            strokes[index].ink.color.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+            strokes[index].ink = PKInk(strokes[index].ink.inkType, color: color.withAlphaComponent(alpha))
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
+    /// The strokes as a picture - for the clipboard, to paste into another
+    /// app. Light mode, like every off-screen ink render (see the gotcha),
+    /// on a transparent background with a small margin.
+    static func image(of strokes: [PKStroke], scale: CGFloat = 2) -> UIImage? {
+        let drawing = PKDrawing(strokes: strokes)
+        let bounds = drawing.bounds.insetBy(dx: -8, dy: -8)
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { return nil }
+        var image: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            image = drawing.image(from: bounds, scale: scale)
+        }
+        return image
+    }
+
+
     /// The same drawing with `transform` applied on top of whatever
     /// transform the selected strokes already carry.
     static func transforming(_ drawing: PKDrawing, indices: [Int], by transform: CGAffineTransform) -> PKDrawing {

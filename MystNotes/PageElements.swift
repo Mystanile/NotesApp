@@ -142,4 +142,13 @@ extension PageElements {
         }
     }
 }
+
+/// What Convert to Text puts on the page, kept as a value so undo can take
+/// the box away and redo put the same one back.
+struct TextBlockSnapshot {
+    var id: UUID
+    var content: String
+    var frame: CGRect = .zero
+    var fontSize: Double = 17
+}
 #endif

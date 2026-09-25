@@ -80,7 +80,16 @@ nonisolated enum HandwritingRecognizer {
         guard let drawing = DrawingStore.live.load(pageID: pageID) else {
             return nil
         }
+        return await text(in: drawing)
+#else
+        return nil
+#endif
+    }
 
+#if canImport(UIKit)
+    /// The text in some ink - a page's, or a lasso selection's (Convert to
+    /// Text). Lines come back in reading order, joined by `separator`.
+    static func text(in drawing: PKDrawing, separator: String = " ") async -> String? {
         // Inset the ink bounds a little so strokes at the very edge aren't
         // clipped. A blank/empty drawing yields an empty (or null) bounds.
         let bounds = drawing.bounds.insetBy(dx: -20, dy: -20)
@@ -133,12 +142,10 @@ nonisolated enum HandwritingRecognizer {
             // One candidate per text observation, in reading order.
             let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             guard !lines.isEmpty else { return nil }
-            return lines.joined(separator: " ")
+            return lines.joined(separator: separator)
         }.value
-#else
-        return nil
-#endif
     }
+#endif
 
     /// Re-recognizes a page's handwriting only if its drawing changed since the
     /// last OCR, then persists the cache. Safe to call from a background task.
