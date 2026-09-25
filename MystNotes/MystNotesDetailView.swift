@@ -653,6 +653,7 @@ struct NotebookDetailView: View {
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { value in
+                                AppLog.note("fill", "tap \(value.location) in view, zoom \(viewport.zoomScale), offset \(viewport.contentOffset), canvas bounds \(canvasView.bounds.size), contentSize \(canvasView.contentSize), inset \(canvasView.contentInset)")
                                 performFill(at: viewport.pagePoint(from: value.location), on: page)
                             }
                     )
@@ -1637,9 +1638,11 @@ struct NotebookDetailView: View {
         let drawing = canvasView.drawing
         let size = PageGeometry.contentSize(for: page)
         let color = toolState.fillColor.fixedUIColor
+        AppLog.note("fill", "page point \(point), page size \(size), color \(color)")
         Task {
             guard let filled = await FillTool.fill(drawing, in: size, at: point, color: color) else { return }
             canvasView.setDrawingUndoably(filled)
+            AppLog.note("fill", "applied: canvas now has \(canvasView.drawing.strokes.count) strokes (was \(drawing.strokes.count))")
             scheduleAutosave()
         }
     }

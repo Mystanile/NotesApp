@@ -30,12 +30,17 @@ enum FillTool {
     /// Runs the raster + flood-fill work off the main actor; a page-sized
     /// fill touches ~1M pixels and shouldn't block drawing.
     static func fill(_ drawing: PKDrawing, in canvasSize: CGSize, at point: CGPoint, color: UIColor) async -> PKDrawing? {
-        guard canvasSize.width > 1, canvasSize.height > 1 else { return nil }
+        // ponytail: diagnostic logging for M1 task 1 (TOOL_FIXES Part 2); remove once the fill works.
+        guard canvasSize.width > 1, canvasSize.height > 1 else {
+            AppLog.note("fill", "rejected: canvasSize \(canvasSize) too small"); return nil
+        }
         let width = Int(canvasSize.width.rounded(.up))
         let height = Int(canvasSize.height.rounded(.up))
 
         let startX = Int(point.x), startY = Int(point.y)
-        guard startX >= 0, startX < width, startY >= 0, startY < height else { return nil }
+        guard startX >= 0, startX < width, startY >= 0, startY < height else {
+            AppLog.note("fill", "rejected: point \(point) outside \(width)x\(height)"); return nil
+        }
 
         // Render the existing ink so the fill can be bounded by it. Force
         // the light trait collection: PencilKit inverts ink colors in dark
@@ -45,17 +50,30 @@ enum FillTool {
         UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
             renderedInk = drawing.image(from: CGRect(origin: .zero, size: canvasSize), scale: 1)
         }
-        guard let cgImage = renderedInk?.cgImage else { return nil }
+        guard let cgImage = renderedInk?.cgImage else {
+            AppLog.note("fill", "rejected: ink render failed"); return nil
+        }
+        AppLog.note("fill", "rendered \(cgImage.width)x\(cgImage.height) px for \(width)x\(height) pt, \(drawing.strokes.count) strokes, bounds \(drawing.bounds)")
 
         let existingStrokes = drawing.strokes
         return await Task.detached(priority: .userInitiated) { () -> PKDrawing? in
-            guard let alpha = alphaMap(of: cgImage, width: width, height: height) else { return nil }
-            guard alpha[startY * width + startX] <= alphaThreshold else { return nil } // tapped directly on ink
+            guard let alpha = alphaMap(of: cgImage, width: width, height: height) else {
+                AppLog.note("fill", "rejected: alpha map failed"); return nil
+            }
+            let inked = alpha.reduce(0) { $0 + ($1 > alphaThreshold ? 1 : 0) }
+            let startAlpha = alpha[startY * width + startX]
+            AppLog.note("fill", "alpha at (\(startX),\(startY)) = \(startAlpha); inked pixels \(inked) of \(alpha.count)")
+            guard startAlpha <= alphaThreshold else {
+                AppLog.note("fill", "rejected: tapped on ink"); return nil
+            }
 
             let spans = scanlineFloodFill(alpha: alpha, width: width, height: height, startX: startX, startY: startY)
+            let area = spans.reduce(0) { $0 + $1.maxX - $1.minX + 1 }
+            AppLog.note("fill", "flood: \(spans.count) spans, \(area) px (\(area * 100 / max(alpha.count, 1))% of the page)")
             guard !spans.isEmpty else { return nil }
 
             let fillStrokes = strokes(for: spans, color: color)
+            AppLog.note("fill", "synthesized \(fillStrokes.count) strokes")
             guard !fillStrokes.isEmpty else { return nil }
             return PKDrawing(strokes: existingStrokes + fillStrokes)
         }.value
