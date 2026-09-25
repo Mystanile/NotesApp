@@ -47,6 +47,8 @@ nonisolated struct PageThumbnailRequest: Hashable, Sendable {
     var template: String
     /// The page's artwork, bottom first.
     var artwork: [ArtworkLayer]
+    /// Text and stickers, drawn over the ink as on the page.
+    var elements: PageElements = PageElements()
     var nominal: CGSize
     var output: CGSize
 }
@@ -73,7 +75,7 @@ nonisolated enum PageThumbnailRenderer {
                 layer.image(targetSize: request.nominal).map { (layer: layer, image: $0) }
             }
 
-            if artwork.isEmpty, PageTemplate.isEmpty(request.template) {
+            if artwork.isEmpty, PageTemplate.isEmpty(request.template), request.elements.isEmpty {
                 // Ink only, on blank paper: keep fitting to the ink's own
                 // bounds, which frames a small sketch legibly instead of
                 // shrinking it into a mostly empty page.
@@ -112,6 +114,7 @@ nonisolated enum PageThumbnailRenderer {
                     entry.image.draw(in: entry.layer.rect(for: entry.image, in: nominal))
                 }
                 ink?.draw(in: CGRect(origin: .zero, size: nominal))
+                request.elements.draw(in: nominal)
             }
         }.value
     }
@@ -220,6 +223,9 @@ struct PageThumbnailView: View {
                        page.modifiedAt.map { String($0.timeIntervalSince1970) } ?? "-"].joined(separator: "|"),
             template: page.template,
             artwork: ArtworkLayer.stack(for: page, documents: importedDocuments),
+            // No links: an anchor is a speck at this size, and fetching them
+            // here would be a query per cell.
+            elements: PageElements(page: page, links: []),
             nominal: nominalPageSize, output: renderSize
         )
     }

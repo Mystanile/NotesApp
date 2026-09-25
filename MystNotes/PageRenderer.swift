@@ -74,7 +74,8 @@ enum PageRenderer {
             }
         }
         inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
-        drawTextBlocks(of: page, in: nominal)
+        // Text, stickers and link anchors, over the ink as on the page.
+        PageElements(page: page).draw(in: nominal)
     }
 
     static func draw(_ page: Page, artwork: [ArtworkLayer], scale: CGFloat, in context: CGContext) {
@@ -91,57 +92,6 @@ enum PageRenderer {
         return opened
     }
 
-    /// Typed text blocks, laid out the way `TextBlockView` shows them: the
-    /// stored frame is the box, with the same 6 pt padding inside it, the
-    /// width is the wrap width, and the height is a floor the text may grow
-    /// past. Drawn after the ink, as on screen.
-    static func drawTextBlocks(of page: Page, in pageSize: CGSize) {
-        for block in page.textBlocks ?? [] where !block.content.isEmpty {
-            let inset: CGFloat = 6
-            let box = CGRect(x: block.frameX, y: block.frameY, width: block.frameWidth, height: block.frameHeight)
-            let textRect = CGRect(
-                x: box.minX + inset,
-                y: box.minY + inset,
-                width: max(box.width - inset * 2, 1),
-                height: max(pageSize.height - box.minY - inset, 1)
-            )
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byWordWrapping
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: uiFont(for: block),
-                .foregroundColor: Color(hex: block.textColorHex).fixedUIColor,
-                .paragraphStyle: paragraph
-            ]
-            NSAttributedString(string: block.content, attributes: attributes)
-                .draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
-        }
-    }
-
-    /// The UIKit font matching `TextBlockView`'s SwiftUI one, so an export
-    /// wraps at the same places the editor does.
-    static func uiFont(for block: TypedTextBlock) -> UIFont {
-        let size = CGFloat(block.fontSize)
-        let base = UIFont.systemFont(ofSize: size, weight: block.isBold ? .bold : .regular)
-        var descriptor = base.fontDescriptor
-        let design: UIFontDescriptor.SystemDesign
-        switch TextBlockFontDesign.from(block.fontDesign) {
-        case .default: design = .default
-        case .serif: design = .serif
-        case .rounded: design = .rounded
-        case .monospaced: design = .monospaced
-        }
-        if design != .default, let designed = descriptor.withDesign(design) {
-            descriptor = designed
-        }
-        var traits: UIFontDescriptor.SymbolicTraits = []
-        if block.isBold { traits.insert(.traitBold) }
-        if block.isItalic { traits.insert(.traitItalic) }
-        if !traits.isEmpty, let styled = descriptor.withSymbolicTraits(traits) {
-            descriptor = styled
-        }
-        return UIFont(descriptor: descriptor, size: size)
-    }
-
     /// One PDF page per notebook page, in the order given. Each output page
     /// takes the shape of the notebook page it came from, so a notebook that
     /// mixes an imported portrait template with a landscape one exports as
@@ -152,11 +102,19 @@ enum PageRenderer {
             size: pages.first.map { PageGeometry.contentSize(for: $0.page) } ?? nominalPageSize
         )
         var documents: [String: PDFDocument] = [:]
+        let exported = Set(pages.map(\.page.id))
         return UIGraphicsPDFRenderer(bounds: firstBounds).pdfData { context in
             for entry in pages {
                 let bounds = CGRect(origin: .zero, size: PageGeometry.contentSize(for: entry.page))
                 context.beginPage(withBounds: bounds, pageInfo: [:])
+                // Every page is a named destination, and every link anchor
+                // whose page is in this export a real PDF link to it - so a
+                // link in an exported notebook still jumps.
+                context.addDestination(withName: entry.page.id.uuidString, at: .zero)
                 draw(entry.page, artwork: entry.artwork, scale: exportScale, documents: &documents, in: context.cgContext)
+                for link in PageElements(page: entry.page).links where exported.contains(link.destinationPageID) {
+                    context.setDestinationWithName(link.destinationPageID.uuidString, for: link.frame)
+                }
             }
         }
     }
