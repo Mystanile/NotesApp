@@ -74,6 +74,8 @@ private struct TextBlockView: View {
     // Keeping this as Double avoids that mismatch entirely.
     @State private var dragOrigin: (x: Double, y: Double)?
     @State private var resizeOrigin: (width: Double, height: Double)?
+    /// Where the cursor is, for ticking the checklist item it's on.
+    @State private var selection: TextSelection?
 
     private static let minimumWidth: Double = 80
     private static let minimumHeight: Double = 32
@@ -104,7 +106,7 @@ private struct TextBlockView: View {
     }
 
     var body: some View {
-        TextField("Type…", text: $block.content, axis: .vertical)
+        TextField("Type…", text: $block.content, selection: $selection, axis: .vertical)
             .font(font)
             .foregroundStyle(Color(hex: block.textColorHex))
             .focused($isFocused)
@@ -134,7 +136,15 @@ private struct TextBlockView: View {
             // top-left coordinates, which is exactly what offset applies here.
             .offset(x: block.frameX, y: block.frameY)
             .gesture(dragGesture)
-            .onChange(of: block.content) { _, _ in onSave() }
+            .onChange(of: block.content) { old, new in
+                // Return at the end of a list item starts the next one; on
+                // an empty item it ends the list (`TextList`).
+                if let continued = TextList.continuing(from: old, to: new) {
+                    block.content = continued
+                    return
+                }
+                onSave()
+            }
             .contextMenu {
                 Button(role: .destructive) { deleteBlock() } label: {
                     Label("Delete", systemImage: "trash")
@@ -143,6 +153,22 @@ private struct TextBlockView: View {
     }
 
     // MARK: Chrome
+
+    private func setContent(_ content: String) {
+        guard content != block.content else { return }
+        block.content = content
+        onSave()
+    }
+
+    /// The cursor's offset in the text, or its end.
+    private var cursorOffset: Int {
+        let text = block.content
+        if case .selection(let range)? = selection?.indices,
+           range.lowerBound >= text.startIndex, range.lowerBound <= text.endIndex {
+            return text.distance(from: text.startIndex, to: range.lowerBound)
+        }
+        return text.count
+    }
 
     /// Sits just above the box's top edge, left-aligned with it. Drawn at
     /// screen size regardless of zoom (see the type comment).
@@ -183,6 +209,15 @@ private struct TextBlockView: View {
                 .frame(minWidth: 24)
             barButton("plus", disabled: block.fontSize >= Self.fontSizeRange.upperBound) {
                 setFontSize(block.fontSize + Self.fontSizeStep)
+            }
+
+            Divider().frame(height: 18)
+
+            barButton("list.bullet") { setContent(TextList.toggle(.bullets, in: block.content)) }
+            barButton("checklist") { setContent(TextList.toggle(.checklist, in: block.content)) }
+            barButton("checkmark.square", disabled: !block.content.contains(TextList.unchecked)
+                      && !block.content.contains(TextList.checked)) {
+                setContent(TextList.toggleCheck(atOffset: cursorOffset, in: block.content))
             }
 
             Divider().frame(height: 18)

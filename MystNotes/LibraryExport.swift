@@ -18,7 +18,7 @@ enum LibraryExport {
             lines.append("")
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }
             for block in blocks where !block.content.isEmpty {
-                lines.append(block.content)
+                lines.append(markdownLists(block.content))
                 lines.append("")
             }
             if let handwriting = page.recognizedTextCache?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -28,6 +28,16 @@ enum LibraryExport {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// A text box's list prefixes (`TextList`) as Markdown lists.
+    static func markdownLists(_ text: String) -> String {
+        text.components(separatedBy: "\n").map { line in
+            if line.hasPrefix(TextList.bullet) { return "- " + line.dropFirst(TextList.bullet.count) }
+            if line.hasPrefix(TextList.unchecked) { return "- [ ] " + line.dropFirst(TextList.unchecked.count) }
+            if line.hasPrefix(TextList.checked) { return "- [x] " + line.dropFirst(TextList.checked.count) }
+            return line
+        }.joined(separator: "\n")
     }
 
     /// Writes every notebook as `<folders>/<title>.pdf` and `.md` under a
