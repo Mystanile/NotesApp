@@ -91,6 +91,11 @@ struct NotebookDetailView: View {
     /// under us" reload below can tell a pull from our autosave. Reloading
     /// after every autosave would reinstall the canvas mid-stroke.
     @State private var ownSaveDate: Date?
+    /// The ink record as the canvas last had it - when it loaded, or when
+    /// this device last wrote it. A reload is only for ink that changed
+    /// under the canvas (a pull); anything else on the page redraws from
+    /// the models by itself.
+    @State private var loadedInkStamp: InkStamp?
     /// The page strip's visibility and height, persisted (`AppSettings`)
     /// so a strip you hid or dragged bigger stays that way - across page
     /// turns, notebooks, windows and launches.
@@ -382,11 +387,20 @@ struct NotebookDetailView: View {
         // second canvas in the middle of the first one's update. Turning to
         // a never-edited page (modifiedAt nil, same as ownSaveDate's nil)
         // stayed quiet, which is why it only ever went wrong coming *back*.
+        //
+        // And only when the *ink* changed. Every action marks the page
+        // modified - resizing a picture, turning a sticker, typing, a
+        // bookmark, the paper - and each of those used to reload the page:
+        // a fresh canvas, the zoom back to fit, the layers blinking while
+        // it refitted, and the undo stack gone (field report, Sept 25,
+        // 2026). A pull that brings new ink rewrites the record on disk;
+        // nothing else does.
         .onChange(of: currentPageStamp) { oldStamp, newStamp in
             guard oldStamp.id == newStamp.id,
-                  newStamp.id == canvasPageID,
+                  let pageID = newStamp.id, pageID == canvasPageID,
                   !canvasIsDirty,
-                  newStamp.date != ownSaveDate else { return }
+                  newStamp.date != ownSaveDate,
+                  InkStamp(of: pageID, in: drawingStore) != loadedInkStamp else { return }
             loadCurrentPageDrawing()
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -771,10 +785,7 @@ struct NotebookDetailView: View {
                             ImageAdjustOverlay(
                                 frame: Binding(
                                     get: { adjustingImageFrame ?? CGRect(origin: .zero, size: pageSize) },
-                                    set: {
-                                        AppLog.note("adjust", "handles \($0) layer \(adjustingLayerID?.uuidString.prefix(8) ?? "nil")")
-                                        adjustingImageFrame = $0
-                                    }
+                                    set: { adjustingImageFrame = $0 }
                                 ),
                                 containerSize: pageSize,
                                 scale: scale,
@@ -1494,7 +1505,6 @@ struct NotebookDetailView: View {
         doc.frameY = fractions.y
         doc.frameWidth = fractions.width
         doc.frameHeight = fractions.height
-        AppLog.note("adjust", "done \(doc.id.uuidString.prefix(8)) frame \(frame) fractions \(fractions)")
         // One undo step for the whole session: the placement, and any
         // rotation or crop made while the handles were up. A page from
         // before `ImportedDocument` had no row to snapshot; not undoable.
@@ -2027,6 +2037,7 @@ struct NotebookDetailView: View {
         canvasPageID = pageID
         canvasIsDirty = false
         ownSaveDate = nil
+        loadedInkStamp = pageID.flatMap { InkStamp(of: $0, in: drawingStore) }
         autosaveTask?.cancel()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         let fresh = PageCanvasView()
@@ -2110,7 +2121,10 @@ struct NotebookDetailView: View {
         case .success(let ref):
             page.drawingFileRef = ref
             page.markModified()
-            if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
+            if page.id == canvasPageID {
+                ownSaveDate = page.modifiedAt
+                loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
+            }
             do { try modelContext.save() } catch { AppLog.note("save", "metadata: \(error)") }
         case .failure(let error):
             AppLog.note("save", "drawing: \(error)")
@@ -2125,7 +2139,10 @@ struct NotebookDetailView: View {
         do {
             page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
             page.markModified()
-            if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
+            if page.id == canvasPageID {
+                ownSaveDate = page.modifiedAt
+                loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
+            }
             try modelContext.save()
         } catch {
             AppLog.note("save", "drawing (blocking): \(error)")
@@ -2136,7 +2153,10 @@ struct NotebookDetailView: View {
     private func save(to page: Page) {
         page.drawingFileRef = DrawingStore.fileName(for: page.id)
         page.markModified()
-        if page.id == canvasPageID { ownSaveDate = page.modifiedAt }
+        if page.id == canvasPageID {
+            ownSaveDate = page.modifiedAt
+            loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
+        }
         try? modelContext.save()
     }
 #endif

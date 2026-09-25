@@ -31,6 +31,23 @@ import PencilKit
 ///   decodes, that's the ink, and the record is regenerated from it.
 /// - **Older libraries just work.** A page from before the flip has only a
 ///   `.drawing`; it loads, and the record is written from it on the spot.
+/// A page's ink record as it stands on disk - modification date and size -
+/// to tell "the ink changed" from "something else on the page changed".
+/// nil when there is no record.
+nonisolated struct InkStamp: Equatable {
+    var modified: Date
+    var size: Int
+
+    init?(of pageID: UUID, in store: DrawingStore) {
+        let url = store.url(DrawingStore.fileName(for: pageID))
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = attributes[.modificationDate] as? Date,
+              let size = attributes[.size] as? Int else { return nil }
+        self.modified = modified
+        self.size = size
+    }
+}
+
 nonisolated struct DrawingStore {
     /// Resolves a payload file name to its on-disk URL.
     var url: (String) -> URL
