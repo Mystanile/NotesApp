@@ -37,6 +37,56 @@ struct InkSelectionOverlay: View {
     }
 }
 
+/// Corner handles on the selection box: drag one to resize the ink about
+/// its centre. A Mac has no pinch, and on an iPad it's a finger's way to
+/// do the same. Drawn in page space, like the box; the drag is measured
+/// in page points through the named space, whatever the zoom.
+struct InkSelectionHandles: View {
+    var corners: [CGPoint]
+    var scale: CGFloat
+    var controller: InkSelectionController
+
+    @State private var lastDistance: CGFloat?
+
+    private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
+    private static let space = "inkSelectionPage"
+
+    var body: some View {
+        let center = InkSelection.center(of: corners)
+        ZStack(alignment: .topLeading) {
+            Color.clear.allowsHitTesting(false)
+            ForEach(corners.indices, id: \.self) { index in
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5 / zoom))
+                    .frame(width: 14 / zoom, height: 14 / zoom)
+                    .contentShape(Circle().inset(by: -12 / zoom))
+                    .position(corners[index])
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
+                            .onChanged { value in
+                                let distance = hypot(value.location.x - center.x, value.location.y - center.y)
+                                guard let last = lastDistance else {
+                                    controller.beginGesture()
+                                    lastDistance = max(hypot(value.startLocation.x - center.x,
+                                                             value.startLocation.y - center.y), 1)
+                                    return
+                                }
+                                guard distance > 4 else { return }
+                                controller.scale(by: distance / last)
+                                lastDistance = distance
+                            }
+                            .onEnded { _ in
+                                lastDistance = nil
+                                controller.endGesture()
+                            }
+                    )
+            }
+        }
+        .coordinateSpace(.named(Self.space))
+    }
+}
+
 /// The controls that appear while ink is selected. Styled like
 /// `ImageAdjustToolbar` so the two read as the same family of UI.
 struct InkSelectionToolbar: View {

@@ -690,6 +690,12 @@ struct NotebookDetailView: View {
                 }
                 .allowsHitTesting(false)
 
+                if let corners = inkSelection.display.corners, corners.count == 4 {
+                    PageViewportLayer(viewport: viewport, pageSize: pageSize) { scale in
+                        InkSelectionHandles(corners: corners, scale: scale, controller: inkSelection)
+                    }
+                }
+
                 if inkSelection.hasSelection {
                     // Chrome, so it stays put in screen space.
                     InkSelectionToolbar(
