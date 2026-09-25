@@ -941,6 +941,13 @@ struct NotebookDetailView: View {
                         } label: {
                             Label("Rename Page…", systemImage: "pencil")
                         }
+                        if page.type == "paged" {
+                            Button {
+                                addPage(like: page)
+                            } label: {
+                                Label("New Page Like This", systemImage: "doc.badge.plus")
+                            }
+                        }
                         Button {
                             pageToCopy = page
                         } label: {
@@ -1042,6 +1049,41 @@ struct NotebookDetailView: View {
         }
         if let open = pages.firstIndex(where: { $0.id == canvasPageID }) { currentPageIndex = open }
         saveMetadata("Failed to reorder pages")
+    }
+
+    /// Page strip menu: a blank page right after `source` with the same
+    /// paper, shape and imported background - a PDF worksheet or template
+    /// used again. Only the paper layer comes along, not photos placed on
+    /// top, and no ink. The file is shared by name, as pages of one PDF
+    /// import already share theirs.
+    private func addPage(like source: Page) {
+        saveCurrentPage()
+        // Everything after the source moves up one - before the new page
+        // exists, so it can't be counted among them.
+        for other in sortedPages where other.index > source.index {
+            other.index += 1
+            other.markModified()
+        }
+        let page = Page(index: source.index + 1, type: source.type, template: source.template, notebook: notebook)
+        page.aspectRatio = source.aspectRatio
+        modelContext.insert(page)
+        if let paper = documents(on: source).first, ArtworkLayer(paper).isPaper {
+            let copy = ImportedDocument(sourceType: paper.sourceType, fileRef: paper.fileRef,
+                                        pdfPageIndex: paper.pdfPageIndex, page: page)
+            (copy.frameX, copy.frameY, copy.frameWidth, copy.frameHeight) =
+                (paper.frameX, paper.frameY, paper.frameWidth, paper.frameHeight)
+            copy.rotationDegrees = paper.rotationDegrees
+            (copy.cropX, copy.cropY, copy.cropWidth, copy.cropHeight) =
+                (paper.cropX, paper.cropY, paper.cropWidth, paper.cropHeight)
+            modelContext.insert(copy)
+            page.backgroundRef = paper.fileRef
+        }
+        if !(notebook.pages ?? []).contains(where: { $0.id == page.id }) {
+            notebook.pages = (notebook.pages ?? []) + [page]
+        }
+        page.markModified()
+        saveMetadata("Failed to add the page")
+        jumpToPage(withID: page.id)
     }
 
     /// The shape the next New Page takes: a size picked from the menu, or
