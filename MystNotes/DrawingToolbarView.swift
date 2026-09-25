@@ -11,6 +11,41 @@ enum DrawingToolKind: Equatable {
     case pen, highlighter, eraser, lasso, fill
 }
 
+/// A saved pen - ink, colour, width - one tap away in the pen's options.
+/// Kept in `AppSettings.penPresets`; ink types this build doesn't know (a
+/// newer build's) come back as the plain pen.
+struct PenPreset: Codable, Equatable, Hashable {
+    var inkType: String
+    var colorHex: String
+    var width: Double
+
+    init(inkType: String, colorHex: String, width: Double) {
+        self.inkType = inkType; self.colorHex = colorHex; self.width = width
+    }
+
+    init(_ state: DrawingToolState) {
+        self.init(inkType: state.penInkType.rawValue, colorHex: state.penColor.toHex(), width: state.penWidth)
+    }
+
+    var pkInkType: PKInkingTool.InkType {
+        let known: [PKInkingTool.InkType] = [.pen, .pencil, .marker, .fountainPen, .monoline]
+        return known.first { $0.rawValue == inkType } ?? .pen
+    }
+
+    var color: Color { Color(hex: colorHex) }
+
+    func apply(to state: inout DrawingToolState) {
+        state.penInkType = pkInkType
+        state.penColor = color
+        state.penWidth = width
+    }
+
+    static let limit = 8
+
+    static func encode(_ presets: [PenPreset]) -> Data { (try? JSONEncoder().encode(presets)) ?? Data() }
+    static func decode(_ data: Data) -> [PenPreset] { (try? JSONDecoder().decode([PenPreset].self, from: data)) ?? [] }
+}
+
 /// Everything needed to build the live `PKTool` PencilKit should be using,
 /// plus each tool's own remembered settings - switching to the eraser and
 /// back to the pen doesn't forget the pen's color/width.
@@ -73,6 +108,7 @@ struct DrawingToolbarView: View {
 
     var style: Style = .floating
     @Binding var toolState: DrawingToolState
+    @AppStorage(AppSettings.Keys.penPresets) private var presetData = Data()
     /// Which tool's options popover is open. Owned by the parent so a
     /// Pencil squeeze can open it from the canvas.
     @Binding var openPopover: DrawingToolKind?
@@ -228,6 +264,52 @@ struct DrawingToolbarView: View {
             .foregroundStyle(isOn ? Color.accentColor : Color.primary)
     }
 
+    /// Saved pens: tap to use, + to save the pen as it is, long-press to
+    /// remove one.
+    private var presetRow: some View {
+        HStack(spacing: 10) {
+            ForEach(presets, id: \.self) { preset in
+                Button {
+                    preset.apply(to: &toolState)
+                } label: {
+                    Circle()
+                        .fill(preset.color)
+                        .frame(width: 26, height: 26)
+                        .overlay {
+                            Circle().fill(Color.white).frame(width: min(max(preset.width, 2), 18) * 0.9)
+                                .opacity(0.35)
+                        }
+                        .overlay {
+                            if PenPreset(toolState) == preset {
+                                Circle().strokeBorder(Color.primary, lineWidth: 2)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button(role: .destructive) {
+                        presets.removeAll { $0 == preset }
+                    } label: { Label("Remove Preset", systemImage: "trash") }
+                }
+                .accessibilityLabel("Pen preset")
+            }
+            if presets.count < PenPreset.limit, !presets.contains(PenPreset(toolState)) {
+                Button {
+                    presets.append(PenPreset(toolState))
+                } label: {
+                    Image(systemName: "plus.circle").font(.system(size: 24))
+                }
+                .buttonStyle(.plain)
+                .help("Save this pen as a preset")
+            }
+        }
+    }
+
+    private var presets: [PenPreset] {
+        get { PenPreset.decode(presetData) }
+        nonmutating set { presetData = PenPreset.encode(newValue) }
+    }
+
     @ViewBuilder
     private func optionsView(for kind: DrawingToolKind) -> some View {
         switch kind {
@@ -242,6 +324,7 @@ struct DrawingToolbarView: View {
                 }
                 .pickerStyle(.segmented)
 
+                presetRow
                 colorRow(selection: $toolState.penColor)
                 widthSlider(label: "Width", value: $toolState.penWidth, range: 1...20)
                 shapeStyleRow

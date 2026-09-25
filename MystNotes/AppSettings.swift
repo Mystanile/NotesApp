@@ -17,6 +17,7 @@ nonisolated enum AppSettings {
         static let inkColorHex = "defaultInkColorHex"
         static let inkWidth = "defaultInkWidth"
         static let shapeLineStyle = "shapeLineStyle"
+        static let penPresets = "penPresets"
         static let template = "defaultTemplate"
         static let pageStripVisible = "pageStripVisible"
         static let pageStripHeight = "pageStripHeight"
