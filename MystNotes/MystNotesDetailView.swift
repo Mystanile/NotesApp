@@ -160,7 +160,12 @@ struct NotebookDetailView: View {
     /// so there the bar falls back to floating over the canvas.
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     private var drawingToolbarInNavigationBar: Bool { horizontalSizeClass != .compact }
-    @State private var pageToDelete: Page?
+    /// Delete Page is undoable: the page is hidden, not deleted, until the
+    /// deletion can no longer be undone - a turn to any page other than the
+    /// one it landed on, leaving the notebook, or another deletion. Then
+    /// `PageDeletion` runs. Killed before that, the page is simply still
+    /// there, which is the safe side of invariant 1.
+    @State private var pendingDeletion: (pageID: UUID, landingPageID: UUID?)?
     /// The page whose context menu opened the copy sheet; it starts ticked.
     @State private var pageToCopy: Page?
     @State private var showingSaveConfirmation = false
@@ -178,7 +183,7 @@ struct NotebookDetailView: View {
     @Query private var allImportedDocuments: [ImportedDocument]
 
     private var sortedPages: [Page] {
-        (notebook.pages ?? []).sorted { $0.index < $1.index }
+        (notebook.pages ?? []).filter { $0.id != pendingDeletion?.pageID }.sorted { $0.index < $1.index }
     }
 
     private var currentPage: Page? {
@@ -253,6 +258,21 @@ struct NotebookDetailView: View {
                             }
                         }
                         .overlay(alignment: .bottom) {
+                            if pendingDeletion != nil && !isPresenting {
+                                HStack(spacing: 14) {
+                                    Text("Page deleted")
+                                    Button("Undo", action: undoPendingDeletion)
+                                        .fontWeight(.semibold)
+                                }
+                                .font(.subheadline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                                .padding(.bottom, 12)
+                            }
+                        }
+                        .overlay(alignment: .bottom) {
                             if showingSaveConfirmation {
                                 Label("Saved", systemImage: "checkmark.circle.fill")
                                     .font(.subheadline.weight(.medium))
@@ -302,7 +322,10 @@ struct NotebookDetailView: View {
             openFirstPage()
             applyToolState()
         }
-        .onDisappear { commitPendingTrash() }
+        .onDisappear {
+            commitPendingDeletion()
+            commitPendingTrash()
+        }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: toolState) { _, _ in applyToolState() }
         // Switching between a paged page and a whiteboard rebuilds the canvas
@@ -510,20 +533,6 @@ struct NotebookDetailView: View {
         }
         #endif
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
-        .alert(
-            "Delete this page?",
-            isPresented: Binding(get: { pageToDelete != nil }, set: { if !$0 { pageToDelete = nil } })
-        ) {
-            Button("Cancel", role: .cancel) { pageToDelete = nil }
-            Button("Delete", role: .destructive) {
-                if let page = pageToDelete {
-                    deletePage(page)
-                }
-                pageToDelete = nil
-            }
-        } message: {
-            Text("This will permanently delete this page and everything on it.")
-        }
         #endif
     }
 
@@ -834,7 +843,7 @@ struct NotebookDetailView: View {
                         }
                         #endif
                         Button(role: .destructive) {
-                            pageToDelete = page
+                            requestDeletePage(page)
                         } label: {
                             Label("Delete Page", systemImage: "trash")
                         }
@@ -980,64 +989,50 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to copy pages")
     }
 
-    /// Removes a page and everything tied to it: the saved drawing file on
-    /// disk, any Links/ImportedDocument records referencing it (neither
-    /// cascades automatically — Link stores raw UUIDs, and Page has no
-    /// inverse relationship to ImportedDocument), then re-sequences the
-    /// remaining pages' index values so they stay contiguous — otherwise a
-    /// future new page could end up colliding with an existing index.
-    private func deletePage(_ page: Page) {
-        guard sortedPages.count > 1 else { return }
-
-        for link in allLinks where link.sourcePageID == page.id || link.destinationPageID == page.id {
-            modelContext.delete(link)
+    /// Delete Page: hides the page now and deletes it for real only once
+    /// that can't be undone (`pendingDeletion`). Undo is the banner's
+    /// button, or the undo button while you're on the page you landed on.
+    private func requestDeletePage(_ page: Page) {
+        commitPendingDeletion()
+        guard sortedPages.count > 1, let index = sortedPages.firstIndex(where: { $0.id == page.id }) else { return }
+        saveCurrentPage()
+        let wasCurrent = currentPage?.id == page.id
+        let keptID = currentPage?.id
+        pendingDeletion = (pageID: page.id, landingPageID: nil)
+        // The page list no longer has it; stay on the page you were on, or
+        // take its place if it was the open one.
+        if wasCurrent {
+            currentPageIndex = min(index, sortedPages.count - 1)
+        } else if let keptID, let kept = sortedPages.firstIndex(where: { $0.id == keptID }) {
+            currentPageIndex = kept
         }
-        // Work out which imported files this page is the last user of
-        // BEFORE deleting its records - a multi-page PDF import shares one
-        // file across many pages, so it can only be removed once none of
-        // them reference it any more. Skipping this leaked every imported
-        // photo permanently.
-        let refsHere = Set(allImportedDocuments.filter { $0.page?.id == page.id }.map(\.fileRef))
-        let refsElsewhere = Set(allImportedDocuments.filter { $0.page?.id != page.id }.map(\.fileRef))
-        let orphanedRefs = refsHere.subtracting(refsElsewhere).filter { !$0.isEmpty }
-
-        for doc in allImportedDocuments where doc.page?.id == page.id {
-            modelContext.delete(doc)
+        pendingDeletion?.landingPageID = currentPage?.id
+        if wasCurrent {
+            endAdjusting()
+            loadCurrentPageDrawing()
         }
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in undoPendingDeletion() }
+        refreshUndoRedoState()
+    }
 
-        drawingStore.trashDrawing(forPageID: page.id)
-        for ref in orphanedRefs {
-            drawingStore.trashPayload(named: ref)
-        }
-
-        let deletedIndex = sortedPages.firstIndex(where: { $0.id == page.id }) ?? 0
-
-        notebook.pages?.removeAll { $0.id == page.id }
-        modelContext.delete(page) // cascades to its TypedTextBlocks/Stickers
-        // So sync removes it elsewhere instead of bringing it back from
-        // another device's copy. A page edited there *after* this moment
-        // survives - the edit is newer than the deletion.
-        SyncTombstones.merge([Tombstone(kind: .page, id: page.id, deletedAt: Date())])
-
-        let remaining = sortedPages
-        for (newIndex, remainingPage) in remaining.enumerated() where remainingPage.index != newIndex {
-            remainingPage.index = newIndex
-            remainingPage.markModified()
-        }
-
-        notebook.modifiedAt = Date()
-        saveMetadata("Failed to delete page")
-
-        // Any placement UI was aimed at the page that just went away.
-        adjustingImageFrame = nil
-        adjustingLayerID = nil
-        croppingRect = nil
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        updateCanvasInteractionEnabled()
-#endif
-
-        currentPageIndex = min(deletedIndex, max(remaining.count - 1, 0))
+    private func undoPendingDeletion() {
+        guard let pending = pendingDeletion else { return }
+        pendingDeletion = nil
+        guard let index = sortedPages.firstIndex(where: { $0.id == pending.pageID }) else { return }
+        saveCurrentPage()
+        currentPageIndex = index
         loadCurrentPageDrawing()
+    }
+
+    /// The pending page is already out of `sortedPages`, so deleting it for
+    /// real moves no other page's position and the open page stays open.
+    private func commitPendingDeletion() {
+        guard let pending = pendingDeletion else { return }
+        pendingDeletion = nil
+        guard let page = notebook.pages?.first(where: { $0.id == pending.pageID }) else { return }
+        PageDeletion.delete(page, from: notebook, in: modelContext, drawingStore: drawingStore)
+        saveMetadata("Failed to delete page")
     }
 
     // MARK: - Document import
@@ -1753,6 +1748,7 @@ struct NotebookDetailView: View {
     private func installFreshCanvas(with drawing: PKDrawing = PKDrawing(), forPageID pageID: UUID?) {
         // The outgoing canvas takes its undo stack with it.
         commitPendingTrash()
+        if let pending = pendingDeletion, pending.landingPageID != pageID { commitPendingDeletion() }
         canvasPageID = pageID
         canvasIsDirty = false
         ownSaveDate = nil
