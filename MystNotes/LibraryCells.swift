@@ -88,6 +88,15 @@ struct NotebookCellView: View {
     var body: some View {
         VStack(spacing: 8) {
             NotebookCoverView(notebook: notebook)
+                .overlay(alignment: .topTrailing) {
+                    if notebook.isFavorite == true {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundStyle(.yellow)
+                            .padding(6)
+                            .accessibilityLabel("Favorite")
+                    }
+                }
             Text(notebook.title)
                 .font(.subheadline)
                 .lineLimit(1)

@@ -123,6 +123,8 @@ nonisolated struct NotebookIndexEntry: Codable {
     var modifiedAt: Date
     var settingsModifiedAt: Date?
     var folderID: UUID?
+    /// Absent before favourites; nil is not a favourite.
+    var isFavorite: Bool?
     /// See `NotebookDTO.contentSignature`.
     var contentSignature: String
 
@@ -134,6 +136,7 @@ nonisolated struct NotebookIndexEntry: Codable {
         modifiedAt = notebook.modifiedAt
         settingsModifiedAt = notebook.settingsModifiedAt
         folderID = notebook.folderID
+        isFavorite = notebook.isFavorite
         contentSignature = notebook.contentSignature
     }
 }
@@ -260,6 +263,8 @@ nonisolated struct NotebookDTO: Codable {
     /// Absent in older snapshots; nil loses to any date.
     var settingsModifiedAt: Date?
     var folderID: UUID?
+    /// Absent before favourites. Merges with the other settings.
+    var isFavorite: Bool? = nil
     var pages: [PageDTO]
     var links: [LinkDTO]
 
@@ -293,6 +298,9 @@ nonisolated struct PageDTO: Codable {
     var modifiedAt: Date?
     /// Absent in older snapshots. See `Page.aspectRatio`.
     var aspectRatio: Double?
+    /// Absent before bookmarks (Sept 25, 2026). See `Page.isBookmarked`.
+    var isBookmarked: Bool? = nil
+    var title: String? = nil
     /// SHA-256 of the payload behind `drawingFileRef` / `backgroundRef`,
     /// which is also its file name in the folder (`files/<hash>.<ext>`).
     /// Absent in snapshots from before content addressing, whose payloads

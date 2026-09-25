@@ -1120,6 +1120,8 @@ nonisolated struct SyncRunner {
                     ocrUpdatedAt: page.ocrUpdatedAt,
                     modifiedAt: page.modifiedAt,
                     aspectRatio: page.aspectRatio,
+                    isBookmarked: page.isBookmarked,
+                    title: page.title,
                     drawingHash: page.drawingFileRef.flatMap { hashes.hash(of: $0, in: local) },
                     backgroundHash: page.backgroundRef.flatMap { hashes.hash(of: $0, in: local) },
                     textBlocks: (page.textBlocks ?? []).map {
@@ -1160,7 +1162,7 @@ nonisolated struct SyncRunner {
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
                 createdAt: notebook.createdAt, modifiedAt: notebook.modifiedAt,
                 settingsModifiedAt: notebook.settingsModifiedAt,
-                folderID: notebook.folder?.id, pages: pageDTOs, links: links
+                folderID: notebook.folder?.id, isFavorite: notebook.isFavorite, pages: pageDTOs, links: links
             )
         }
 
@@ -1240,6 +1242,7 @@ nonisolated struct SyncRunner {
                     existing.title = entry.title
                     existing.coverStyle = entry.coverStyle
                     existing.folder = entry.folderID.flatMap { folderByID[$0] }
+                    existing.isFavorite = entry.isFavorite
                     existing.settingsModifiedAt = entry.settingsModifiedAt
                 }
                 lift(existing, to: entry.modifiedAt)
@@ -1251,6 +1254,7 @@ nonisolated struct SyncRunner {
                 notebook.modifiedAt = entry.modifiedAt
                 notebook.settingsModifiedAt = entry.settingsModifiedAt
                 notebook.folder = entry.folderID.flatMap { folderByID[$0] }
+                notebook.isFavorite = entry.isFavorite
                 context.insert(notebook)
                 notebookByID[entry.id] = notebook
             }
@@ -1305,6 +1309,8 @@ nonisolated struct SyncRunner {
         page.backgroundRef = dto.backgroundRef
         page.modifiedAt = dto.modifiedAt
         if let aspectRatio = dto.aspectRatio { page.aspectRatio = aspectRatio }
+        page.isBookmarked = dto.isBookmarked
+        page.title = dto.title
     }
 
     /// Derived data merges on its own clock, whichever side won the page:

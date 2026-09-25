@@ -36,6 +36,9 @@ enum SearchIndex {
     static func searchableText(for page: Page, importedDocuments: [ImportedDocument]) -> String {
         var parts: [String] = []
 
+        if let title = page.title, !title.isEmpty {
+            parts.append(title)
+        }
         if let recognized = page.recognizedTextCache, !recognized.isEmpty {
             parts.append(recognized)
         }

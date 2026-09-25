@@ -63,3 +63,13 @@ final class PageTemplateTests: XCTestCase {
         XCTAssertTrue(PageTemplate.isEmpty("hexagons"))
     }
 }
+
+/// A page's name is searchable, like its text and handwriting.
+final class PageTitleSearchTests: XCTestCase {
+    @MainActor
+    func testPageTitle_isSearchable() {
+        let page = Page(index: 0)
+        page.title = "Lecture 3: Limits"
+        XCTAssertTrue(SearchIndex.searchableText(for: page, importedDocuments: []).contains("lecture 3: limits"))
+    }
+}

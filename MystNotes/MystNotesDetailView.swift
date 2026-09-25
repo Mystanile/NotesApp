@@ -122,6 +122,8 @@ struct NotebookDetailView: View {
     /// Non-nil while cropping that artwork; the crop rect in page
     /// coordinates, always kept inside `adjustingImageFrame`.
     @State private var croppingRect: CGRect?
+    @State private var pageToRename: Page?
+    @State private var pageTitleText = ""
     /// See `newPageSizeLabel`.
     @State private var newPageAspect: Double?
     /// The artwork as it was when the handles opened: one undo step per
@@ -183,6 +185,13 @@ struct NotebookDetailView: View {
 
     @Query private var allLinks: [Link]
     @Query private var allImportedDocuments: [ImportedDocument]
+
+    /// Bookmarked or named pages, in page order, with their page numbers.
+    private var outline: [(number: Int, page: Page)] {
+        sortedPages.enumerated()
+            .filter { $1.isBookmarked == true || !($1.title ?? "").isEmpty }
+            .map { (number: $0 + 1, page: $1) }
+    }
 
     private var sortedPages: [Page] {
         (notebook.pages ?? []).filter { $0.id != pendingDeletion?.pageID }.sorted { $0.index < $1.index }
@@ -413,6 +422,23 @@ struct NotebookDetailView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Menu {
+                    if outline.isEmpty {
+                        Text("Bookmark or name a page from the page strip's menu to list it here.")
+                    }
+                    ForEach(outline, id: \.page.id) { entry in
+                        Button {
+                            jumpToPage(withID: entry.page.id)
+                        } label: {
+                            Label("\(entry.number). \(entry.page.title ?? "Page \(entry.number)")",
+                                  systemImage: entry.page.isBookmarked == true ? "bookmark.fill" : "text.alignleft")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "list.bullet.indent")
+                }
+                .help("Outline")
+
                 Button {
                     enterPresentationMode()
                 } label: {
@@ -531,6 +557,24 @@ struct NotebookDetailView: View {
                            initialSelection: page.id, currentNotebookID: notebook.id) { pages, destination in
                 Task { await copyPages(pages, to: destination) }
             }
+        }
+        .alert("Rename Page", isPresented: Binding(
+            get: { pageToRename != nil },
+            set: { if !$0 { pageToRename = nil } }
+        )) {
+            TextField("Title", text: $pageTitleText)
+            Button("Cancel", role: .cancel) { pageToRename = nil }
+            Button("Save") {
+                if let page = pageToRename {
+                    let title = pageTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    page.title = title.isEmpty ? nil : title
+                    page.markModified()
+                    saveMetadata("Failed to rename the page")
+                }
+                pageToRename = nil
+            }
+        } message: {
+            Text("A named page is listed in the notebook's outline.")
         }
         .alert("Export", isPresented: Binding(
             get: { exportMessage != nil },
@@ -824,6 +868,15 @@ struct NotebookDetailView: View {
                                               isSelected: index == currentPageIndex,
                                               height: thumbnailHeight,
                                               renderHeight: renderHeight)
+                                .overlay(alignment: .topTrailing) {
+                                    if page.isBookmarked == true {
+                                        Image(systemName: "bookmark.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.red)
+                                            .offset(x: -4, y: -2)
+                                            .accessibilityLabel("Bookmarked")
+                                    }
+                                }
                             Text("\(index + 1)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -840,6 +893,23 @@ struct NotebookDetailView: View {
                         return true
                     }
                     .contextMenu {
+                        Button {
+                            page.isBookmarked = !(page.isBookmarked ?? false)
+                            page.markModified()
+                            saveMetadata("Failed to bookmark the page")
+                        } label: {
+                            if page.isBookmarked == true {
+                                Label("Remove Bookmark", systemImage: "bookmark.slash")
+                            } else {
+                                Label("Bookmark", systemImage: "bookmark")
+                            }
+                        }
+                        Button {
+                            pageToRename = page
+                            pageTitleText = page.title ?? ""
+                        } label: {
+                            Label("Rename Page…", systemImage: "pencil")
+                        }
                         Button {
                             pageToCopy = page
                         } label: {
@@ -992,6 +1062,8 @@ struct NotebookDetailView: View {
             page.backgroundRef = source.backgroundRef
             page.aspectRatio = source.aspectRatio
             page.recognizedTextCache = source.recognizedTextCache
+            page.title = source.title
+            page.isBookmarked = source.isBookmarked
             modelContext.insert(page)
             if destination.pages == nil { destination.pages = [page] } else { destination.pages?.append(page) }
 
@@ -1008,6 +1080,7 @@ struct NotebookDetailView: View {
                 let copy = Sticker(assetRef: sticker.assetRef, page: page)
                 copy.frameX = sticker.frameX; copy.frameY = sticker.frameY
                 copy.frameWidth = sticker.frameWidth; copy.frameHeight = sticker.frameHeight
+                copy.rotationDegrees = sticker.rotationDegrees
                 modelContext.insert(copy)
             }
             for doc in allImportedDocuments where doc.page?.id == source.id {

@@ -51,6 +51,12 @@ struct LibraryView: View {
     /// The most recently touched notebooks across the whole library
     /// (regardless of which folder they live in) — shown as a strip at the
     /// top of the root library so it doesn't open on a blank page.
+    /// Starred notebooks, wherever they live, by title.
+    private var favoriteNotebooks: [Notebook] {
+        allNotebooks.filter { $0.isFavorite == true }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
     private var recentNotebooks: [Notebook] {
         allNotebooks
             .sorted { $0.modifiedAt > $1.modifiedAt }
@@ -136,21 +142,14 @@ struct LibraryView: View {
     private var libraryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if parentFolder == nil && !favoriteNotebooks.isEmpty {
+                    sectionHeader("Favorites")
+                    notebookStrip(favoriteNotebooks)
+                }
+
                 if parentFolder == nil && !recentNotebooks.isEmpty {
                     sectionHeader("Recent")
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(recentNotebooks, id: \.id) { notebook in
-                                NavigationLink(value: notebook) {
-                                    RecentNotebookCellView(notebook: notebook)
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu { notebookMenu(for: notebook) }
-                            }
-                        }
-                        .padding(.horizontal, 2)
-                        .padding(.vertical, 4)
-                    }
+                    notebookStrip(recentNotebooks)
                 }
 
                 if !folders.isEmpty {
@@ -307,8 +306,43 @@ struct LibraryView: View {
         ("berry", "Berry")
     ]
 
+    /// A horizontal strip of small covers, as Recent shows them.
+    private func notebookStrip(_ notebooks: [Notebook]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 16) {
+                ForEach(notebooks, id: \.id) { notebook in
+                    NavigationLink(value: notebook) {
+                        RecentNotebookCellView(notebook: notebook)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu { notebookMenu(for: notebook) }
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
+        }
+    }
+
+    /// A star is a setting, so it syncs on the settings clock - set
+    /// directly, not through `markSettingsModified`, which would also lift
+    /// `modifiedAt` and move the notebook to the front of Recent.
+    private func toggleFavorite(_ notebook: Notebook) {
+        notebook.isFavorite = !(notebook.isFavorite ?? false)
+        notebook.settingsModifiedAt = Date()
+        save()
+    }
+
     @ViewBuilder
     private func notebookMenu(for notebook: Notebook) -> some View {
+        Button {
+            toggleFavorite(notebook)
+        } label: {
+            if notebook.isFavorite == true {
+                Label("Remove from Favorites", systemImage: "star.slash")
+            } else {
+                Label("Add to Favorites", systemImage: "star")
+            }
+        }
         Button {
             openWindow(id: "notebook", value: notebook.persistentModelID)
         } label: {

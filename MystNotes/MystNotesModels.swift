@@ -41,6 +41,11 @@ final class Notebook {
     // nil. Set it through markSettingsModified(at:).
     var settingsModifiedAt: Date?
 
+    /// Starred in the library. A setting: it merges on
+    /// `settingsModifiedAt` - which a star sets directly, without lifting
+    /// `modifiedAt`, so starring a notebook doesn't reorder Recent.
+    var isFavorite: Bool?
+
     var folder: Folder?
 
     @Relationship(deleteRule: .cascade, inverse: \Page.notebook)
@@ -73,7 +78,12 @@ final class Page {
     var id: UUID = UUID()
     var index: Int = 0
     var type: String = "paged"       // "paged" | "whiteboard"
-    var template: String = "blank"   // "blank" | "lined" | "grid" | "dotted"
+    var template: String = "blank"   // one of `PageTemplate.options`
+
+    /// In the notebook's outline, under `title` if it has one. Page
+    /// content: set it, then `markModified()`.
+    var isBookmarked: Bool?
+    var title: String?
 
     // File on disk, not stored in the DB directly
     var drawingFileRef: String?

@@ -1090,6 +1090,49 @@ final class SyncTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(StickerDTO.self, from: Data(legacy.utf8)).rotationDegrees)
     }
 
+    /// Favourites, bookmarks and page titles (M1, Sept 25, 2026) reach the
+    /// other device, and a snapshot from before them decodes with none.
+    func testFavouritesBookmarksAndPageTitles_reachTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Calculus", pageCount: 3)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+
+        notebook.isFavorite = true
+        notebook.settingsModifiedAt = harness.clock.advance()
+        pages[1].isBookmarked = true
+        pages[1].title = "Lecture 3: limits"
+        pages[1].markModified(at: harness.clock.advance())
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let macNotebook = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Notebook>()).first { $0.id == notebook.id })
+        XCTAssertEqual(macNotebook.isFavorite, true)
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+        XCTAssertEqual(macPages[1].isBookmarked, true)
+        XCTAssertEqual(macPages[1].title, "Lecture 3: limits")
+        XCTAssertNotEqual(macPages[0].isBookmarked, true)
+
+        // And back: un-favourite on the Mac.
+        macNotebook.isFavorite = false
+        macNotebook.settingsModifiedAt = harness.clock.advance()
+        try mac.context.save()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        let pulled = try XCTUnwrap(try ipad.context.fetch(FetchDescriptor<Notebook>()).first { $0.id == notebook.id })
+        XCTAssertEqual(pulled.isFavorite, false)
+
+        let legacyPage = """
+        {"id": "\(UUID().uuidString)", "index": 0, "type": "paged", "template": "blank",
+         "textBlocks": [], "stickers": [], "importedDocuments": []}
+        """
+        let page = try JSONDecoder().decode(PageDTO.self, from: Data(legacyPage.utf8))
+        XCTAssertNil(page.isBookmarked)
+        XCTAssertNil(page.title)
+    }
+
     // MARK: PROJECT_PLAN §1.2 - the blocker
 
     /// Offline, the iPad writes on page 3 and the Mac writes on page 7 of the
