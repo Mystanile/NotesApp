@@ -17,6 +17,14 @@ struct SettingsView: View {
 
     @ObservedObject private var sync = SyncEngine.shared
     @State private var showingFolderPicker = false
+    /// The one folder picker serves the sync folder and the backup folder:
+    /// a view gets a single `.fileImporter` (see the gotcha).
+    @State private var pickingBackupFolder = false
+    @State private var backupName = Backup.displayName
+    @State private var backupLastRun = Backup.lastRun
+    @State private var backupMessage: String?
+    @State private var isBackingUp = false
+    @Environment(\.modelContext) private var modelContext
     @State private var diagnosticsMessage: String?
     @State private var confirmingRebuild = false
     @State private var diagnosticsArchive: URL?
@@ -140,6 +148,32 @@ struct SettingsView: View {
             }
 
             Section {
+                if let backupName {
+                    LabeledContent("Folder", value: backupName)
+                    LabeledContent("Last backup",
+                                   value: backupLastRun.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Not yet")
+                    Button(isBackingUp ? "Backing Up…" : "Back Up Now") { backUpNow() }
+                        .disabled(isBackingUp)
+                    Button("Stop Backing Up", role: .destructive) {
+                        Backup.clear()
+                        self.backupName = nil
+                    }
+                } else {
+                    Button("Choose Backup Folder…") {
+                        pickingBackupFolder = true
+                        showingFolderPicker = true
+                    }
+                }
+                if let backupMessage {
+                    Text(backupMessage).font(.footnote).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Backup")
+            } footer: {
+                Text("Once a day Mystnotes writes a copy of your whole library to this folder - pick one in Dropbox, Google Drive, OneDrive or on a drive. One file per weekday, so the last week is always there. To restore, unzip a backup and choose it as the sync folder.")
+            }
+
+            Section {
                 if trash.isEmpty {
                     Text("Nothing in the trash.")
                         .foregroundStyle(.secondary)
@@ -193,8 +227,34 @@ struct SettingsView: View {
             ShareSheet(items: [url])
         }
         .fileImporter(isPresented: $showingFolderPicker, allowedContentTypes: [.folder]) { result in
+            defer { pickingBackupFolder = false }
             guard case .success(let url) = result else { return }
-            SyncEngine.shared.chooseFolder(url)
+            if pickingBackupFolder {
+                do {
+                    try Backup.setFolder(url)
+                    backupName = Backup.displayName
+                    backUpNow()
+                } catch {
+                    backupMessage = "Couldn't use that folder: \(error.localizedDescription)"
+                }
+            } else {
+                SyncEngine.shared.chooseFolder(url)
+            }
+        }
+    }
+
+    /// Off the main thread (invariant 10): staging copies every payload.
+    private func backUpNow() {
+        isBackingUp = true
+        backupMessage = nil
+        let container = modelContext.container
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { Result { try Backup.run(container: container) } }.value
+            isBackingUp = false
+            switch result {
+            case .success: backupLastRun = Backup.lastRun
+            case .failure(let error): backupMessage = error.localizedDescription
+            }
         }
     }
 

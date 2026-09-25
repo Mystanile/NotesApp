@@ -52,6 +52,7 @@ struct ContentView: View {
             MainThreadWatchdog.checkpoint("ContentView.task")
             validateAppleIDCredentialState()
             SyncEngine.shared.configure(container: modelContext.container)
+            Backup.runIfDue(container: modelContext.container)
             SyncEngine.shared.pullOnForeground()
         }
         .onChange(of: scenePhase) { _, phase in
