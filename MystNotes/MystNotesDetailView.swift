@@ -666,7 +666,10 @@ struct NotebookDetailView: View {
                             ImageAdjustOverlay(
                                 frame: Binding(
                                     get: { adjustingImageFrame ?? CGRect(origin: .zero, size: pageSize) },
-                                    set: { adjustingImageFrame = $0 }
+                                    set: {
+                                        AppLog.note("adjust", "handles \($0) layer \(adjustingLayerID?.uuidString.prefix(8) ?? "nil")")
+                                        adjustingImageFrame = $0
+                                    }
                                 ),
                                 containerSize: pageSize,
                                 scale: scale,
@@ -1237,6 +1240,7 @@ struct NotebookDetailView: View {
         doc.frameY = fractions.y
         doc.frameWidth = fractions.width
         doc.frameHeight = fractions.height
+        AppLog.note("adjust", "done \(doc.id.uuidString.prefix(8)) frame \(frame) fractions \(fractions)")
         page.markModified()
         saveMetadata("Failed to save image placement")
     }

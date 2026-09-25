@@ -175,6 +175,8 @@ private struct ArtworkLayerView: View {
         // preserves aspect ratio, so the selection handles can hug the
         // artwork the way Google Docs/Freeform do.
         let frame = liveFrame ?? layer.rect(for: shown, in: containerSize)
+        // ponytail: diagnostic for the resize-preview report (Sept 25, 2026); remove once found.
+        let _ = AppLog.note("adjust", "draw \(layer.id.uuidString.prefix(8)) live \(liveFrame.map { "\($0)" } ?? "nil") frame \(frame) shown \(shown?.size ?? .zero) container \(containerSize)")
         ZStack(alignment: .topLeading) {
             Color.clear
             if let shown {
