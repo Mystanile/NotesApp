@@ -1133,6 +1133,21 @@ final class SyncTests: XCTestCase {
         XCTAssertNil(page.title)
     }
 
+    /// A notebook locked on one device is locked on the other.
+    func testNotebookLock_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Diary", pageCount: 1)
+        notebook.isLocked = true
+        notebook.settingsModifiedAt = harness.clock.advance()
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let arrived = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Notebook>()).first { $0.id == notebook.id })
+        XCTAssertEqual(arrived.isLocked, true)
+    }
+
     // MARK: PROJECT_PLAN §1.2 - the blocker
 
     /// Offline, the iPad writes on page 3 and the Mac writes on page 7 of the

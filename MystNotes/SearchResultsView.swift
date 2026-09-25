@@ -98,7 +98,8 @@ struct SearchResultsView: View {
         guard !needles.isEmpty else { results = []; return }
 
         var found: [SearchResult] = []
-        for notebook in allNotebooks {
+        // A locked notebook's text stays out of results until it's open.
+        for notebook in allNotebooks where NotebookLock.shared.isOpen(notebook) {
             let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
             for (index, page) in pages.enumerated() {
                 let blob = SearchIndex.searchableText(for: page, importedDocuments: docsByPageID[page.id] ?? [])

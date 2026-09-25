@@ -1162,7 +1162,8 @@ nonisolated struct SyncRunner {
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
                 createdAt: notebook.createdAt, modifiedAt: notebook.modifiedAt,
                 settingsModifiedAt: notebook.settingsModifiedAt,
-                folderID: notebook.folder?.id, isFavorite: notebook.isFavorite, pages: pageDTOs, links: links
+                folderID: notebook.folder?.id, isFavorite: notebook.isFavorite,
+                isLocked: notebook.isLocked, pages: pageDTOs, links: links
             )
         }
 
@@ -1243,6 +1244,7 @@ nonisolated struct SyncRunner {
                     existing.coverStyle = entry.coverStyle
                     existing.folder = entry.folderID.flatMap { folderByID[$0] }
                     existing.isFavorite = entry.isFavorite
+                    existing.isLocked = entry.isLocked
                     existing.settingsModifiedAt = entry.settingsModifiedAt
                 }
                 lift(existing, to: entry.modifiedAt)
@@ -1255,6 +1257,7 @@ nonisolated struct SyncRunner {
                 notebook.settingsModifiedAt = entry.settingsModifiedAt
                 notebook.folder = entry.folderID.flatMap { folderByID[$0] }
                 notebook.isFavorite = entry.isFavorite
+                notebook.isLocked = entry.isLocked
                 context.insert(notebook)
                 notebookByID[entry.id] = notebook
             }

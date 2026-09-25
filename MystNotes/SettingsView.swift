@@ -205,6 +205,11 @@ struct SettingsView: View {
         isExportingLibrary = true
         Task {
             defer { isExportingLibrary = false }
+            // Everything includes locked notebooks: prove it's the owner.
+            if notebooks.contains(where: { $0.isLocked == true }),
+               !(await NotebookLock.shared.authenticate("Export your whole library, including locked notebooks")) {
+                return
+            }
             do {
                 let sorted = notebooks.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
                 let archive = try await LibraryExport.makeArchive(of: sorted, documents: importedDocuments,

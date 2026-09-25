@@ -13,7 +13,7 @@ struct NotebookWindowView: View {
     var body: some View {
         NavigationStack {
             if let notebookID, let notebook = modelContext.model(for: notebookID) as? Notebook {
-                NotebookDetailView(notebook: notebook)
+                LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }
             } else {
                 ContentUnavailableView(
                     "Notebook Not Found",

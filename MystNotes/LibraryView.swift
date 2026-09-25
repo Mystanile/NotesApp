@@ -109,6 +109,11 @@ struct LibraryView: View {
     /// both produce identical pages.
     /// The notebook's words - page names, typed text, recognized
     /// handwriting - as Markdown (`LibraryExport.markdown`).
+    /// Exports of a locked notebook ask first, like opening it.
+    private func whenOpen(_ notebook: Notebook, _ action: @escaping () -> Void) {
+        Task { if await NotebookLock.shared.unlock(notebook) { action() } }
+    }
+
     private func exportNotebookAsMarkdown(_ notebook: Notebook) {
         let name = (notebook.title.isEmpty ? "Notebook" : notebook.title)
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
@@ -349,6 +354,22 @@ struct LibraryView: View {
     @ViewBuilder
     private func notebookMenu(for notebook: Notebook) -> some View {
         Button {
+            Task {
+                let locking = notebook.isLocked != true
+                if await NotebookLock.shared.setLocked(locking, for: notebook) {
+                    save()
+                } else if locking {
+                    exportMessage = "Set a passcode on this device to lock notebooks."
+                }
+            }
+        } label: {
+            if notebook.isLocked == true {
+                Label("Remove Lock", systemImage: "lock.open")
+            } else {
+                Label("Lock", systemImage: "lock")
+            }
+        }
+        Button {
             toggleFavorite(notebook)
         } label: {
             if notebook.isFavorite == true {
@@ -370,12 +391,12 @@ struct LibraryView: View {
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         Button {
-            exportNotebookAsPDF(notebook)
+            whenOpen(notebook) { exportNotebookAsPDF(notebook) }
         } label: {
             Label("Export as PDF", systemImage: "arrow.up.doc")
         }
         Button {
-            exportNotebookAsMarkdown(notebook)
+            whenOpen(notebook) { exportNotebookAsMarkdown(notebook) }
         } label: {
             Label("Export as Markdown", systemImage: "doc.plaintext")
         }

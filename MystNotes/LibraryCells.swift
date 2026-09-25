@@ -88,6 +88,15 @@ struct NotebookCellView: View {
     var body: some View {
         VStack(spacing: 8) {
             NotebookCoverView(notebook: notebook)
+                .overlay(alignment: .topLeading) {
+                    if notebook.isLocked == true {
+                        Image(systemName: "lock.fill")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .accessibilityLabel("Locked")
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     if notebook.isFavorite == true {
                         Image(systemName: "star.fill")

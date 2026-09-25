@@ -27,10 +27,12 @@ struct ContentView: View {
                             LibraryView(parentFolder: folder)
                         }
                         .navigationDestination(for: Notebook.self) { notebook in
-                            NotebookDetailView(notebook: notebook)
+                            LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }
                         }
                         .navigationDestination(for: SearchResult.self) { result in
-                            NotebookDetailView(notebook: result.notebook, initialPageID: result.pageID)
+                            LockedNotebookGate(notebook: result.notebook) {
+                                NotebookDetailView(notebook: result.notebook, initialPageID: result.pageID)
+                            }
                         }
                 }
                 #if targetEnvironment(macCatalyst) || canImport(UIKit)
@@ -59,6 +61,8 @@ struct ContentView: View {
                 SyncEngine.shared.pullOnForeground()
             case .background:
                 SyncEngine.shared.pushOnBackground()
+                // After the notebook's own save, which runs at .inactive.
+                NotebookLock.shared.relockAll()
             default:
                 break
             }

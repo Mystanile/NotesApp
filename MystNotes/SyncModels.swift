@@ -125,6 +125,8 @@ nonisolated struct NotebookIndexEntry: Codable {
     var folderID: UUID?
     /// Absent before favourites; nil is not a favourite.
     var isFavorite: Bool?
+    /// Absent before note lock; nil is unlocked.
+    var isLocked: Bool?
     /// See `NotebookDTO.contentSignature`.
     var contentSignature: String
 
@@ -137,6 +139,7 @@ nonisolated struct NotebookIndexEntry: Codable {
         settingsModifiedAt = notebook.settingsModifiedAt
         folderID = notebook.folderID
         isFavorite = notebook.isFavorite
+        isLocked = notebook.isLocked
         contentSignature = notebook.contentSignature
     }
 }
@@ -265,6 +268,7 @@ nonisolated struct NotebookDTO: Codable {
     var folderID: UUID?
     /// Absent before favourites. Merges with the other settings.
     var isFavorite: Bool? = nil
+    var isLocked: Bool? = nil
     var pages: [PageDTO]
     var links: [LinkDTO]
 

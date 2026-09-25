@@ -46,6 +46,10 @@ final class Notebook {
     /// `modifiedAt`, so starring a notebook doesn't reorder Recent.
     var isFavorite: Bool?
 
+    /// Opening it asks for Face ID / the passcode (`NotebookLock`). A
+    /// setting, on the settings clock like the star.
+    var isLocked: Bool?
+
     var folder: Folder?
 
     @Relationship(deleteRule: .cascade, inverse: \Page.notebook)
