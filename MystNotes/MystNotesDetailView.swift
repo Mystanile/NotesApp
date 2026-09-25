@@ -596,7 +596,6 @@ struct NotebookDetailView: View {
                     beginAdjustingImage(on: page, at: viewport.pagePoint(from: location))
                 },
                 onFillTap: toolState.activeKind == .fill && !isPresenting ? { location in
-                    AppLog.note("fill", "tap \(location) in host, zoom \(viewport.zoomScale), offset \(viewport.contentOffset)")
                     performFill(at: viewport.pagePoint(from: location), on: page)
                 } : nil,
                 onPencilDoubleTap: togglePencilEraser,
@@ -1635,11 +1634,9 @@ struct NotebookDetailView: View {
         let drawing = canvasView.drawing
         let size = PageGeometry.contentSize(for: page)
         let color = toolState.fillColor.fixedUIColor
-        AppLog.note("fill", "page point \(point), page size \(size), color \(color)")
         Task {
             guard let filled = await FillTool.fill(drawing, in: size, at: point, color: color) else { return }
             canvasView.setDrawingUndoably(filled)
-            AppLog.note("fill", "applied: canvas now has \(canvasView.drawing.strokes.count) strokes (was \(drawing.strokes.count))")
             scheduleAutosave()
         }
     }

@@ -177,7 +177,7 @@ All 22 tasks done, exit criteria met, and the user confirmed it on the iPad on S
 
 Already done early: shape tool rebuild (Sept 15/18), images on a page with stacking and Mac import (Sept 18/19), text block typography (Sept 15), our own lasso with move/resize/rotate/cut/copy/paste (Sept 19), copy pages to another notebook (Sept 19).
 
-1. ~~**Fill tool**~~ — fixed Sept 25, 2026 on `m1-fill-tool` (`TOOL_FIXES.md` Part 2). Owed: a check on the iPad, then remove the `[fill]` logging.
+1. ~~**Fill tool**~~ — done Sept 25, 2026, confirmed on the iPad (`TOOL_FIXES.md` Part 2): one erasable stroke per fill, the pen's colour, pan/zoom while selected, no gap at the outline.
 2. **Real PDF annotation** — live PDFKit layer instead of rasterize-to-JPEG. The highest-value item.
 3. Lasso: convert to text, recolor, cross-page move, copy as image.
 4. Per-page templates, custom page sizes, imported templates.
