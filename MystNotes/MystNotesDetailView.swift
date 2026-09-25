@@ -136,6 +136,8 @@ struct NotebookDetailView: View {
     /// file. Killed before then, the file just stays (invariant 1).
     @State private var pendingTrash: Set<String> = []
     @State private var showingStickerPicker = false
+    /// VisionKit's document camera; the scan arrives as new pages.
+    @State private var showingScanner = false
     @State private var linkNeedingDestination: Link?
 
     /// Whether an import lands on the page you're looking at or creates new
@@ -500,6 +502,11 @@ struct NotebookDetailView: View {
                             importTarget = .newPages
                             showingImagePicker = true
                         }
+                        #if canImport(UIKit)
+                        if DocumentScannerView.isAvailable {
+                            Button("Scan Document") { showingScanner = true }
+                        }
+                        #endif
                     }
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
@@ -560,6 +567,19 @@ struct NotebookDetailView: View {
                 Task { await copyPages(pages, to: destination) }
             }
         }
+        #if canImport(UIKit)
+        .fullScreenCover(isPresented: $showingScanner) {
+            DocumentScannerView(onFinish: { images in
+                showingScanner = false
+                Task {
+                    let data = await ScanToPDF.pdf(from: images)
+                    guard !data.isEmpty else { return }
+                    await importPDF(data: data, target: .newPages)
+                }
+            }, onCancel: { showingScanner = false })
+            .ignoresSafeArea()
+        }
+        #endif
         .alert("Rename Page", isPresented: Binding(
             get: { pageToRename != nil },
             set: { if !$0 { pageToRename = nil } }
