@@ -18,6 +18,7 @@ nonisolated enum AppSettings {
         static let inkWidth = "defaultInkWidth"
         static let shapeLineStyle = "shapeLineStyle"
         static let penPresets = "penPresets"
+        static let hiddenToolbarItems = "hiddenToolbarItems"
         static let template = "defaultTemplate"
         static let pageStripVisible = "pageStripVisible"
         static let pageStripHeight = "pageStripHeight"

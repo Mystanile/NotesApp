@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Keys.isSignedIn) private var isSignedIn = false
     @AppStorage(AppSettings.Keys.isGuestMode) private var isGuestMode = false
     @AppStorage(AppSettings.Keys.syncFolderName) private var syncFolderName = ""
+    @AppStorage(AppSettings.Keys.hiddenToolbarItems) private var hiddenToolbarItems = ""
 
     @ObservedObject private var sync = SyncEngine.shared
     @State private var showingFolderPicker = false
@@ -145,6 +146,23 @@ struct SettingsView: View {
                 Text("Sync")
             } footer: {
                 Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Mystnotes writes your library and its drawings there about half a minute after you stop editing and whenever it goes to the background, and reads changes back when it opens or you tap Sync Now. Edits merge page by page, so two devices can work on different pages of the same notebook offline. If both change the same page, the more recent version is shown and the other is kept in the folder's trash.")
+            }
+
+            Section {
+                ForEach(ToolbarItemChoice.allCases) { item in
+                    Toggle(item.label, isOn: Binding(
+                        get: { !ToolbarItemChoice.hidden(in: hiddenToolbarItems).contains(item) },
+                        set: { shown in
+                            var hidden = ToolbarItemChoice.hidden(in: hiddenToolbarItems)
+                            if shown { hidden.remove(item) } else { hidden.insert(item) }
+                            hiddenToolbarItems = ToolbarItemChoice.stored(hidden)
+                        }
+                    ))
+                }
+            } header: {
+                Text("Toolbar")
+            } footer: {
+                Text("The pen and eraser are always there.")
             }
 
             Section {

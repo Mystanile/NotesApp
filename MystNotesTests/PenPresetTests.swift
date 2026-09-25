@@ -28,3 +28,12 @@ final class PenPresetTests: XCTestCase {
         XCTAssertEqual(PenPreset.decode(Data("garbage".utf8)), [])
     }
 }
+
+final class ToolbarChoiceTests: XCTestCase {
+    func testHiddenTools_roundTrip_andUnknownOnesAreIgnored() {
+        let stored = ToolbarItemChoice.stored([.fill, .link])
+        XCTAssertEqual(ToolbarItemChoice.hidden(in: stored), [.fill, .link])
+        XCTAssertEqual(ToolbarItemChoice.hidden(in: "fill,hologram"), [.fill], "a tool this build doesn't know is ignored")
+        XCTAssertEqual(ToolbarItemChoice.hidden(in: ""), [])
+    }
+}

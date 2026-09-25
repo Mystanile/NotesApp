@@ -11,6 +11,34 @@ enum DrawingToolKind: Equatable {
     case pen, highlighter, eraser, lasso, fill
 }
 
+/// The toolbar's optional tools, which Settings can hide. The pen and the
+/// eraser are always there.
+enum ToolbarItemChoice: String, CaseIterable, Identifiable {
+    case highlighter, lasso, fill, textBox, sticker, link
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .highlighter: return "Highlighter"
+        case .lasso: return "Lasso"
+        case .fill: return "Fill"
+        case .textBox: return "Text Box"
+        case .sticker: return "Stickers"
+        case .link: return "Links"
+        }
+    }
+
+    /// Stored as a comma-separated list of the hidden ones, so a tool a
+    /// later build adds shows by default.
+    static func hidden(in stored: String) -> Set<ToolbarItemChoice> {
+        Set(stored.split(separator: ",").compactMap { ToolbarItemChoice(rawValue: String($0)) })
+    }
+
+    static func stored(_ hidden: Set<ToolbarItemChoice>) -> String {
+        allCases.filter(hidden.contains).map(\.rawValue).joined(separator: ",")
+    }
+}
+
 /// A saved pen - ink, colour, width - one tap away in the pen's options.
 /// Kept in `AppSettings.penPresets`; ink types this build doesn't know (a
 /// newer build's) come back as the plain pen.
@@ -109,6 +137,11 @@ struct DrawingToolbarView: View {
     var style: Style = .floating
     @Binding var toolState: DrawingToolState
     @AppStorage(AppSettings.Keys.penPresets) private var presetData = Data()
+    @AppStorage(AppSettings.Keys.hiddenToolbarItems) private var hiddenItems = ""
+
+    private func shows(_ item: ToolbarItemChoice) -> Bool {
+        !ToolbarItemChoice.hidden(in: hiddenItems).contains(item)
+    }
     /// Which tool's options popover is open. Owned by the parent so a
     /// Pencil squeeze can open it from the canvas.
     @Binding var openPopover: DrawingToolKind?
@@ -168,19 +201,21 @@ struct DrawingToolbarView: View {
             Divider().frame(height: 24)
 
             toolButton(.pen, systemImage: "pencil.tip")
-            toolButton(.highlighter, systemImage: "highlighter")
+            if shows(.highlighter) { toolButton(.highlighter, systemImage: "highlighter") }
             toolButton(.eraser, systemImage: "eraser")
-            toolButton(.lasso, systemImage: "lasso")
-            toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable)
+            if shows(.lasso) { toolButton(.lasso, systemImage: "lasso") }
+            if shows(.fill) { toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable) }
 
-            Divider().frame(height: 24)
+            if shows(.textBox) || shows(.sticker) || shows(.link) {
+                Divider().frame(height: 24)
+            }
 
             // Shapes have no button: draw one and hold the pencil still at
             // the end, and it snaps (see ShapeHoldRecognizer).
             // Stickers and links share the text box's rule: paged pages only.
-            iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox)
-            iconButton("face.smiling", disabled: !isTextBoxAvailable, action: onAddSticker)
-            iconButton("link", disabled: !isTextBoxAvailable, action: onAddLink)
+            if shows(.textBox) { iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox) }
+            if shows(.sticker) { iconButton("face.smiling", disabled: !isTextBoxAvailable, action: onAddSticker) }
+            if shows(.link) { iconButton("link", disabled: !isTextBoxAvailable, action: onAddLink) }
         }
     }
 
