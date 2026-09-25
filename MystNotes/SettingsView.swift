@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import UniformTypeIdentifiers
 
 /// App settings (plan Phase 6). Preferences live in `UserDefaults` via
@@ -21,6 +22,9 @@ struct SettingsView: View {
     @State private var diagnosticsArchive: URL?
     @State private var trash = TrashRetention.Summary()
     @State private var confirmingEmptyTrash = false
+    @State private var isExportingLibrary = false
+    @Query private var notebooks: [Notebook]
+    @Query private var importedDocuments: [ImportedDocument]
 
     private let toolOptions: [(id: String, label: String)] = [
         ("pen", "Pen"),
@@ -108,6 +112,10 @@ struct SettingsView: View {
                              ? "Use this if notebooks or pages look wrong or missing. The library is reconstructed from the copy Mystnotes keeps on this device."
                              : "Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
                     }
+                Button(isExportingLibrary ? "Exporting Library…" : "Export Library…") {
+                    exportLibrary()
+                }
+                .disabled(isExportingLibrary || notebooks.isEmpty)
                 Button("Export Diagnostics…") {
                     Task {
                         let result = await Task.detached { Result { try DiagnosticsExport.makeArchive() } }.value
@@ -188,6 +196,25 @@ struct SettingsView: View {
             guard case .success(let url) = result else { return }
             SyncEngine.shared.chooseFolder(url)
         }
+    }
+
+    /// Every notebook as a PDF and Markdown, in its folders, zipped
+    /// (`LibraryExport`), to the share sheet.
+    private func exportLibrary() {
+        #if canImport(UIKit)
+        isExportingLibrary = true
+        Task {
+            defer { isExportingLibrary = false }
+            do {
+                let sorted = notebooks.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+                let archive = try await LibraryExport.makeArchive(of: sorted, documents: importedDocuments,
+                                                                  in: FileManager.default.temporaryDirectory)
+                diagnosticsArchive = archive.zip
+            } catch {
+                diagnosticsMessage = "Couldn't export the library: \(error.localizedDescription)"
+            }
+        }
+        #endif
     }
 
     /// Both off the main actor: they stat a directory that can hold a

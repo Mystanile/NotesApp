@@ -107,6 +107,20 @@ struct LibraryView: View {
     /// Flattens every page of a notebook into one PDF and hands it to the
     /// share sheet. Reuses the same renderer the in-notebook export uses, so
     /// both produce identical pages.
+    /// The notebook's words - page names, typed text, recognized
+    /// handwriting - as Markdown (`LibraryExport.markdown`).
+    private func exportNotebookAsMarkdown(_ notebook: Notebook) {
+        let name = (notebook.title.isEmpty ? "Notebook" : notebook.title)
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).md")
+        do {
+            try Data(LibraryExport.markdown(for: notebook).utf8).write(to: url, options: .atomic)
+            pdfExportURL = PDFExport(url: url)
+        } catch {
+            exportMessage = "Couldn't create the Markdown file: \(error.localizedDescription)"
+        }
+    }
+
     private func exportNotebookAsPDF(_ notebook: Notebook) {
         let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
         guard !pages.isEmpty else {
@@ -359,6 +373,11 @@ struct LibraryView: View {
             exportNotebookAsPDF(notebook)
         } label: {
             Label("Export as PDF", systemImage: "arrow.up.doc")
+        }
+        Button {
+            exportNotebookAsMarkdown(notebook)
+        } label: {
+            Label("Export as Markdown", systemImage: "doc.plaintext")
         }
         #endif
         Menu {
