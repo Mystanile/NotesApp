@@ -1,6 +1,6 @@
 # Fix brief: shape tool, fill tool, imported images
 
-**Date:** September 12, 2026 (parts 1–2), September 18, 2026 (part 3)
+**Date:** September 12, 2026 (parts 1–2), September 18, 2026 (part 3), September 19, 2026 (part 4)
 **Milestone:** M1
 **Files:** `ShapeRecognizer.swift`, `ShapeHoldRecognizer.swift`, `FillTool.swift`, `MystNotesDetailView.swift`, `DrawingToolbarView.swift`, `PageBackgroundView.swift`, `ImportedPageBackgroundView.swift`, `BitmapStore.swift`, `ImportedArtwork.swift`, `CanvasGestures.swift`
 
@@ -238,3 +238,65 @@ Four routes now funnel into one entry point:
 The type is decided by the file's own header (`ImportedFileType`), never by what the source claims: a pasteboard item declared `public.png` can be a JPEG, and a PDF picked from the image importer still imports as a PDF. Bytes are stored as they arrived — the old path decoded to a `UIImage` and re-encoded JPEG at 0.9 **on the main actor**, which is both lossy for a screenshot and a full-resolution decode on the thread that has to stay clear for ink.
 
 `hasImage` (a silent check) gates the menu item and the Edit menu; only a real paste reads the pasteboard, so iOS's "pasted from" banner appears when someone actually pasted.
+
+### 3.4 The second `.fileImporter` killed PDF import on the iPad — **fixed, Sept 19, 2026**
+
+The Files route in 3.3 was added as a *second* `.fileImporter` chained after the PDF one. SwiftUI gives a view one document-picker presentation; with two chained, only the last is wired up, and the first's `isPresented` flips to `true` with nothing appearing. That was the PDF importer, so "PDF onto This Page" and "PDF as New Pages" silently did nothing on the iPad from the Sept 18 build. Catalyst presents the picker differently, which is why it wasn't caught there.
+
+There is exactly one `.fileImporter` on `NotebookDetailView` now (`showingFileImporter` + `fileImporterTypes`); the menu item picks the types, the file's header picks the path. The state var's doc comment says why there must never be two.
+
+### 3.5 A page can hold more than one piece of artwork — **Sept 19, 2026**
+
+Reported the same day: put a photo on a page, import a PDF onto it, the photo is gone. Not a regression — `applyBackground` deleted every `ImportedDocument` on the page before inserting the new one, because every renderer took exactly one. Same the other way round (a photo onto a PDF page replaced the PDF).
+
+The page's artwork is a **stack** now, bottom first:
+
+- `ImportedDocument.stackOrder: Int?` (nil = 0, so old records draw first; ties fall back to the id so both devices agree). `ImportedDocument.stack(on:in:)` is the one sort. It syncs as `ImportedDocumentDTO.stackOrder`, optional, so old snapshots decode.
+- A full-bleed PDF is the page's paper and goes **under** whatever is there (`stackOrder(under:)`); a photo goes **on top** (`stackOrder(over:)`). `Page.backgroundRef` is the bottom of the stack — still "this page has artwork", still what old pages have when they have no document at all.
+- `ArtworkLayer` is the value type the renderers take. `ImportedPageBackgroundView`, `PageThumbnailRenderer`, `PageRenderer` and `SearchIndex` all draw or read the whole stack. One bitmap per layer in `PageBitmaps.artwork`; placement isn't part of the key, so moving a picture re-renders nothing.
+- Long-press picks the topmost picture under the finger (the canvas now passes the press location up); rotate, crop, remove and the handles act on that one (`adjustingLayerID`). Remove takes only that layer, and trashes its file if nothing else uses it.
+
+Tests: `PageArtworkTests` (stack order, thumbnails draw every layer bottom first, bitmap key ignores placement, legacy `backgroundRef`-only pages are one layer) and `SyncTests` (a three-layer stack round-trips with its order and every file; ties are stable across devices).
+
+### 3.6 The page strip cycled, one thumbnail visible at a time — **fixed, Sept 19, 2026**
+
+Screen recording from the iPad: five thumbnails on screen, only ever one of them showing its page, and which one kept changing. `BitmapStore` evicted oldest-inserted when over budget and bumped `generation`, which every thumbnail's `.task(id:)` includes — so landing B evicted A and re-fired A's view, which evicted B, and so on forever. The strip at that height needs ~2.8 MB per thumbnail (rendered at the screen's scale on top of an `output` that is already 2x, deliberately: the ruling fades out at less) against an 8 MB budget, so it never settled.
+
+Eviction is now least-recently-*read*, never touches the entry that just landed or anything read in the last second (that is what is on screen), and tolerates being over budget by what is on screen rather than dropping something that will only be asked for again. A body read of a missing bitmap also asks for it, so a view whose entry was evicted heals on its next draw. The thumbnail budget is 24 MB. `testStore_neverEvictsWhatWasJustRead_soAStripCannotCycle` replays the recording.
+
+Second recording, same afternoon: the strip stuttered while its grabber was dragged. Every 80 px of drag was a new cache key, so every visible thumbnail re-rendered (ink decode, PDF rasterize) mid-drag, and each cell went blank until its new bitmap landed. `PageThumbnailView.renderHeight` now holds the request at the height the drag started from - the bitmap is scaled during the drag and rendered once on release - and a cell keeps showing the bitmap it had until the replacement arrives (`lastShown`), which also covers the re-render after an ink edit.
+
+### 3.7 Exports and thumbnails lost the black ink in dark mode — **fixed, Sept 19, 2026**
+
+An exported notebook had every page's PDF and the green ink, and none of the black handwriting; the editor showed all of it, and reopening the notebook showed all of it. The iPad was in dark mode. `PKDrawing.image(from:scale:)` renders through the *current* trait collection and PencilKit inverts ink for a dark appearance - which is why the canvas is pinned to `.light` (the dark-mode ink history in git) - but `PageRenderer` and `PageThumbnailRenderer` render with no view to take traits from, so black became white on white paper. Green isn't a colour PencilKit inverts, which is why it survived and made the failure look like missing strokes rather than invisible ones.
+
+Both renders are wrapped in `UITraitCollection(userInterfaceStyle: .light).performAsCurrent`, as `FillTool` and `HandwritingRecognizer` already were. `testExport_keepsInkDarkInDarkMode` renders under dark traits and checks the ink is dark; `testExport_drawsTheCroppedArtworkAndTheInk` and `testNotebookExport_hasEveryPage` came out of the same investigation and pin the rest of the export.
+
+---
+
+## Part 4 — Lasso: resize with a pinch (Sept 19, 2026)
+
+### Why PencilKit's lasso couldn't do it
+
+The lasso was `PKLassoTool`. It selects and moves, and offers Cut/Copy/Delete/Duplicate, but PencilKit never exposes *which* strokes it holds — there is no `selectedStrokes` — so nothing could be attached to the selection. Resize meant owning the lasso end to end.
+
+### What was built
+
+`InkSelection` (pure functions on `PKDrawing`), `InkSelectionController` (gestures → edits, `@Observable`, owned by the detail view like `CanvasViewport`), `InkSelectionOverlay` + `InkSelectionToolbar` (SwiftUI, hit-testing off; the gestures live on the host).
+
+- **Selecting.** With the lasso tool active the canvas's `drawingGestureRecognizer` is disabled and `InkLassoRecognizer` — a pure touch observer on the host, like `ShapeHoldRecognizer` — reads the Pencil's loop. A stroke is taken when more than half its sampled points are inside the loop (`CGPath.contains`, even-odd); one merely clipped stays put. Fingers still pan and zoom the page while nothing is selected.
+- **Manipulating.** With a selection, `isZoomEnabled` goes false (the image handles' trick), so the host's own pan / pinch / rotation recognizers get the fingers: one-finger drag inside the box moves, **pinch resizes**, twist rotates — all about the selection's centre. Pencil-down inside the box also drags; Pencil or finger outside lets go.
+- **Storage.** A move, resize or rotate is folded into each stroke's `transform`, never into its points. Stroke identity is `creationDate + randomSeed` (`StrokeIDMap.Fingerprint` ignores the transform on purpose), so IDs survive (invariant 6) and the record stores the full affine. **Measured, not assumed:** PencilKit scales the ink *width* with a scale transform (`testScaleTransform_scalesInkWidthToo`, inked area ~4× for 2×), so a doubled word reads as the same handwriting drawn bigger.
+- **Never lose ink.** Each gesture step rewrites `canvas.drawing` with every stroke present and only the selected transforms changed. The canvas always holds the complete drawing, so an autosave landing mid-gesture saves complete ink (invariant 1). The step is committed once, as one `setDrawingUndoably`, when the last finger lifts — one undo per drag, pinch or twist, however many fingers took part.
+- **Staleness.** The selection is remembered as fingerprints, not indices. An undo, an erase or a page change that removes a selected stroke makes the selection let go instead of acting on whatever is at those indices now; an undo that moves the ink without removing it re-syncs the box on the next gesture.
+- **Copies.** Duplicate and Paste go through `reidentified`: each copy gets its own `creationDate` (a millisecond apart), so no copy ever shares a fingerprint with its original or with another copy. Ink travels on the pasteboard as PencilKit's archive under `com.mozynas.mystnotes.ink`, so it is never mistaken for a picture; ⌘C / ⌘X / ⌘V reach it through `CanvasHostView`.
+- **The page holds still.** A resize used to zoom the whole page with it: `isScrollEnabled = false` stands down a `UIScrollView`'s pan only, and the canvas's pinch kept going under the selection. The controller now disables the canvas's pan *and* pinch the moment a selection exists, synchronously (`gateCanvasGestures`), and the image handles' path got the same pinch line in `PencilCanvasView.configure`. `testController_selectionHoldsThePageStill`.
+- **Scope.** Paged pages only; the whiteboard keeps `PKLassoTool` (backlog).
+
+### Owed on the iPad
+
+Two framework behaviours the simulator can't answer, both in `BACKLOG.md`: whether the host's observer receives the Pencil with the drawing gesture disabled (the shape tool's open question), and whether the Pencil then pans the scroll view under `.pencilOnly`.
+
+### Tests
+
+`InkSelectionTests`, 17: what a loop takes; moves and scales keep every identity and only touch the selection; scale is about the centre; steps compose; a rotated box hit-tests as rotated; copies are new strokes; pasteboard round-trip; the width-scaling probe; and on a real `PKCanvasView` — a drag is one undo and the selection survives it, a pinch resizes about the centre, pinch+twist is one gesture, a vanished stroke lets go, duplicate/paste select the copies and are one undo, the tool stands inking down and hands it back, a new canvas drops the selection.
