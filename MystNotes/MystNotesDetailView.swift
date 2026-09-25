@@ -8,6 +8,7 @@ import AppKit
 #endif
 import PDFKit
 import PhotosUI
+import UniformTypeIdentifiers
 
 /// The actual notebook-editing experience: one page's canvas at a time,
 /// a page-thumbnail strip for navigation, a custom drawing toolbar
@@ -48,6 +49,8 @@ struct NotebookDetailView: View {
         penColor: Color(hex: AppSettings.defaultInkColorHex),
         penWidth: AppSettings.defaultInkWidth
     )
+    /// The toolbar's open options popover; a Pencil squeeze sets it.
+    @State private var openToolOptions: DrawingToolKind?
 #else
     // Placeholder for macOS native - PencilKit not available
     @State private var canvasView: Any?
@@ -59,6 +62,12 @@ struct NotebookDetailView: View {
     /// putting it in this view's state would re-evaluate this whole body
     /// sixty times a second during a pinch.
     @State private var viewport = CanvasViewport()
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+    /// The lasso's selection. Ours, not PencilKit's: `PKLassoTool` never
+    /// says which strokes it holds, so a pinch could not be put on it.
+    /// See `InkSelectionController`.
+    @State private var inkSelection = InkSelectionController()
+#endif
 
     @State private var currentPageIndex: Int = 0
     @State private var canUndo = false
@@ -101,9 +110,15 @@ struct NotebookDetailView: View {
     /// the eraser, so a second double-tap can switch straight back to it.
     @State private var toolBeforeEraser: DrawingToolKind?
 #endif
-    /// Non-nil while the imported artwork on this page is being moved or
-    /// resized; holds its live frame in page coordinates.
+    /// Non-nil while a piece of imported artwork on this page is being
+    /// moved or resized; holds its live frame in page coordinates.
     @State private var adjustingImageFrame: CGRect?
+    /// Which layer of the page's artwork stack those handles are on. A
+    /// page can hold several - a PDF page as its paper, photos over it -
+    /// so the handles, rotate, crop and remove all act on this one only.
+    /// For a page from before `ImportedDocument` existed it is the page's
+    /// own id (see `ArtworkLayer.stack`).
+    @State private var adjustingLayerID: UUID?
     /// Non-nil while cropping that artwork; the crop rect in page
     /// coordinates, always kept inside `adjustingImageFrame`.
     @State private var croppingRect: CGRect?
@@ -116,10 +131,17 @@ struct NotebookDetailView: View {
     private enum ImportTarget { case newPages, currentPage }
     @State private var importTarget: ImportTarget = .newPages
 
-    @State private var showingPDFImporter = false
+    /// One Files importer for PDFs and images both. There must be exactly
+    /// one `.fileImporter` on this view: SwiftUI gives a view a single
+    /// document-picker presentation, and with two chained only the last
+    /// one ever appears - the PDF importer was dead on the iPad for a day
+    /// (Sept 18-19, 2026) because an image importer was added after it.
+    /// The menu item decides which types the picker offers; the file's own
+    /// header decides which import path it takes.
+    @State private var showingFileImporter = false
+    @State private var fileImporterTypes: [UTType] = [.pdf]
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     @State private var showingImagePicker = false
-    @State private var showingImageFileImporter = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     #endif
 
@@ -131,6 +153,8 @@ struct NotebookDetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     private var drawingToolbarInNavigationBar: Bool { horizontalSizeClass != .compact }
     @State private var pageToDelete: Page?
+    /// The page whose context menu opened the copy sheet; it starts ticked.
+    @State private var pageToCopy: Page?
     @State private var showingSaveConfirmation = false
     @State private var saveConfirmationTask: Task<Void, Never>?
     @State private var pdfExportURL: PDFExport?
@@ -189,6 +213,7 @@ struct NotebookDetailView: View {
                                     DrawingToolbarView(
                                         style: .floating,
                                         toolState: $toolState,
+                                        openPopover: $openToolOptions,
                                         canUndo: canUndo,
                                         canRedo: canRedo,
                                         isFillToolAvailable: page.type != "whiteboard",
@@ -196,7 +221,9 @@ struct NotebookDetailView: View {
                                         containerSize: geo.size,
                                         onUndo: { canvasView.undoManager?.undo() },
                                         onRedo: { canvasView.undoManager?.redo() },
-                                        onAddTextBox: addTextBlock
+                                        onAddTextBox: addTextBlock,
+                                        onAddSticker: { showingStickerPicker = true },
+                                        onAddLink: addLink
                                     )
                                     .frame(maxWidth: .infinity, alignment: .center)
                                 }
@@ -336,6 +363,7 @@ struct NotebookDetailView: View {
                     DrawingToolbarView(
                         style: .inline,
                         toolState: $toolState,
+                        openPopover: $openToolOptions,
                         canUndo: canUndo,
                         canRedo: canRedo,
                         isFillToolAvailable: page.type != "whiteboard",
@@ -343,7 +371,9 @@ struct NotebookDetailView: View {
                         containerSize: .zero,
                         onUndo: { canvasView.undoManager?.undo() },
                         onRedo: { canvasView.undoManager?.redo() },
-                        onAddTextBox: addTextBlock
+                        onAddTextBox: addTextBlock,
+                        onAddSticker: { showingStickerPicker = true },
+                        onAddLink: addLink
                     )
                 }
             }
@@ -363,56 +393,47 @@ struct NotebookDetailView: View {
                 .help(showingPageStrip ? "Hide the page strip" : "Show the page strip")
 
                 Menu {
-                    Section("New Page") {
-                        Button("Blank") { addPage(type: "paged", template: "blank") }
-                        Button("Lined") { addPage(type: "paged", template: "lined") }
-                        Button("Grid") { addPage(type: "paged", template: "grid") }
-                        Button("Dotted") { addPage(type: "paged", template: "dotted") }
-                        Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
-                    }
+                    Button("Blank") { addPage(type: "paged", template: "blank") }
+                    Button("Lined") { addPage(type: "paged", template: "lined") }
+                    Button("Grid") { addPage(type: "paged", template: "grid") }
+                    Button("Dotted") { addPage(type: "paged", template: "dotted") }
+                    Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
+                } label: {
+                    Label("New Page", systemImage: "plus")
+                }
+
+                // One importer for PDFs and images both: the file's own
+                // header decides the path (see importFile). Stickers,
+                // links and text boxes are on the drawing toolbar.
+                Menu {
+                    // Backgrounds only render on paged pages, so "onto
+                    // this page" doesn't apply to a whiteboard.
                     if currentPage?.type != "whiteboard" {
-                        // Text boxes are on the drawing toolbar.
-                        Section("Add to Page") {
-                            Button("Sticker") { showingStickerPicker = true }
-                            Button("Link") { addLink() }
-                        }
-                    }
-                    Section("Import") {
-                        // Backgrounds only render on paged pages, so
-                        // "onto this page" doesn't apply to a whiteboard.
-                        if currentPage?.type != "whiteboard" {
-                            Button("PDF onto This Page") {
+                        Section("Onto This Page") {
+                            Button("From Files") {
                                 importTarget = .currentPage
-                                showingPDFImporter = true
+                                presentFileImporter(for: [.pdf, .image])
                             }
-                            Button("Photo onto This Page") {
+                            Button("From Photos") {
                                 importTarget = .currentPage
                                 showingImagePicker = true
-                            }
-                            // The one a Mac actually needs: pictures live
-                            // in Finder and Files, not in Photos.
-                            Button("Image from Files onto This Page") {
-                                importTarget = .currentPage
-                                showingImageFileImporter = true
                             }
                             Button("Paste Image") { pasteImageFromClipboard() }
                                 .disabled(!pasteboardHasImage)
                         }
-                        Button("PDF as New Pages") {
+                    }
+                    Section("As New Pages") {
+                        Button("From Files") {
                             importTarget = .newPages
-                            showingPDFImporter = true
+                            presentFileImporter(for: [.pdf, .image])
                         }
-                        Button("Photo as New Page") {
+                        Button("From Photos") {
                             importTarget = .newPages
                             showingImagePicker = true
                         }
-                        Button("Image from Files as New Page") {
-                            importTarget = .newPages
-                            showingImageFileImporter = true
-                        }
                     }
                 } label: {
-                    Image(systemName: "plus")
+                    Label("Import", systemImage: "square.and.arrow.down")
                 }
 
                 Menu {
@@ -452,14 +473,10 @@ struct NotebookDetailView: View {
                 saveCurrentPage()
             }
         }
-        .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
-            if case .success(let url) = result {
-                importPDF(from: url)
-            }
-        }
+        // The only `.fileImporter` on this view - see `showingFileImporter`.
         // Images and PDFs both: the type is decided by the file's own
-        // header, so picking a PDF here still imports it as a PDF.
-        .fileImporter(isPresented: $showingImageFileImporter, allowedContentTypes: [.image, .pdf]) { result in
+        // header, so a PDF picked from the image item still imports as a PDF.
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: fileImporterTypes) { result in
             if case .success(let url) = result {
                 importFile(from: url)
             }
@@ -467,6 +484,12 @@ struct NotebookDetailView: View {
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
         .sheet(item: $pdfExportURL) { export in
             ShareSheet(items: [export.url])
+        }
+        .sheet(item: $pageToCopy) { page in
+            CopyPagesSheet(pages: sortedPages, documentsByPageID: documentsByPageID,
+                           initialSelection: page.id, currentNotebookID: notebook.id) { pages, destination in
+                Task { await copyPages(pages, to: destination) }
+            }
         }
         .alert("Export", isPresented: Binding(
             get: { exportMessage != nil },
@@ -503,6 +526,7 @@ struct NotebookDetailView: View {
                 canvasView: $canvasView,
                 onDrawingChanged: scheduleAutosave,
                 onPencilDoubleTap: togglePencilEraser,
+                onPencilSqueeze: openColorOptions,
                 shapeLineStyle: toolState.shapeLineStyle
             )
 #else
@@ -546,10 +570,12 @@ struct NotebookDetailView: View {
                     // old either/or here is why importing an image wiped
                     // the lined/grid/dotted template.
                     PageBackgroundView(template: page.template)
-                    if page.backgroundRef != nil {
+                    if page.backgroundRef != nil || documentsByPageID[page.id] != nil {
                         // Per-page identity: without it the same view is
                         // reused across page turns.
-                        ImportedPageBackgroundView(page: page, liveFrame: adjustingImageFrame)
+                        ImportedPageBackgroundView(page: page,
+                                                   liveFrame: adjustingImageFrame,
+                                                   liveLayerID: adjustingLayerID)
                             .id(page.id)
                     }
                 }
@@ -563,14 +589,43 @@ struct NotebookDetailView: View {
                 viewport: viewport,
                 // The placement handles want the same two fingers the pinch
                 // does; while artwork is being placed, the page holds still.
-                isZoomEnabled: adjustingImageFrame == nil,
+                // Same for selected ink: the pinch resizes it instead.
+                isZoomEnabled: adjustingImageFrame == nil && !inkSelection.hasSelection,
                 onDrawingChanged: scheduleAutosave,
-                onLongPress: { beginAdjustingImage(on: page) },
+                onLongPress: { location in
+                    beginAdjustingImage(on: page, at: viewport.pagePoint(from: location))
+                },
                 onPencilDoubleTap: togglePencilEraser,
+                onPencilSqueeze: openColorOptions,
                 onShapePreview: { shapePreview = $0 },
                 shapeLineStyle: toolState.shapeLineStyle,
-                onPasteImage: { data in importDroppedOrPasted(data, onto: page) }
+                onPasteImage: { data in importDroppedOrPasted(data, onto: page) },
+                inkSelection: inkSelection
             )
+
+            if toolState.activeKind == .lasso && !isPresenting {
+                // The loop and the selection box, in page space like the
+                // ink they're around.
+                PageViewportLayer(viewport: viewport, pageSize: pageSize) { scale in
+                    InkSelectionOverlay(display: inkSelection.display, scale: scale)
+                }
+                .allowsHitTesting(false)
+
+                if inkSelection.hasSelection {
+                    // Chrome, so it stays put in screen space.
+                    InkSelectionToolbar(
+                        canPaste: InkSelectionController.pasteboardHasInk,
+                        onCut: { inkSelection.cutSelection() },
+                        onCopy: { inkSelection.copySelection() },
+                        onPaste: { inkSelection.paste() },
+                        onDuplicate: { inkSelection.duplicate() },
+                        onDelete: { inkSelection.delete() },
+                        onDone: { inkSelection.clear() }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 8)
+                }
+            }
 
             if let shapePreview {
                 // Drawn in page space through the viewport, like the ink it
@@ -731,22 +786,40 @@ struct NotebookDetailView: View {
             LazyHStack(spacing: 12) {
                 let documents = documentsByPageID
                 let thumbnailHeight = PageStripMetrics.thumbnailHeight(for: liveStripHeight)
+                // Mid-drag the cells scale the bitmap they have; the
+                // re-render at the new size happens once, on release.
+                let renderHeight = PageStripMetrics.thumbnailHeight(for: PageStripMetrics.clamped(pageStripHeight))
                 ForEach(Array(sortedPages.enumerated()), id: \.element.id) { index, page in
                     Button {
                         jumpToPage(at: index)
                     } label: {
                         VStack(spacing: 4) {
                             PageThumbnailView(page: page,
-                                              importedDocument: documents[page.id],
+                                              importedDocuments: documents[page.id] ?? [],
                                               isSelected: index == currentPageIndex,
-                                              height: thumbnailHeight)
+                                              height: thumbnailHeight,
+                                              renderHeight: renderHeight)
                             Text("\(index + 1)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
+                    // Hold and drag to reorder; hold and release still
+                    // opens the menu. The payload is the page id as text,
+                    // which nothing else in the app accepts on a drop.
+                    .draggable(page.id.uuidString)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let raw = items.first, let id = UUID(uuidString: raw) else { return false }
+                        movePage(withID: id, to: index)
+                        return true
+                    }
                     .contextMenu {
+                        Button {
+                            pageToCopy = page
+                        } label: {
+                            Label("Copy to Notebook…", systemImage: "doc.on.doc")
+                        }
                         Button(role: .destructive) {
                             pageToDelete = page
                         } label: {
@@ -798,6 +871,22 @@ struct NotebookDetailView: View {
         jumpToPage(at: index)
     }
 
+    /// Puts the page at `targetIndex` and re-sequences the rest, keeping
+    /// the open page open. Every page whose index changed is marked
+    /// modified, so the new order syncs.
+    private func movePage(withID id: UUID, to targetIndex: Int) {
+        var pages = sortedPages
+        guard let from = pages.firstIndex(where: { $0.id == id }), from != targetIndex,
+              pages.indices.contains(targetIndex) else { return }
+        pages.insert(pages.remove(at: from), at: targetIndex)
+        for (newIndex, page) in pages.enumerated() where page.index != newIndex {
+            page.index = newIndex
+            page.markModified()
+        }
+        if let open = pages.firstIndex(where: { $0.id == canvasPageID }) { currentPageIndex = open }
+        saveMetadata("Failed to reorder pages")
+    }
+
     private func addPage(type: String, template: String) {
         saveCurrentPage()
 
@@ -821,6 +910,61 @@ struct NotebookDetailView: View {
         currentPageIndex = newIndex
         viewport.reset(for: page.id)
         installFreshCanvas(forPageID: page.id)
+    }
+
+    /// Appends copies of `pages` to `destination`: page settings, text
+    /// blocks, stickers and artwork placements, and the ink under new
+    /// stroke ids (`DrawingStore.copyDetached`). Artwork files are shared
+    /// by name, as pages of one PDF import already share theirs. Links are
+    /// not copied: they point at pages of this notebook.
+    private func copyPages(_ pages: [Page], to destination: Notebook) async {
+        saveCurrentPage()
+        var index = (destination.pages ?? []).count
+        for source in pages {
+            let page = Page(index: index, type: source.type, template: source.template, notebook: destination)
+            page.backgroundRef = source.backgroundRef
+            page.aspectRatio = source.aspectRatio
+            page.recognizedTextCache = source.recognizedTextCache
+            modelContext.insert(page)
+            if destination.pages == nil { destination.pages = [page] } else { destination.pages?.append(page) }
+
+            for block in source.textBlocks ?? [] {
+                let copy = TypedTextBlock(content: block.content, page: page)
+                copy.frameX = block.frameX; copy.frameY = block.frameY
+                copy.frameWidth = block.frameWidth; copy.frameHeight = block.frameHeight
+                copy.textColorHex = block.textColorHex
+                copy.fontSize = block.fontSize; copy.fontDesign = block.fontDesign
+                copy.isBold = block.isBold; copy.isItalic = block.isItalic
+                modelContext.insert(copy)
+            }
+            for sticker in source.stickers ?? [] {
+                let copy = Sticker(assetRef: sticker.assetRef, page: page)
+                copy.frameX = sticker.frameX; copy.frameY = sticker.frameY
+                copy.frameWidth = sticker.frameWidth; copy.frameHeight = sticker.frameHeight
+                modelContext.insert(copy)
+            }
+            for doc in allImportedDocuments where doc.page?.id == source.id {
+                let copy = ImportedDocument(sourceType: doc.sourceType, fileRef: doc.fileRef,
+                                            pdfPageIndex: doc.pdfPageIndex, page: page)
+                copy.frameX = doc.frameX; copy.frameY = doc.frameY
+                copy.frameWidth = doc.frameWidth; copy.frameHeight = doc.frameHeight
+                copy.rotationDegrees = doc.rotationDegrees
+                copy.cropX = doc.cropX; copy.cropY = doc.cropY
+                copy.cropWidth = doc.cropWidth; copy.cropHeight = doc.cropHeight
+                copy.stackOrder = doc.stackOrder
+                modelContext.insert(copy)
+            }
+
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+            switch await DrawingStore.copyDetached(drawingStore, from: source.id, to: page.id).value {
+            case .success(let ref): page.drawingFileRef = ref
+            case .failure(let error): AppLog.note("copy", "ink of \(source.id): \(error)")
+            }
+#endif
+            page.markModified()
+            index += 1
+        }
+        saveMetadata("Failed to copy pages")
     }
 
     /// Removes a page and everything tied to it: the saved drawing file on
@@ -873,6 +1017,7 @@ struct NotebookDetailView: View {
 
         // Any placement UI was aimed at the page that just went away.
         adjustingImageFrame = nil
+        adjustingLayerID = nil
         croppingRect = nil
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         updateCanvasInteractionEnabled()
@@ -887,24 +1032,28 @@ struct NotebookDetailView: View {
     // MARK: - Export
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func document(for page: Page) -> ImportedDocument? {
-        documentsByPageID[page.id]
+    /// The page's artwork stack, bottom first, as values for a renderer.
+    private func artwork(for page: Page) -> [ArtworkLayer] {
+        ArtworkLayer.stack(for: page, stacked: documentsByPageID)
+    }
+
+    /// The page's artwork stack as the documents themselves, for editing.
+    private func documents(on page: Page) -> [ImportedDocument] {
+        ImportedDocument.stack(on: page.id, in: allImportedDocuments)
     }
 
     /// `ImportedDocument` has no inverse relationship from `Page`, so the
     /// mapping is built here once per update rather than scanned once per
     /// page - the page strip asks for every page in the notebook.
-    private var documentsByPageID: [UUID: ImportedDocument] {
-        allImportedDocuments.reduce(into: [:]) { result, doc in
-            if let id = doc.page?.id { result[id] = doc }
-        }
+    private var documentsByPageID: [UUID: [ImportedDocument]] {
+        ImportedDocument.stacksByPage(allImportedDocuments)
     }
 
     private func exportPageToPhotos() {
         guard let page = currentPage else { return }
         // Flush pending ink first so the export matches what's on screen.
         saveCurrentPage()
-        let image = PageRenderer.image(for: page, importedDocument: document(for: page))
+        let image = PageRenderer.image(for: page, artwork: artwork(for: page))
         Task {
             do {
                 try await PageRenderer.saveToPhotos(image)
@@ -918,13 +1067,13 @@ struct NotebookDetailView: View {
     private func exportPageAsPDF() {
         guard let page = currentPage else { return }
         saveCurrentPage()
-        let data = PageRenderer.pdfData(for: [(page: page, document: document(for: page))])
+        let data = PageRenderer.pdfData(for: [(page: page, artwork: artwork(for: page))])
         presentPDF(data, named: "\(notebook.title) - Page \(currentPageIndex + 1)")
     }
 
     private func exportNotebookAsPDF() {
         saveCurrentPage()
-        let entries = sortedPages.map { (page: $0, document: document(for: $0)) }
+        let entries = sortedPages.map { (page: $0, artwork: artwork(for: $0)) }
         guard !entries.isEmpty else { return }
         let data = PageRenderer.pdfData(for: entries)
         presentPDF(data, named: notebook.title)
@@ -939,38 +1088,55 @@ struct NotebookDetailView: View {
     }
     #endif
 
-    /// Opens the move/resize handles for whatever was imported onto this
-    /// page. Triggered by the canvas long-press, and automatically right
-    /// after importing onto an existing page so it can be placed straight
-    /// away rather than always landing full-bleed.
+    /// Opens the move/resize handles on the artwork under a long-press.
+    /// With several pictures on the page it is the topmost one under the
+    /// finger; a press on bare paper takes the topmost picture there is,
+    /// which is what a page with one picture always did.
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func beginAdjustingImage(on page: Page) {
-        guard adjustingImageFrame == nil, page.backgroundRef != nil else { return }
+    private func beginAdjustingImage(on page: Page, at point: CGPoint) {
+        let layers = artwork(for: page)
         let pageSize = PageGeometry.contentSize(for: page)
-        let doc = allImportedDocuments.first { $0.page?.id == page.id }
-        if let placed = ImportedArtwork.placedRect(
-            x: doc?.frameX, y: doc?.frameY, width: doc?.frameWidth, height: doc?.frameHeight,
-            in: pageSize
-        ) {
-            adjustingImageFrame = placed
-        } else if let ref = page.backgroundRef {
-            // Never adjusted: start from the artwork's actual aspect-fit
-            // rect, which is exactly where it's already being rendered - so
-            // nothing jumps, and the handles hug the image rather than
-            // boxing the whole page.
-            adjustingImageFrame = ImportedArtwork.fittedRect(
-                fileRef: ref,
-                pdfPageIndex: doc?.pdfPageIndex ?? 0,
-                in: pageSize
-            )
-        }
+        let pressed = layers.reversed().first { $0.rect(in: pageSize).contains(point) } ?? layers.last
+        guard let pressed else { return }
+        beginAdjustingImage(on: page, layerID: pressed.id)
+    }
+
+    /// Opens the handles on one layer. Used right after importing onto an
+    /// existing page too, so a photo can be placed straight away rather
+    /// than always landing aspect-fit in the middle.
+    private func beginAdjustingImage(on page: Page, layerID: UUID) {
+        guard adjustingImageFrame == nil,
+              let layer = artwork(for: page).first(where: { $0.id == layerID }) else { return }
+        // Never adjusted: start from the artwork's actual aspect-fit rect,
+        // which is exactly where it's already being rendered - so nothing
+        // jumps, and the handles hug the image rather than boxing the
+        // whole page.
+        adjustingImageFrame = layer.rect(in: PageGeometry.contentSize(for: page))
+        adjustingLayerID = layerID
         updateCanvasInteractionEnabled()
+    }
+
+    /// The document the handles are on. A page from before
+    /// `ImportedDocument` existed has only a `backgroundRef`; the first
+    /// edit gives it a document so the placement has somewhere to live.
+    private func adjustingDocument(on page: Page) -> ImportedDocument? {
+        let stack = documents(on: page)
+        if let doc = stack.first(where: { $0.id == adjustingLayerID }) { return doc }
+        guard adjustingLayerID == page.id, stack.isEmpty,
+              let ref = page.backgroundRef, !ref.isEmpty else { return nil }
+        let doc = ImportedDocument(
+            sourceType: ref.lowercased().hasSuffix(".pdf") ? "pdf" : "image",
+            fileRef: ref, pdfPageIndex: 0, page: page
+        )
+        modelContext.insert(doc)
+        adjustingLayerID = doc.id
+        return doc
     }
 
     /// Quarter-turn clockwise. The placement frame's aspect is flipped to
     /// match so the artwork doesn't end up stretched by the rotation.
     private func rotateImage(on page: Page) {
-        guard let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
+        guard let doc = adjustingDocument(on: page) else { return }
         doc.rotationDegrees = ((doc.rotationDegrees ?? 0) + 90).truncatingRemainder(dividingBy: 360)
 
         // The crop is stored in rotated-display space (that's the space its
@@ -1014,7 +1180,7 @@ struct NotebookDetailView: View {
         guard let frame = adjustingImageFrame,
               let crop = croppingRect,
               frame.width > 0, frame.height > 0,
-              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }) else { return }
+              let doc = adjustingDocument(on: page) else { return }
 
         let relativeX = (crop.minX - frame.minX) / frame.width
         let relativeY = (crop.minY - frame.minY) / frame.height
@@ -1039,14 +1205,24 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to crop image")
     }
 
+    /// Removes the artwork the handles are on - only that one; the rest
+    /// of the stack stays. Its file goes to `trash/` if nothing else uses
+    /// it (a multi-page PDF import shares one file across its pages).
     private func removeImage(from page: Page) {
-        for doc in allImportedDocuments where doc.page?.id == page.id {
-            modelContext.delete(doc)
+        defer {
+            adjustingImageFrame = nil
+            adjustingLayerID = nil
+            croppingRect = nil
+            updateCanvasInteractionEnabled()
         }
-        page.backgroundRef = nil
-        adjustingImageFrame = nil
-        croppingRect = nil
-        updateCanvasInteractionEnabled()
+        guard let doc = adjustingDocument(on: page) else { return }
+        let ref = doc.fileRef
+        modelContext.delete(doc)
+        let remaining = documents(on: page).filter { $0.id != doc.id }
+        page.backgroundRef = remaining.first?.fileRef
+        if !ref.isEmpty, !allImportedDocuments.contains(where: { $0.id != doc.id && $0.fileRef == ref }) {
+            drawingStore.trashPayload(named: ref)
+        }
         page.markModified()
         saveMetadata("Failed to remove image")
     }
@@ -1054,11 +1230,12 @@ struct NotebookDetailView: View {
     private func finishAdjustingImage(on page: Page) {
         defer {
             adjustingImageFrame = nil
+            adjustingLayerID = nil
             croppingRect = nil
             updateCanvasInteractionEnabled()
         }
         guard let frame = adjustingImageFrame,
-              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }),
+              let doc = adjustingDocument(on: page),
               // Stored as fractions of the page so the placement survives a
               // different canvas size and can be reproduced in thumbnails.
               let fractions = ImportedArtwork.fractions(
@@ -1073,7 +1250,8 @@ struct NotebookDetailView: View {
     }
     #else
     // Not available on native macOS (no PencilKit canvas to place against).
-    private func beginAdjustingImage(on page: Page) {}
+    private func beginAdjustingImage(on page: Page, at point: CGPoint) {}
+    private func beginAdjustingImage(on page: Page, layerID: UUID) {}
     private func finishAdjustingImage(on page: Page) {}
     #endif
 
@@ -1097,24 +1275,33 @@ struct NotebookDetailView: View {
         to page: Page,
         fullBleed: Bool
     ) -> ImportedDocument {
-        for doc in allImportedDocuments where doc.page?.id == page.id {
-            modelContext.delete(doc)
-        }
-
-        page.backgroundRef = storedFilename
+        // Whatever is already on the page stays. A PDF arrives full bleed
+        // as the page's paper, so it goes *under* the pictures already
+        // there; a photo is placed on the page, so it goes on top. Either
+        // way nothing is replaced - importing a PDF onto a page with a
+        // photo on it used to throw the photo away.
+        let stack = documents(on: page)
         let importedDoc = ImportedDocument(
             sourceType: sourceType,
             fileRef: storedFilename,
             pdfPageIndex: pdfPageIndex,
             page: page
         )
-        if fullBleed,
-           let aspect = ImportedArtwork.aspectRatio(fileRef: storedFilename, pdfPageIndex: pdfPageIndex) {
-            page.aspectRatio = aspect
-            importedDoc.frameX = 0
-            importedDoc.frameY = 0
-            importedDoc.frameWidth = 1
-            importedDoc.frameHeight = 1
+        if fullBleed {
+            importedDoc.stackOrder = ImportedDocument.stackOrder(under: stack)
+            page.backgroundRef = storedFilename
+            if let aspect = ImportedArtwork.aspectRatio(fileRef: storedFilename, pdfPageIndex: pdfPageIndex) {
+                page.aspectRatio = aspect
+                importedDoc.frameX = 0
+                importedDoc.frameY = 0
+                importedDoc.frameWidth = 1
+                importedDoc.frameHeight = 1
+            }
+        } else {
+            importedDoc.stackOrder = ImportedDocument.stackOrder(over: stack)
+            // `backgroundRef` is the bottom of the stack; it only changes
+            // when there was nothing there.
+            if stack.isEmpty { page.backgroundRef = storedFilename }
         }
         modelContext.insert(importedDoc)
 
@@ -1129,9 +1316,10 @@ struct NotebookDetailView: View {
     /// qualify - anything that was deliberately moved, resized or cropped
     /// is left exactly as it was placed.
     private func adoptImportedPageShapeIfNeeded(_ page: Page) {
+        let stack = documents(on: page)
         guard page.aspectRatio == nil,
               let ref = page.backgroundRef,
-              let doc = allImportedDocuments.first(where: { $0.page?.id == page.id }),
+              stack.count == 1, let doc = stack.first,
               doc.sourceType == "pdf",
               doc.frameX == nil, doc.frameY == nil,
               doc.frameWidth == nil, doc.frameHeight == nil,
@@ -1164,15 +1352,11 @@ struct NotebookDetailView: View {
         }.value
     }
 
-    private func importPDF(from sourceURL: URL) {
-        let accessed = sourceURL.startAccessingSecurityScopedResource()
-        defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: sourceURL) else {
-            exportMessage = "Couldn't read \(sourceURL.lastPathComponent)."
-            return
-        }
-        let target = importTarget
-        Task { await importPDF(data: data, target: target) }
+    /// Sets the picker's types before presenting it, so the one importer
+    /// on this view can serve both the PDF and the image menu items.
+    private func presentFileImporter(for types: [UTType]) {
+        fileImporterTypes = types
+        showingFileImporter = true
     }
 
     /// The PDF import proper. Takes bytes rather than a URL so a PDF that
@@ -1278,8 +1462,8 @@ struct NotebookDetailView: View {
         saveCurrentPage()
 
         if target == .currentPage, let page = currentPage {
-            applyBackground(storedFilename, sourceType: "image", pdfPageIndex: 0, to: page, fullBleed: false)
-            beginAdjustingImage(on: page)
+            let doc = applyBackground(storedFilename, sourceType: "image", pdfPageIndex: 0, to: page, fullBleed: false)
+            beginAdjustingImage(on: page, layerID: doc.id)
             return
         }
 
@@ -1409,6 +1593,15 @@ struct NotebookDetailView: View {
         // says so - see MainThreadWatchdog.
         MainThreadWatchdog.checkpoint("DetailView.applyToolState")
         canvasView.tool = toolState.pkTool
+        // Our lasso, not PencilKit's: with it active the canvas stops
+        // inking and the Pencil draws a loop instead. Paged pages only -
+        // the whiteboard has its own host with none of our recognizers
+        // on it, so it keeps PencilKit's lasso (select and move, no
+        // resize) for now.
+        let usesOurLasso = currentPage?.type != "whiteboard"
+        inkSelection.canvas = usesOurLasso ? canvasView : nil
+        inkSelection.onDrawingChanged = scheduleAutosave
+        inkSelection.isActive = usesOurLasso && toolState.activeKind == .lasso
         updateCanvasInteractionEnabled()
     }
 
@@ -1424,6 +1617,13 @@ struct NotebookDetailView: View {
             toolBeforeEraser = toolState.activeKind
             toolState.activeKind = .eraser
         }
+    }
+
+    /// Apple Pencil Pro squeeze: open the colour options of the tool in
+    /// hand. The eraser and lasso have no colour, so the pen's open then.
+    private func openColorOptions() {
+        let kind = toolState.activeKind
+        openToolOptions = [.pen, .highlighter, .fill].contains(kind) ? kind : .pen
     }
 
     /// The canvas needs real touches routed to a capture overlay instead
@@ -1454,6 +1654,7 @@ struct NotebookDetailView: View {
     private func enterPresentationMode() {
         shapePreview = nil
         adjustingImageFrame = nil
+        adjustingLayerID = nil
         croppingRect = nil
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         if toolState.activeKind == .fill { toolState.activeKind = .pen }
@@ -1481,6 +1682,7 @@ struct NotebookDetailView: View {
         // would be drawn in the outgoing page's box.
         if page.id != canvasPageID {
             adjustingImageFrame = nil
+            adjustingLayerID = nil
             croppingRect = nil
         }
         adoptImportedPageShapeIfNeeded(page)

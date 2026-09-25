@@ -25,12 +25,9 @@ struct SearchResultsView: View {
     @State private var isIndexing = true
 
     /// ImportedDocument has no inverse relationship from Page, so map page id
-    /// -> its import record once here (reduce to avoid a trap if two ever share
-    /// a page).
-    private var docByPageID: [UUID: ImportedDocument] {
-        allImportedDocuments.reduce(into: [:]) { dict, doc in
-            if let page = doc.page { dict[page.id] = doc }
-        }
+    /// -> its import records once here.
+    private var docsByPageID: [UUID: [ImportedDocument]] {
+        ImportedDocument.stacksByPage(allImportedDocuments)
     }
 
     private var allPages: [Page] {
@@ -104,7 +101,7 @@ struct SearchResultsView: View {
         for notebook in allNotebooks {
             let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
             for (index, page) in pages.enumerated() {
-                let blob = SearchIndex.searchableText(for: page, importedDocument: docByPageID[page.id])
+                let blob = SearchIndex.searchableText(for: page, importedDocuments: docsByPageID[page.id] ?? [])
                 guard blob.contains(needles) else { continue }
                 found.append(SearchResult(
                     notebook: notebook,

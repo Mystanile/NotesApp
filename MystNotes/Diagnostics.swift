@@ -97,9 +97,10 @@ nonisolated enum MainThreadWatchdog {
     /// Long enough to be a hang worth a stack capture.
     static let threshold: TimeInterval = 3
     /// Long enough to be *felt* - a stutter while drawing or switching
-    /// tools. Logged with the last checkpoint and nothing else, so it's
-    /// cheap enough to leave on: this is how a "it freezes sometimes"
-    /// report turns into a line naming what was running.
+    /// tools. Logged with the last checkpoint and the main thread's stack,
+    /// once per stall, so it's cheap enough to leave on: this is how a
+    /// "it freezes sometimes" report turns into a line naming what was
+    /// running.
     static let stallThreshold: TimeInterval = 0.4
     /// How often the watchdog thread looks. The main thread is only
     /// pinged when there's no outstanding ping, so this is what bounds
@@ -147,6 +148,12 @@ nonisolated enum MainThreadWatchdog {
                         let note = "main thread stalled past \(Int(stallThreshold * 1000)) ms; last checkpoint '\(lastCheckpoint)'"
                         lock.unlock()
                         AppLog.note("stall", note)
+                        // The checkpoint says where the stall started, not
+                        // where it is; the stack does (Sept 21, 2026: two
+                        // 1 s stalls under 'saveCurrentPage', no stack).
+                        if let stack = captureMainThreadStack() {
+                            AppLog.note("stall", "main thread stack:\n" + stack)
+                        }
                         continue
                     }
                     lock.unlock()

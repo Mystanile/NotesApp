@@ -185,6 +185,31 @@ final class SyncTestDevice {
         try context.save()
     }
 
+    /// Mirrors `MystNotesDetailView.applyBackground`: write the imported
+    /// file into the library, add its record to the page's stack, mark the
+    /// page modified, save.
+    @discardableResult
+    func importArtwork(onto page: Page, named fileRef: String, bytes: Data,
+                       sourceType: String = "image", stackOrder: Int?) throws -> ImportedDocument {
+        try bytes.write(to: filesDirectory.appendingPathComponent(fileRef))
+        let doc = ImportedDocument(sourceType: sourceType, fileRef: fileRef, pdfPageIndex: 0, page: page)
+        doc.stackOrder = stackOrder
+        context.insert(doc)
+        if page.backgroundRef == nil { page.backgroundRef = fileRef }
+        page.markModified(at: clock.now)
+        try context.save()
+        return doc
+    }
+
+    /// The page's artwork, bottom first - what it would draw.
+    func artwork(onPageID pageID: UUID) throws -> [ImportedDocument] {
+        ImportedDocument.stack(on: pageID, in: try context.fetch(FetchDescriptor<ImportedDocument>()))
+    }
+
+    func payload(named fileRef: String) -> Data? {
+        try? Data(contentsOf: filesDirectory.appendingPathComponent(fileRef))
+    }
+
     func addLink(from source: Page, to destination: Page) throws -> Link {
         let link = Link(sourcePageID: source.id, destinationPageID: destination.id)
         context.insert(link)

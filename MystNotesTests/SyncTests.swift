@@ -294,6 +294,57 @@ final class SyncTests: XCTestCase {
 
     // MARK: Folder layout (M0 task 6)
 
+    // MARK: A page's artwork stack (Sept 19, 2026)
+
+    /// A page can hold several pieces of artwork - a PDF page as its paper
+    /// with photos placed over it - and the other device must draw them in
+    /// the same order. The stack travels per document with its position;
+    /// every file behind it arrives; and a record written before ordering
+    /// existed (no `stackOrder`) still draws first.
+    func testArtworkStack_roundTripsWithItsOrderAndEveryFile() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+
+        let notebook = try ipad.createNotebook(title: "Lecture", pageCount: 1)
+        let page = try XCTUnwrap(ipad.pages(ofNotebook: notebook.id)?.first)
+        // A photo that was there first, then a PDF imported *under* it as
+        // the paper, then a second photo on top.
+        let photo = try ipad.importArtwork(onto: page, named: "photo.png", bytes: Data("photo".utf8), stackOrder: nil)
+        let paper = try ipad.importArtwork(onto: page, named: "paper.pdf", bytes: Data("%PDF-paper".utf8),
+                                           sourceType: "pdf", stackOrder: -1)
+        let sticker = try ipad.importArtwork(onto: page, named: "sticker.png", bytes: Data("sticker".utf8), stackOrder: 1)
+        XCTAssertEqual(try ipad.artwork(onPageID: page.id).map(\.id), [paper.id, photo.id, sticker.id])
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try mac.artwork(onPageID: page.id)
+        XCTAssertEqual(arrived.map(\.id), [paper.id, photo.id, sticker.id], "same stack, same order")
+        XCTAssertEqual(arrived.map(\.stackOrder), [-1, nil, 1])
+        XCTAssertEqual(arrived.map(\.sourceType), ["pdf", "image", "image"])
+        for name in ["photo.png", "paper.pdf", "sticker.png"] {
+            XCTAssertEqual(mac.payload(named: name), ipad.payload(named: name), "\(name) must arrive with the page")
+        }
+    }
+
+    /// The order is not incidental: reading the stack back from a decoded
+    /// snapshot, ties between records with no position fall back to the id
+    /// on both devices, so two pre-ordering imports never swap.
+    func testArtworkStack_tiesAreStableAcrossDevices() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Old", pageCount: 1)
+        let page = try XCTUnwrap(ipad.pages(ofNotebook: notebook.id)?.first)
+        let first = try ipad.importArtwork(onto: page, named: "one.png", bytes: Data("one".utf8), stackOrder: nil)
+        let second = try ipad.importArtwork(onto: page, named: "two.png", bytes: Data("two".utf8), stackOrder: nil)
+        let expected = [first.id, second.id].sorted { $0.uuidString < $1.uuidString }
+        XCTAssertEqual(try ipad.artwork(onPageID: page.id).map(\.id), expected)
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.artwork(onPageID: page.id).map(\.id), expected)
+    }
+
     func testPush_writesIndexAndOneFilePerNotebook_neverLibraryJSON() throws {
         let ipad = try harness.makeDevice("iPad")
         let a = try ipad.createNotebook(title: "A", pageCount: 2)

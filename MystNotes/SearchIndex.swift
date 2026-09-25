@@ -29,10 +29,11 @@ enum SearchIndex {
         return texts.indices.contains(pageIndex) ? texts[pageIndex] : nil
     }
 
-    /// The combined, lowercased searchable text for a page. `importedDocument`
-    /// is the page's matching `ImportedDocument` (the model has no inverse
-    /// relationship from `Page` to `ImportedDocument`, so callers resolve it).
-    static func searchableText(for page: Page, importedDocument: ImportedDocument?) -> String {
+    /// The combined, lowercased searchable text for a page. `importedDocuments`
+    /// are the page's `ImportedDocument`s (the model has no inverse
+    /// relationship from `Page` to `ImportedDocument`, so callers resolve
+    /// them) - every PDF page on it contributes its text.
+    static func searchableText(for page: Page, importedDocuments: [ImportedDocument]) -> String {
         var parts: [String] = []
 
         if let recognized = page.recognizedTextCache, !recognized.isEmpty {
@@ -41,7 +42,7 @@ enum SearchIndex {
         if let blocks = page.textBlocks, !blocks.isEmpty {
             parts.append(contentsOf: blocks.compactMap { $0.content.isEmpty ? nil : $0.content })
         }
-        if let doc = importedDocument, doc.sourceType == "pdf", !doc.fileRef.isEmpty {
+        for doc in importedDocuments where doc.sourceType == "pdf" && !doc.fileRef.isEmpty {
             if let pdfText = pdfPageText(fileRef: doc.fileRef, pageIndex: doc.pdfPageIndex),
                !pdfText.isEmpty {
                 parts.append(pdfText)

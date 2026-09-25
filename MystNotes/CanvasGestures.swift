@@ -323,20 +323,41 @@ class CanvasHostView: UIView {
         didSet { updateDropInteraction() }
     }
     private var dropInteraction: UIDropInteraction?
+    /// The lasso's selection, so ⌘C / ⌘X / ⌘V and the Edit menu work on
+    /// selected ink the way they do on a selected picture.
+    weak var inkSelection: InkSelectionController?
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) {
-            // `hasImage` and not a read: reading the pasteboard is what
-            // raises the system's "pasted from" banner, and this is called
-            // every time the Edit menu is built.
+            // Ink first: a copy of ink is on the pasteboard under our own
+            // type and never looks like a picture. `hasImage` and not a
+            // read: reading the pasteboard is what raises the system's
+            // "pasted from" banner, and this is called every time the
+            // Edit menu is built.
+            if inkSelection?.isActive == true, InkSelectionController.pasteboardHasInk { return true }
             return onPasteImage != nil && CanvasPasteboard.hasImage
+        }
+        if action == #selector(copy(_:)) || action == #selector(cut(_:)) {
+            return inkSelection?.hasSelection == true
         }
         return super.canPerformAction(action, withSender: sender)
     }
 
     override func paste(_ sender: Any?) {
+        if let inkSelection, inkSelection.isActive, InkSelectionController.pasteboardHasInk {
+            inkSelection.paste()
+            return
+        }
         guard let data = CanvasPasteboard.payload() else { return }
         onPasteImage?(data)
+    }
+
+    override func copy(_ sender: Any?) {
+        inkSelection?.copySelection()
+    }
+
+    override func cut(_ sender: Any?) {
+        inkSelection?.cutSelection()
     }
 
     private func updateDropInteraction() {
@@ -770,6 +791,7 @@ final class MultiFingerTapRecognizer: UIGestureRecognizer {
 ///  - two-finger tap = undo, held = keep undoing
 ///  - three-finger tap = redo, held = keep redoing
 ///  - Apple Pencil (Pro) double-tap = toggle the eraser
+///  - Apple Pencil Pro squeeze = open the active tool's colour options
 final class CanvasShortcutInstaller: NSObject, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
 
     /// Undo / redo are routed through the canvas's own `undoManager` - the
@@ -780,6 +802,8 @@ final class CanvasShortcutInstaller: NSObject, UIGestureRecognizerDelegate, UIPe
     /// Apple Pencil (Pro) double-tap. The parent flips `DrawingToolState`
     /// between the eraser and the previously selected tool.
     var onPencilDoubleTap: () -> Void = {}
+    /// Apple Pencil Pro squeeze. Fired once, when the squeeze ends.
+    var onPencilSqueeze: () -> Void = {}
 
     private weak var hostView: UIView?
     private var twoFingerUndo: MultiFingerTapRecognizer?
@@ -860,6 +884,12 @@ final class CanvasShortcutInstaller: NSObject, UIGestureRecognizerDelegate, UIPe
     // Older callback - harmless to keep for anything that still delivers it.
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
         onPencilDoubleTap()
+    }
+
+    func pencilInteraction(_ interaction: UIPencilInteraction,
+                           didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        guard squeeze.phase == .ended else { return }
+        onPencilSqueeze()
     }
 }
 #endif

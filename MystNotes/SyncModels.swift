@@ -345,6 +345,10 @@ nonisolated struct ImportedDocumentDTO: Codable {
     var cropY: Double?
     var cropWidth: Double?
     var cropHeight: Double?
+    /// Position in the page's artwork stack, bottom first. Absent in
+    /// snapshots from before a page could hold more than one; decodes as
+    /// nil, which draws first. See `ImportedDocument.stackOrder`.
+    var stackOrder: Int?
 }
 
 nonisolated struct LinkDTO: Codable {

@@ -30,13 +30,6 @@ struct SettingsView: View {
         ("monoline", "Monoline"),
     ]
 
-    private let templateOptions: [(id: String, label: String)] = [
-        ("blank", "Blank"),
-        ("lined", "Lined"),
-        ("grid", "Grid"),
-        ("dotted", "Dotted"),
-    ]
-
     var body: some View {
         Form {
             Section {
@@ -55,7 +48,7 @@ struct SettingsView: View {
 
             Section {
                 Picker("Default Template", selection: $defaultTemplate) {
-                    ForEach(templateOptions, id: \.id) { option in
+                    ForEach(PageTemplate.options, id: \.id) { option in
                         Text(option.label).tag(option.id)
                     }
                 }

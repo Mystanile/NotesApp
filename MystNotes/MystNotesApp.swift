@@ -14,6 +14,9 @@ struct NotebookApp: App {
         // the sync folder's trash is swept inside a sync run, while the
         // folder is held. Off the main thread: it stats a directory.
         TrashRetention.sweepLocalInBackground()
+        // Artwork rows an older build left pointing at deleted pages; see
+        // LibraryRebuild.dropOrphanedArtwork.
+        LibraryRebuild.dropOrphanedArtworkInBackground(container: sharedModelContainer)
         MainThreadWatchdog.checkpoint("App.init")
     }
 

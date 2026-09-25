@@ -134,6 +134,18 @@ nonisolated struct DrawingStore {
         }
     }
 
+    /// Copies one page's ink to another page, off the caller's thread, and
+    /// returns the copy's file name (nil when the source has no ink). The
+    /// copy is saved under an empty id map, so its strokes get their own
+    /// ids: an id names one stroke, never one in each of two pages
+    /// (invariant 6).
+    nonisolated static func copyDetached(_ store: DrawingStore, from source: UUID,
+                                         to destination: UUID) -> Task<Result<String?, Error>, Never> {
+        Task.detached(priority: .userInitiated) {
+            Result { try store.load(pageID: source).map { try store.save($0, pageID: destination) } }
+        }
+    }
+
     /// Atomically writes the record, then the cache, and returns the file
     /// name to keep in `Page.drawingFileRef`.
     @discardableResult

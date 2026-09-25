@@ -6,8 +6,8 @@ import UIKit
 import PencilKit
 import Photos
 
-/// Flattens a page - imported PDF page or photo behind it, plus the
-/// PencilKit ink on top - into an image or a PDF, for export.
+/// Flattens a page - its paper, the imported PDF pages and photos on it,
+/// plus the PencilKit ink on top - into an image or a PDF, for export.
 ///
 /// Placement is stored as fractions of the page and ink in page points, so
 /// both layers composite cleanly onto any output size. The page space they
@@ -21,21 +21,27 @@ enum PageRenderer {
     /// enormous files for a multi-page notebook.
     static let exportScale: CGFloat = 2
 
-    static func image(for page: Page, importedDocument: ImportedDocument?, scale: CGFloat = exportScale) -> UIImage {
+    /// `artwork` is the page's stack, bottom first (`ArtworkLayer.stack`).
+    static func image(for page: Page, artwork: [ArtworkLayer], scale: CGFloat = exportScale) -> UIImage {
         let nominal = PageGeometry.contentSize(for: page)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
 
-        let backgroundImage = page.backgroundRef.flatMap { ref in
-            ImportedArtwork.displayImage(
-                fileRef: ref,
-                document: importedDocument,
-                targetSize: CGSize(width: nominal.width * scale, height: nominal.height * scale)
-            )
+        let targetSize = CGSize(width: nominal.width * scale, height: nominal.height * scale)
+        let layers: [(layer: ArtworkLayer, image: UIImage)] = artwork.compactMap { layer in
+            layer.image(targetSize: targetSize).map { (layer: layer, image: $0) }
         }
-        let inkImage = drawing(for: page).map {
-            $0.image(from: CGRect(origin: .zero, size: nominal), scale: scale)
+        // Pinned to light, like the canvas, `FillTool` and the recognizer:
+        // PencilKit inverts ink for a dark appearance, and this render has
+        // no view to take its traits from - on an iPad in dark mode every
+        // export came out with black handwriting drawn white on white
+        // paper (Sept 19, 2026).
+        var inkImage: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            inkImage = drawing(for: page).map {
+                $0.image(from: CGRect(origin: .zero, size: nominal), scale: scale)
+            }
         }
 
         let template = page.template
@@ -47,13 +53,8 @@ enum PageRenderer {
             // been imported onto it.
             PageTemplate.draw(template, in: nominal, context: context.cgContext)
 
-            if let backgroundImage {
-                let rect = ImportedArtwork.placedRect(
-                    x: importedDocument?.frameX, y: importedDocument?.frameY,
-                    width: importedDocument?.frameWidth, height: importedDocument?.frameHeight,
-                    in: nominal
-                ) ?? ImportedArtwork.fittedRect(for: backgroundImage, in: nominal)
-                backgroundImage.draw(in: rect)
+            for entry in layers {
+                entry.image.draw(in: entry.layer.rect(for: entry.image, in: nominal))
             }
             inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
             drawTextBlocks(of: page, in: nominal)
@@ -115,7 +116,7 @@ enum PageRenderer {
     /// takes the shape of the notebook page it came from, so a notebook that
     /// mixes an imported portrait template with a landscape one exports as
     /// exactly those pages rather than squeezing both into one shape.
-    static func pdfData(for pages: [(page: Page, document: ImportedDocument?)]) -> Data {
+    static func pdfData(for pages: [(page: Page, artwork: [ArtworkLayer])]) -> Data {
         let firstBounds = CGRect(
             origin: .zero,
             size: pages.first.map { PageGeometry.contentSize(for: $0.page) } ?? nominalPageSize
@@ -124,7 +125,7 @@ enum PageRenderer {
             for entry in pages {
                 let bounds = CGRect(origin: .zero, size: PageGeometry.contentSize(for: entry.page))
                 context.beginPage(withBounds: bounds, pageInfo: [:])
-                image(for: entry.page, importedDocument: entry.document)
+                image(for: entry.page, artwork: entry.artwork)
                     .draw(in: bounds)
             }
         }

@@ -20,6 +20,11 @@ import UIKit
 /// make the ruling change colour in dark mode the way the ink itself once
 /// did.
 nonisolated enum PageTemplate {
+    /// The papers a user can pick, in menu order.
+    static let options: [(id: String, label: String)] = [
+        ("blank", "Blank"), ("lined", "Lined"), ("grid", "Grid"), ("dotted", "Dotted"),
+    ]
+
     static let lineSpacing: CGFloat = 32
     static let dotSpacing: CGFloat = 24
     /// White 0.5 at 25% - what `Color.gray.opacity(0.25)` resolved to in

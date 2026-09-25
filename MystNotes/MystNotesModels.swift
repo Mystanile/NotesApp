@@ -112,6 +112,14 @@ final class Page {
     @Relationship(deleteRule: .cascade, inverse: \Sticker.page)
     var stickers: [Sticker]? = []
 
+    // The inverse of ImportedDocument.page, so deleting a page - or the
+    // notebook or folder above it - takes its artwork rows too. Without
+    // it the rows survived pointing at a page that was gone, and the
+    // next notebook to open crashed on `doc.page` (Sept 21, 2026). Views
+    // still build the stacks from a fetch; this exists for the cascade.
+    @Relationship(deleteRule: .cascade, inverse: \ImportedDocument.page)
+    var importedDocuments: [ImportedDocument]? = []
+
     init(index: Int = 0, type: String = "paged", template: String = "blank", notebook: Notebook? = nil) {
         self.id = UUID()
         self.index = index
@@ -231,6 +239,12 @@ final class ImportedDocument {
     var cropWidth: Double?
     var cropHeight: Double?
 
+    // Position in the page's artwork stack, bottom first. A page holds
+    // any number of these - a PDF page as its paper with photos placed
+    // over it - and this is the order they are drawn in. nil == 0, which
+    // is every artwork imported before a page could hold more than one.
+    var stackOrder: Int?
+
     var page: Page?
 
     init(sourceType: String = "pdf", fileRef: String = "", pdfPageIndex: Int = 0, page: Page? = nil) {
@@ -239,6 +253,40 @@ final class ImportedDocument {
         self.fileRef = fileRef
         self.pdfPageIndex = pdfPageIndex
         self.page = page
+    }
+}
+
+extension ImportedDocument {
+    /// The artwork on one page, bottom first - the order it is drawn in.
+    /// `ImportedDocument` has no inverse relationship from `Page`, so
+    /// callers hand in the documents they already hold. Ties (two imports
+    /// from before ordering existed) fall back to the id, so every device
+    /// draws the same stack.
+    static func stack(on pageID: UUID, in documents: [ImportedDocument]) -> [ImportedDocument] {
+        documents
+            .filter { $0.page?.id == pageID }
+            .sorted { ($0.stackOrder ?? 0, $0.id.uuidString) < ($1.stackOrder ?? 0, $1.id.uuidString) }
+    }
+
+    /// Where a new import goes in a page's existing stack. A full-bleed
+    /// PDF is the page's paper and goes under everything already there; a
+    /// picture is placed on the page and goes on top. Nothing is replaced
+    /// either way.
+    static func stackOrder(under stack: [ImportedDocument]) -> Int { (stack.first?.stackOrder ?? 0) - 1 }
+    static func stackOrder(over stack: [ImportedDocument]) -> Int { (stack.last?.stackOrder ?? 0) + 1 }
+
+    /// Every page's stack at once, for the views that draw many pages -
+    /// the page strip asks for every page in the notebook.
+    static func stacksByPage(_ documents: [ImportedDocument]) -> [UUID: [ImportedDocument]] {
+        var result: [UUID: [ImportedDocument]] = [:]
+        for doc in documents {
+            guard let id = doc.page?.id else { continue }
+            result[id, default: []].append(doc)
+        }
+        for id in result.keys {
+            result[id]?.sort { ($0.stackOrder ?? 0, $0.id.uuidString) < ($1.stackOrder ?? 0, $1.id.uuidString) }
+        }
+        return result
     }
 }
 

@@ -1,0 +1,528 @@
+import Foundation
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+import UIKit
+import PencilKit
+import Observation
+
+/// What the overlay draws: the selection's box - four corners in page
+/// points, a rotated box once the ink has been turned - and the loop being
+/// drawn right now.
+struct InkSelectionDisplay: Equatable {
+    var corners: [CGPoint]?
+    var lasso: [CGPoint] = []
+    var hasSelection: Bool { corners != nil }
+}
+
+/// The lasso tool's brain: owns the selection on a page's canvas and turns
+/// gestures on the host view into `InkSelection` edits.
+///
+/// While the lasso tool is active the canvas's own drawing gesture is
+/// stood down (`isActive`), so the Pencil draws a loop instead of ink.
+/// With a selection on screen the canvas's own pan *and pinch* are stood
+/// down (`gateCanvasGestures`) - `isScrollEnabled = false` alone leaves
+/// the pinch zooming the page under the selection - so a one-finger drag
+/// inside the box moves the ink, a **pinch resizes it** and a twist
+/// rotates it, all about the selection's own centre, with the page held
+/// still. A tap or a Pencil stroke outside the box lets go of it.
+///
+/// Every gesture step rewrites `canvas.drawing` with the selected strokes'
+/// transforms updated - and *nothing removed*. The canvas always holds the
+/// whole drawing, so an autosave landing mid-gesture saves complete ink
+/// (invariant 1). The step is committed as one undoable change when the
+/// last finger lifts.
+///
+/// The selection is remembered as the strokes' fingerprints, not their
+/// indices: a fingerprint survives our own transforms and is simply absent
+/// after an undo, an erase or a page change, at which point the selection
+/// quietly lets go rather than acting on the wrong strokes.
+@Observable
+@MainActor
+final class InkSelectionController: NSObject {
+
+    private(set) var display = InkSelectionDisplay()
+    var hasSelection: Bool { display.hasSelection }
+    /// True when the lasso tool is the active tool.
+    var isActive = false {
+        didSet {
+            guard isActive != oldValue else { return }
+            applyActivity()
+            if !isActive { clear() }
+        }
+    }
+    /// After every committed edit, for the autosave.
+    @ObservationIgnored var onDrawingChanged: () -> Void = {}
+
+    /// The page's canvas. A fresh one arrives with every page, and a
+    /// selection never outlives the page it was made on.
+    @ObservationIgnored weak var canvas: PKCanvasView? {
+        didSet {
+            guard canvas !== oldValue else { return }
+            oldValue?.drawingGestureRecognizer.isEnabled = true
+            Self.gateCanvasGestures(of: oldValue, locked: false)
+            clear()
+            applyActivity()
+        }
+    }
+
+    // MARK: Selection state
+
+    @ObservationIgnored private var fingerprints: [StrokeIDMap.Fingerprint] = []
+    @ObservationIgnored private var corners: [CGPoint]? {
+        didSet {
+            display.corners = corners
+            if (corners == nil) != (oldValue == nil) {
+                Self.gateCanvasGestures(of: canvas, locked: corners != nil)
+            }
+        }
+    }
+
+    /// The page holds still while ink is selected: the scroll view's pan
+    /// and pinch are disabled outright, here and now, rather than through
+    /// `isScrollEnabled` on the next SwiftUI update - which never reached
+    /// the pinch anyway, so a resize used to zoom the whole page with it.
+    static func gateCanvasGestures(of canvas: PKCanvasView?, locked: Bool) {
+        guard let canvas else { return }
+        if canvas.panGestureRecognizer.isEnabled == locked { canvas.panGestureRecognizer.isEnabled = !locked }
+        if let pinch = canvas.pinchGestureRecognizer, pinch.isEnabled == locked { pinch.isEnabled = !locked }
+    }
+
+    // MARK: Gesture state
+
+    /// The drawing when the current gesture began; every step is applied
+    /// to this, so steps don't compound rounding.
+    @ObservationIgnored private var base: PKDrawing?
+    @ObservationIgnored private var baseCorners: [CGPoint] = []
+    @ObservationIgnored private var accumulated = CGAffineTransform.identity
+    @ObservationIgnored private var activeGestures = 0
+
+    // MARK: Recognizers
+
+    @ObservationIgnored private let lasso = InkLassoRecognizer()
+    @ObservationIgnored private let fingerPan = UIPanGestureRecognizer()
+    @ObservationIgnored private let pinch = UIPinchGestureRecognizer()
+    @ObservationIgnored private let rotation = UIRotationGestureRecognizer()
+    @ObservationIgnored private let tapOutside = UITapGestureRecognizer()
+    private var recognizers: [UIGestureRecognizer] { [lasso, fingerPan, pinch, rotation, tapOutside] }
+    @ObservationIgnored private weak var host: UIView?
+
+    override init() {
+        super.init()
+        lasso.controller = self
+        fingerPan.addTarget(self, action: #selector(handlePan(_:)))
+        fingerPan.maximumNumberOfTouches = 1
+        fingerPan.allowedTouchTypes = [UITouch.TouchType.direct.rawValue as NSNumber]
+        pinch.addTarget(self, action: #selector(handlePinch(_:)))
+        rotation.addTarget(self, action: #selector(handleRotation(_:)))
+        tapOutside.addTarget(self, action: #selector(handleTap(_:)))
+        for recognizer in recognizers {
+            recognizer.delegate = self
+            recognizer.cancelsTouchesInView = false
+            recognizer.isEnabled = false
+        }
+    }
+
+    /// Idempotent: the host is re-passed on every SwiftUI update.
+    func install(on host: UIView) {
+        guard self.host !== host else { return }
+        if let old = self.host {
+            for recognizer in recognizers { old.removeGestureRecognizer(recognizer) }
+        }
+        self.host = host
+        for recognizer in recognizers { host.addGestureRecognizer(recognizer) }
+    }
+
+    func uninstall() {
+        if let host {
+            for recognizer in recognizers { host.removeGestureRecognizer(recognizer) }
+        }
+        host = nil
+    }
+
+    private func applyActivity() {
+        canvas?.drawingGestureRecognizer.isEnabled = !isActive
+        for recognizer in recognizers { recognizer.isEnabled = isActive }
+    }
+
+    // MARK: Selecting
+
+    func clear() {
+        fingerprints = []
+        corners = nil
+        base = nil
+        accumulated = .identity
+        activeGestures = 0
+        display.lasso = []
+    }
+
+    /// Takes whatever the loop encloses; nothing enclosed, nothing
+    /// selected.
+    func select(lasso loop: [CGPoint]) {
+        display.lasso = []
+        guard let canvas else { return clear() }
+        let drawing = canvas.drawing
+        let indices = InkSelection.strokeIndices(of: drawing, insideLasso: loop)
+        guard !indices.isEmpty else { return clear() }
+        fingerprints = indices.map { StrokeIDMap.Fingerprint(drawing.strokes[$0]) }
+        corners = InkSelection.corners(of: InkSelection.bounds(of: drawing, indices: indices))
+    }
+
+    /// Selects strokes that are already in the drawing - after a duplicate
+    /// or a paste, so the copy can be dragged straight into place.
+    private func select(indices: [Int], in drawing: PKDrawing) {
+        guard !indices.isEmpty else { return clear() }
+        fingerprints = indices.map { StrokeIDMap.Fingerprint(drawing.strokes[$0]) }
+        corners = InkSelection.corners(of: InkSelection.bounds(of: drawing, indices: indices))
+    }
+
+    /// Where the selected strokes are in the canvas's drawing right now -
+    /// or nil, and the selection let go, if any of them is gone.
+    private func currentIndices(in drawing: PKDrawing) -> [Int]? {
+        guard !fingerprints.isEmpty else { return nil }
+        var byPrint: [StrokeIDMap.Fingerprint: Int] = [:]
+        for (index, stroke) in drawing.strokes.enumerated() {
+            byPrint[StrokeIDMap.Fingerprint(stroke)] = index
+        }
+        var indices: [Int] = []
+        for print in fingerprints {
+            guard let index = byPrint[print] else {
+                clear()
+                return nil
+            }
+            indices.append(index)
+        }
+        return indices
+    }
+
+    func contains(pagePoint: CGPoint) -> Bool {
+        guard let corners else { return false }
+        return InkSelection.polygon(corners, contains: pagePoint)
+    }
+
+    // MARK: Gestures, in page points
+
+    /// A pan, pinch or twist has started. Several can run at once (a
+    /// pinch is also a pan); the base is taken by the first and the
+    /// commit made by the last.
+    func beginGesture() {
+        if activeGestures > 0 {
+            activeGestures += 1
+            return
+        }
+        guard let canvas else { return }
+        let drawing = canvas.drawing
+        guard let indices = currentIndices(in: drawing), var corners else { return }
+        // An undo since the box was drawn has moved the ink but not the
+        // box: start again from where the ink actually is.
+        let bounds = InkSelection.bounds(of: drawing, indices: indices)
+        let boxBounds = corners.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+        if abs(bounds.midX - boxBounds.midX) > 1 || abs(bounds.midY - boxBounds.midY) > 1 {
+            corners = InkSelection.corners(of: bounds)
+            self.corners = corners
+        }
+        base = drawing
+        baseCorners = corners
+        accumulated = .identity
+        activeGestures = 1
+    }
+
+    func translate(by delta: CGPoint) {
+        apply(InkSelection.transform(translation: delta, about: .zero))
+    }
+
+    func scale(by factor: CGFloat) {
+        guard let corners else { return }
+        apply(InkSelection.transform(scale: factor, about: InkSelection.center(of: corners)))
+    }
+
+    func rotate(by angle: CGFloat) {
+        guard let corners else { return }
+        apply(InkSelection.transform(rotation: angle, about: InkSelection.center(of: corners)))
+    }
+
+    private func apply(_ step: CGAffineTransform) {
+        guard let canvas, let base, activeGestures > 0,
+              let indices = currentIndices(in: base) else { return }
+        accumulated = accumulated.concatenating(step)
+        corners = baseCorners.map { $0.applying(accumulated) }
+        canvas.drawing = InkSelection.transforming(base, indices: indices, by: accumulated)
+    }
+
+    func endGesture() {
+        activeGestures = max(activeGestures - 1, 0)
+        guard activeGestures == 0 else { return }
+        defer { base = nil; accumulated = .identity }
+        guard let canvas, let base, !accumulated.isIdentity else { return }
+        // One undo step for the whole gesture: back to the drawing it
+        // started from, not to the frame before the last finger lifted.
+        let final = canvas.drawing
+        canvas.drawing = base
+        canvas.setDrawingUndoably(final)
+        onDrawingChanged()
+    }
+
+    // MARK: Commands
+
+    func delete() {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
+        canvas.setDrawingUndoably(InkSelection.removing(canvas.drawing, indices: indices))
+        clear()
+        onDrawingChanged()
+    }
+
+    /// A copy a little down and to the right, selected, so it can be
+    /// dragged where it's wanted.
+    func duplicate() {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
+        let copies = InkSelection.reidentified(InkSelection.strokes(of: canvas.drawing, indices: indices))
+        insert(copies, offsetBy: Self.copyOffset)
+    }
+
+    /// `copySelection`, not `copy()`: NSObject already has one of those.
+    func copySelection() {
+        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
+        let strokes = InkSelection.strokes(of: canvas.drawing, indices: indices)
+        UIPasteboard.general.setData(InkSelection.pasteboardData(for: strokes), forPasteboardType: InkSelection.pasteboardType)
+    }
+
+    func cutSelection() {
+        copySelection()
+        delete()
+    }
+
+    static var pasteboardHasInk: Bool {
+        UIPasteboard.general.contains(pasteboardTypes: [InkSelection.pasteboardType])
+    }
+
+    /// Pastes where the ink was copied from, nudged the same way a
+    /// duplicate is - and selected, since the next thing you do with a
+    /// paste is put it somewhere.
+    func paste() {
+        guard canvas != nil,
+              let data = UIPasteboard.general.data(forPasteboardType: InkSelection.pasteboardType),
+              let strokes = InkSelection.strokes(fromPasteboardData: data), !strokes.isEmpty else { return }
+        insert(InkSelection.reidentified(strokes), offsetBy: Self.copyOffset)
+    }
+
+    private static let copyOffset = CGPoint(x: 24, y: 24)
+
+    private func insert(_ strokes: [PKStroke], offsetBy offset: CGPoint) {
+        guard let canvas else { return }
+        let nudge = CGAffineTransform(translationX: offset.x, y: offset.y)
+        let nudged = strokes.map { stroke -> PKStroke in
+            var copy = stroke
+            copy.transform = stroke.transform.concatenating(nudge)
+            return copy
+        }
+        let (drawing, indices) = InkSelection.appending(nudged, to: canvas.drawing)
+        canvas.setDrawingUndoably(drawing)
+        select(indices: indices, in: drawing)
+        onDrawingChanged()
+    }
+
+    // MARK: Coordinates
+
+    /// The canvas's bounds coordinates include its scroll offset and are
+    /// in zoomed units, so dividing by the zoom scale lands in the
+    /// drawing's own space - the same conversion `CanvasViewport.pagePoint`
+    /// makes for the SwiftUI overlays.
+    func pagePoint(of touch: UITouch) -> CGPoint {
+        guard let canvas else { return touch.location(in: host) }
+        return pagePoint(canvasPoint: touch.location(in: canvas))
+    }
+
+    func pagePoint(of recognizer: UIGestureRecognizer) -> CGPoint {
+        guard let canvas else { return recognizer.location(in: host) }
+        return pagePoint(canvasPoint: recognizer.location(in: canvas))
+    }
+
+    private func pagePoint(canvasPoint: CGPoint) -> CGPoint {
+        let scale = max(canvas?.zoomScale ?? 1, 0.0001)
+        return CGPoint(x: canvasPoint.x / scale, y: canvasPoint.y / scale)
+    }
+
+    /// Screen-point deltas divided by the zoom, so the ink follows the
+    /// finger whatever the magnification.
+    func pageDelta(screenDelta: CGPoint) -> CGPoint {
+        let scale = max(canvas?.zoomScale ?? 1, 0.0001)
+        return CGPoint(x: screenDelta.x / scale, y: screenDelta.y / scale)
+    }
+
+    /// Whether this touch is the one that would have inked: the Pencil
+    /// under `.pencilOnly`, anything on a Mac, where the pointer is the pen.
+    func isDrawingTouch(_ touch: UITouch) -> Bool {
+        if touch.type == .pencil { return true }
+        if CanvasInput.isMac { return touch.type == .direct || touch.type == .indirectPointer }
+        return canvas?.drawingPolicy != .pencilOnly && touch.type == .direct
+    }
+
+    // MARK: Lasso in progress
+
+    func lassoBegan(at point: CGPoint) {
+        display.lasso = [point]
+    }
+
+    func lassoMoved(to point: CGPoint) {
+        display.lasso.append(point)
+    }
+
+    // MARK: Finger gestures
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            beginGesture()
+        case .changed:
+            let delta = recognizer.translation(in: host)
+            recognizer.setTranslation(.zero, in: host)
+            translate(by: pageDelta(screenDelta: delta))
+        case .ended, .cancelled, .failed:
+            endGesture()
+        default:
+            break
+        }
+    }
+
+    @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            beginGesture()
+        case .changed:
+            let factor = recognizer.scale
+            recognizer.scale = 1
+            scale(by: factor)
+        case .ended, .cancelled, .failed:
+            endGesture()
+        default:
+            break
+        }
+    }
+
+    @objc private func handleRotation(_ recognizer: UIRotationGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            beginGesture()
+        case .changed:
+            let angle = recognizer.rotation
+            recognizer.rotation = 0
+            rotate(by: angle)
+        case .ended, .cancelled, .failed:
+            endGesture()
+        default:
+            break
+        }
+    }
+
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        clear()
+    }
+}
+
+extension InkSelectionController: UIGestureRecognizerDelegate {
+    /// The finger gestures only mean anything with a selection on screen:
+    /// a drag starts inside the box, a tap outside lets go. With nothing
+    /// selected none of them begin, and fingers pan and zoom the page as
+    /// usual.
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard hasSelection else { return false }
+        switch recognizer {
+        case fingerPan: return contains(pagePoint: pagePoint(of: recognizer))
+        case tapOutside: return !contains(pagePoint: pagePoint(of: recognizer))
+        default: return true
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
+
+/// The Pencil's part of the lasso. A pure touch observer, like
+/// `ShapeHoldRecognizer` and `MultiFingerTapRecognizer`: it never leaves
+/// `.possible` except to fail, so it can't be starved by, or starve,
+/// anything else on the host. With the canvas's drawing gesture stood
+/// down there is nothing else that wants the Pencil anyway.
+///
+/// Pencil down inside the selection's box drags it; anywhere else starts a
+/// new loop (and lets go of the old selection).
+final class InkLassoRecognizer: UIGestureRecognizer {
+    weak var controller: InkSelectionController?
+
+    private var activeTouch: UITouch?
+    private var isMoving = false
+    private var lastPoint: CGPoint = .zero
+
+    init() {
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+        requiresExclusiveTouchType = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard activeTouch == nil, let controller else {
+            for touch in touches { ignore(touch, for: event) }
+            return
+        }
+        guard let touch = touches.first, controller.isDrawingTouch(touch) else {
+            for touch in touches { ignore(touch, for: event) }
+            return
+        }
+        activeTouch = touch
+        let point = controller.pagePoint(of: touch)
+        lastPoint = point
+        if controller.contains(pagePoint: point) {
+            isMoving = true
+            controller.beginGesture()
+        } else {
+            isMoving = false
+            controller.clear()
+            controller.lassoBegan(at: point)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch = activeTouch, touches.contains(touch), let controller else { return }
+        if isMoving {
+            let point = controller.pagePoint(of: touch)
+            controller.translate(by: CGPoint(x: point.x - lastPoint.x, y: point.y - lastPoint.y))
+            lastPoint = point
+        } else {
+            for sample in event.coalescedTouches(for: touch) ?? [touch] {
+                controller.lassoMoved(to: controller.pagePoint(of: sample))
+            }
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        finish(touches, cancelled: false)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        finish(touches, cancelled: true)
+    }
+
+    private func finish(_ touches: Set<UITouch>, cancelled: Bool) {
+        guard let touch = activeTouch, touches.contains(touch) else { return }
+        activeTouch = nil
+        guard let controller else { return }
+        if isMoving {
+            controller.endGesture()
+        } else if cancelled {
+            controller.clear()
+        } else {
+            controller.select(lasso: controller.display.lasso)
+        }
+        isMoving = false
+        state = .failed
+    }
+
+    override func reset() {
+        super.reset()
+        activeTouch = nil
+        isMoving = false
+    }
+}
+#endif

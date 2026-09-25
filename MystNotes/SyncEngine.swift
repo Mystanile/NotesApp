@@ -1143,7 +1143,8 @@ nonisolated struct SyncRunner {
                                             frameWidth: $0.frameWidth, frameHeight: $0.frameHeight,
                                             rotationDegrees: $0.rotationDegrees,
                                             cropX: $0.cropX, cropY: $0.cropY,
-                                            cropWidth: $0.cropWidth, cropHeight: $0.cropHeight)
+                                            cropWidth: $0.cropWidth, cropHeight: $0.cropHeight,
+                                            stackOrder: $0.stackOrder)
                     }
                 )
             }
@@ -1374,6 +1375,7 @@ nonisolated struct SyncRunner {
             doc.cropY = docDTO.cropY
             doc.cropWidth = docDTO.cropWidth
             doc.cropHeight = docDTO.cropHeight
+            doc.stackOrder = docDTO.stackOrder
             context.insert(doc)
         }
 

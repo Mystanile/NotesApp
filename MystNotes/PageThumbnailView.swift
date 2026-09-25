@@ -45,11 +45,8 @@ nonisolated struct PageThumbnailRequest: Hashable, Sendable {
     var pageID: UUID
     var inkStamp: String
     var template: String
-    var backgroundRef: String?
-    var pdfPageIndex: Int
-    var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
-    var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
-    var rotationDegrees: Double?
+    /// The page's artwork, bottom first.
+    var artwork: [ArtworkLayer]
     var nominal: CGSize
     var output: CGSize
 }
@@ -63,16 +60,20 @@ nonisolated enum PageThumbnailRenderer {
     static func render(_ request: PageThumbnailRequest) async -> UIImage? {
         await Task.detached(priority: .userInitiated) {
             let drawing = DrawingStore.live.load(pageID: request.pageID)
-
-            let backgroundImage: UIImage? = request.backgroundRef.flatMap { ref in
-                ImportedArtwork.rasterized(fileRef: ref, pdfPageIndex: request.pdfPageIndex,
-                                           targetSize: request.nominal)
-                    .map { ImportedArtwork.transformed($0, cropX: request.cropX, cropY: request.cropY,
-                                                       cropWidth: request.cropWidth, cropHeight: request.cropHeight,
-                                                       rotationDegrees: request.rotationDegrees) }
+            // Ink renders through the current traits; pinned to light so a
+            // dark-mode iPad doesn't get white-on-white thumbnails (see
+            // `PageRenderer`).
+            func inkImage(_ render: () -> UIImage) -> UIImage {
+                var image: UIImage?
+                UITraitCollection(userInterfaceStyle: .light).performAsCurrent { image = render() }
+                return image!
             }
 
-            if backgroundImage == nil, PageTemplate.isEmpty(request.template) {
+            let artwork: [(layer: ArtworkLayer, image: UIImage)] = request.artwork.compactMap { layer in
+                layer.image(targetSize: request.nominal).map { (layer: layer, image: $0) }
+            }
+
+            if artwork.isEmpty, PageTemplate.isEmpty(request.template) {
                 // Ink only, on blank paper: keep fitting to the ink's own
                 // bounds, which frames a small sketch legibly instead of
                 // shrinking it into a mostly empty page.
@@ -80,20 +81,20 @@ nonisolated enum PageThumbnailRenderer {
                 let bounds = drawing.bounds.isEmpty
                     ? CGRect(x: 0, y: 0, width: 300, height: 400)
                     : drawing.bounds.insetBy(dx: -10, dy: -10)
-                return drawing.image(from: bounds, scale: 0.5)
+                return inkImage { drawing.image(from: bounds, scale: 0.5) }
             }
 
             // Ruled paper or a background means the layers have to share one
             // coordinate space, so render the whole page area rather than
             // cropping to the ink.
             let nominal = request.nominal
-            let artworkRect = ImportedArtwork.placedRect(
-                x: request.frameX, y: request.frameY,
-                width: request.frameWidth, height: request.frameHeight, in: nominal
-            ) ?? ImportedArtwork.fittedRect(for: backgroundImage, in: nominal)
+            let ink = drawing.map { drawing in inkImage { drawing.image(from: CGRect(origin: .zero, size: nominal), scale: 1) } }
 
-            let inkImage = drawing.map { $0.image(from: CGRect(origin: .zero, size: nominal), scale: 1) }
-
+            // Rendered at the screen's scale on top of `output`, which is
+            // already 2x the displayed size. That is deliberate, if dear:
+            // a page's 1pt ruling is well under a pixel at the strip's
+            // scale, and at anything less than this it fades out of the
+            // thumbnail altogether (`testThumbnail_showsTheTemplate`).
             let output = request.output
             let renderer = UIGraphicsImageRenderer(size: output)
             return renderer.image { context in
@@ -107,31 +108,45 @@ nonisolated enum PageThumbnailRenderer {
                 // Paper, then artwork, then ink - the same stack the editor
                 // draws, so the thumbnail shows the ruling too.
                 PageTemplate.draw(request.template, in: nominal, context: context.cgContext)
-                backgroundImage?.draw(in: artworkRect)
-                inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
+                for entry in artwork {
+                    entry.image.draw(in: entry.layer.rect(for: entry.image, in: nominal))
+                }
+                ink?.draw(in: CGRect(origin: .zero, size: nominal))
             }
         }.value
     }
 }
 #endif
 
-/// Small preview image of a page - its paper, any imported PDF page or
-/// photo on it, and its ink.
+/// Small preview image of a page - its paper, whatever PDF pages and
+/// photos are on it, and its ink.
 ///
-/// The imported document is handed in rather than looked up here. Each
+/// The imported documents are handed in rather than looked up here. Each
 /// thumbnail used to run its own `@Query` for *every* `ImportedDocument` in
 /// the library and re-run it on every model change, which for a page strip
 /// is one full fetch per visible page. The parent already has that list.
 struct PageThumbnailView: View {
     let page: Page
-    var importedDocument: ImportedDocument?
+    /// This page's artwork, bottom first (`ImportedDocument.stack`).
+    var importedDocuments: [ImportedDocument] = []
     var isSelected: Bool = false
     /// How tall to draw it. The strip is resizable, so this is whatever the
     /// user has dragged it to; the width follows the page's own shape.
     var height: CGFloat = PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight)
+    /// The height to *render* for, when that isn't `height`: while the
+    /// strip is being dragged the parent holds this at the height the drag
+    /// started from, so the bitmap is scaled rather than re-rendered every
+    /// 80 px of the drag - each of those re-renders decoded every visible
+    /// page's ink and rasterized its PDF, and the strip stuttered. One
+    /// render at the final size, when the finger lifts.
+    var renderHeight: CGFloat? = nil
 
     #if canImport(UIKit)
     private var store: BitmapStore<PageThumbnailRequest> { PageBitmaps.thumbnails }
+    /// The last bitmap this cell showed, kept while its replacement (a
+    /// different size, newer ink) renders. Without it a cell went blank
+    /// for a frame or two on every change, which read as flicker.
+    @State private var lastShown: UIImage?
     #endif
 
     /// The cell takes the page's own shape rather than a fixed portrait
@@ -145,8 +160,7 @@ struct PageThumbnailView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 6).fill(Color.white)
         #if canImport(UIKit)
-            let request = thumbnailRequest
-            if let thumbnail = store.image(for: request) {
+            if let thumbnail = store.image(for: thumbnailRequest) ?? lastShown {
                 Image(uiImage: thumbnail)
                     .resizable()
                     .scaledToFit()
@@ -164,6 +178,9 @@ struct PageThumbnailView: View {
         .task(id: LoadID(request: thumbnailRequest, generation: store.generation)) {
             MainThreadWatchdog.checkpoint("Thumbnail.task")
             store.request(thumbnailRequest)
+        }
+        .onChange(of: store.image(for: thumbnailRequest)) { _, image in
+            if let image { lastShown = image }
         }
         #endif
     }
@@ -190,24 +207,19 @@ struct PageThumbnailView: View {
     /// own cache key and its own render.
     private var renderSize: CGSize {
         let nominal = nominalPageSize
-        let wanted = max(height * 2, 160)
+        let wanted = max((renderHeight ?? height) * 2, 160)
         let output = min((wanted / 80).rounded(.up) * 80, 560)
         let scale = output / max(nominal.height, 1)
         return CGSize(width: max((nominal.width * scale).rounded(), 1), height: output)
     }
 
-    private var thumbnailRequest: PageThumbnailRequest {
-        let doc = importedDocument
-        return PageThumbnailRequest(
+    var thumbnailRequest: PageThumbnailRequest {
+        PageThumbnailRequest(
             pageID: page.id,
             inkStamp: [page.drawingFileRef ?? "-",
                        page.modifiedAt.map { String($0.timeIntervalSince1970) } ?? "-"].joined(separator: "|"),
             template: page.template,
-            backgroundRef: page.backgroundRef,
-            pdfPageIndex: doc?.pdfPageIndex ?? 0,
-            frameX: doc?.frameX, frameY: doc?.frameY, frameWidth: doc?.frameWidth, frameHeight: doc?.frameHeight,
-            cropX: doc?.cropX, cropY: doc?.cropY, cropWidth: doc?.cropWidth, cropHeight: doc?.cropHeight,
-            rotationDegrees: doc?.rotationDegrees,
+            artwork: ArtworkLayer.stack(for: page, documents: importedDocuments),
             nominal: nominalPageSize, output: renderSize
         )
     }

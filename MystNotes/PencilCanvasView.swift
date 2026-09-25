@@ -205,10 +205,15 @@ struct PencilCanvasView: UIViewRepresentable {
     var isZoomEnabled: Bool = true
     var onDrawingChanged: () -> Void = {}
     /// Long-press anywhere on the canvas - used to re-open the adjust
-    /// handles for an imported image on this page.
-    var onLongPress: () -> Void = {}
+    /// handles for an imported image on this page. Handed the press's
+    /// location in the host view's coordinates (`viewport.pagePoint(from:)`
+    /// maps it onto the page) so the parent can pick which of several
+    /// pictures was pressed.
+    var onLongPress: (CGPoint) -> Void = { _ in }
     /// Apple Pencil (Pro) double-tap: parent toggles the eraser.
     var onPencilDoubleTap: () -> Void = {}
+    /// Apple Pencil Pro squeeze: parent opens the colour options.
+    var onPencilSqueeze: () -> Void = {}
     /// Hold-to-snap: the shape the current stroke will snap to when the
     /// pencil lifts, or nil when there's none - drawn as a preview over the
     /// page. See `ShapeHoldRecognizer`.
@@ -217,6 +222,10 @@ struct PencilCanvasView: UIViewRepresentable {
     var shapeLineStyle: ShapeLineStyle = .solid
     /// An image arrived by paste (⌘V) or a drag from Finder/Files.
     var onPasteImage: (Data) -> Void = { _ in }
+    /// The lasso's selection, owned by the detail view (like `viewport`)
+    /// so its overlay and toolbar can read it; installed on the host here,
+    /// where its recognizers share touches with the Pencil.
+    var inkSelection: InkSelectionController? = nil
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -239,6 +248,7 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.shapeSnap.onPreview = onShapePreview
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
         host.onPasteImage = onPasteImage
+        attachInkSelection(to: host)
 
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity)
 
@@ -255,6 +265,7 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.onDrawingChanged = onDrawingChanged
         context.coordinator.onLongPress = onLongPress
         context.coordinator.shortcuts.onPencilDoubleTap = onPencilDoubleTap
+        context.coordinator.shortcuts.onPencilSqueeze = onPencilSqueeze
         context.coordinator.canvas = canvasView
         context.coordinator.host = host
         host.viewport = viewport
@@ -271,6 +282,7 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.shapeSnap.onPreview = onShapePreview
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
         host.onPasteImage = onPasteImage
+        attachInkSelection(to: host)
         host.apply(pageSize: pageSize, pageIdentity: pageIdentity, forceRefit: canvasChanged)
 
         if canvasChanged {
@@ -284,6 +296,16 @@ struct PencilCanvasView: UIViewRepresentable {
         coordinator.shortcuts.removeAll()
         coordinator.removeShapeHold()
         host.viewport = nil
+        host.inkSelection = nil
+    }
+
+    /// Only writes what differs - this runs on every update (see
+    /// `configure`). The controller's own setters are guarded the same way.
+    private func attachInkSelection(to host: PagedCanvasHostView) {
+        guard let inkSelection else { return }
+        inkSelection.install(on: host)
+        inkSelection.canvas = canvasView
+        if host.inkSelection !== inkSelection { host.inkSelection = inkSelection }
     }
 
     /// Runs on **every** SwiftUI update of this representable - which is
@@ -306,7 +328,14 @@ struct PencilCanvasView: UIViewRepresentable {
         if canvas.overrideUserInterfaceStyle != .light { canvas.overrideUserInterfaceStyle = .light }
 
         // The page scrolls and zooms inside the canvas's own scroll view.
+        // `isScrollEnabled` stands down the pan only; the pinch has to be
+        // told separately or it keeps zooming the page under the image
+        // handles. (Selected ink gates both itself, synchronously - see
+        // `InkSelectionController.gateCanvasGestures`.)
         if canvas.isScrollEnabled != isZoomEnabled { canvas.isScrollEnabled = isZoomEnabled }
+        if let pinch = canvas.pinchGestureRecognizer, pinch.isEnabled != isZoomEnabled {
+            pinch.isEnabled = isZoomEnabled
+        }
         if !canvas.bouncesZoom { canvas.bouncesZoom = true }
         if canvas.alwaysBounceVertical { canvas.alwaysBounceVertical = false }
         if canvas.alwaysBounceHorizontal { canvas.alwaysBounceHorizontal = false }
@@ -328,7 +357,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var onDrawingChanged: () -> Void
-        var onLongPress: () -> Void
+        var onLongPress: (CGPoint) -> Void
         weak var canvas: PKCanvasView?
         weak var host: PagedCanvasHostView?
         let shortcuts = CanvasShortcutInstaller()
@@ -338,7 +367,7 @@ struct PencilCanvasView: UIViewRepresentable {
         private var isApplyingScribbleErase = false
         private var isApplyingShapeSnap = false
 
-        init(onDrawingChanged: @escaping () -> Void, onLongPress: @escaping () -> Void) {
+        init(onDrawingChanged: @escaping () -> Void, onLongPress: @escaping (CGPoint) -> Void) {
             self.onDrawingChanged = onDrawingChanged
             self.onLongPress = onLongPress
             super.init()
@@ -386,7 +415,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
         @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
             guard recognizer.state == .began else { return }
-            onLongPress()
+            onLongPress(recognizer.location(in: recognizer.view))
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {

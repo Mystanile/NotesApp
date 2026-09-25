@@ -226,22 +226,6 @@ nonisolated enum ImportedArtwork {
             : bounds.size
     }
 
-    /// Loads a page's artwork with its crop and rotation already applied -
-    /// the single entry point the canvas, thumbnails and exports all use.
-    static func displayImage(fileRef: String, document: ImportedDocument?, targetSize: CGSize) -> UIImage? {
-        guard let raw = rasterized(
-            fileRef: fileRef,
-            pdfPageIndex: document?.pdfPageIndex ?? 0,
-            targetSize: targetSize
-        ) else { return nil }
-        return transformed(
-            raw,
-            cropX: document?.cropX, cropY: document?.cropY,
-            cropWidth: document?.cropWidth, cropHeight: document?.cropHeight,
-            rotationDegrees: document?.rotationDegrees
-        )
-    }
-
     /// The artwork's natural pixel/point size, straight off disk - used to
     /// seed the initial placement before anything is rendered.
     static func naturalSize(fileRef: String, pdfPageIndex: Int) -> CGSize? {
@@ -279,6 +263,91 @@ nonisolated enum ImportedArtwork {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+
+// MARK: - A page's artwork as values
+
+/// One piece of artwork on a page, as plain values: what its
+/// `ImportedDocument` says, without the model. A page's artwork is a
+/// *stack* of these, bottom first - a PDF page as the paper with photos
+/// placed over it - and every renderer (the live page, the thumbnails,
+/// the exporter) takes the stack rather than one document. Being a value
+/// type, it crosses to the render actors freely.
+nonisolated struct ArtworkLayer: Hashable, Sendable, Identifiable {
+    var id: UUID
+    var fileRef: String
+    var sourceType: String
+    var pdfPageIndex: Int
+    var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
+    var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
+    var rotationDegrees: Double?
+
+    /// Loads this layer at no more than `targetSize`, with its crop and
+    /// rotation applied.
+    func image(targetSize: CGSize) -> UIImage? {
+        ImportedArtwork.displayImage(self, targetSize: targetSize)
+    }
+
+    /// Where this layer sits in `container`: its placed rect, or - never
+    /// adjusted - aspect-fit centered, which is exactly where the old
+    /// `.scaledToFit()` rendering put it, so existing imports keep looking
+    /// identical.
+    func rect(for image: UIImage?, in container: CGSize) -> CGRect {
+        ImportedArtwork.placedRect(x: frameX, y: frameY, width: frameWidth, height: frameHeight, in: container)
+            ?? ImportedArtwork.fittedRect(for: image, in: container)
+    }
+
+    /// The placed rect without a bitmap in hand, from the file's own
+    /// proportions - for seeding the adjust handles.
+    func rect(in container: CGSize) -> CGRect {
+        ImportedArtwork.placedRect(x: frameX, y: frameY, width: frameWidth, height: frameHeight, in: container)
+            ?? ImportedArtwork.fittedRect(fileRef: fileRef, pdfPageIndex: pdfPageIndex, in: container)
+    }
+}
+
+extension ImportedArtwork {
+    /// Loads a layer with its crop and rotation already applied - the
+    /// single entry point the canvas, thumbnails and exports all use.
+    nonisolated static func displayImage(_ layer: ArtworkLayer, targetSize: CGSize) -> UIImage? {
+        guard let raw = rasterized(fileRef: layer.fileRef, pdfPageIndex: layer.pdfPageIndex,
+                                   targetSize: targetSize) else { return nil }
+        return transformed(
+            raw,
+            cropX: layer.cropX, cropY: layer.cropY,
+            cropWidth: layer.cropWidth, cropHeight: layer.cropHeight,
+            rotationDegrees: layer.rotationDegrees
+        )
+    }
+}
+
+@MainActor
+extension ArtworkLayer {
+    init(_ doc: ImportedDocument) {
+        self.init(
+            id: doc.id, fileRef: doc.fileRef, sourceType: doc.sourceType, pdfPageIndex: doc.pdfPageIndex,
+            frameX: doc.frameX, frameY: doc.frameY, frameWidth: doc.frameWidth, frameHeight: doc.frameHeight,
+            cropX: doc.cropX, cropY: doc.cropY, cropWidth: doc.cropWidth, cropHeight: doc.cropHeight,
+            rotationDegrees: doc.rotationDegrees
+        )
+    }
+
+    /// The page's stack, bottom first, from the documents the caller
+    /// already holds. A page from before `ImportedDocument` existed has
+    /// only a `backgroundRef`; that is one unplaced layer, keyed by the
+    /// page so it still has an identity to adjust by.
+    static func stack(for page: Page, documents: [ImportedDocument]) -> [ArtworkLayer] {
+        let docs = ImportedDocument.stack(on: page.id, in: documents)
+        if !docs.isEmpty { return docs.map(ArtworkLayer.init) }
+        guard let ref = page.backgroundRef, !ref.isEmpty else { return [] }
+        return [ArtworkLayer(id: page.id, fileRef: ref, sourceType: ref.lowercased().hasSuffix(".pdf") ? "pdf" : "image",
+                             pdfPageIndex: 0)]
+    }
+
+    /// Same, for a stack already grouped by `ImportedDocument.stacksByPage`.
+    static func stack(for page: Page, stacked: [UUID: [ImportedDocument]]) -> [ArtworkLayer] {
+        stack(for: page, documents: stacked[page.id] ?? [])
     }
 }
 #endif

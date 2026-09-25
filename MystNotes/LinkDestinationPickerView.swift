@@ -4,9 +4,9 @@ import SwiftUI
 /// anchor should jump to.
 struct LinkDestinationPickerView: View {
     let pages: [Page]
-    /// Handed in by the parent, which already holds the query - a
-    /// thumbnail no longer looks its own document up.
-    var documentsByPageID: [UUID: ImportedDocument] = [:]
+    /// Each page's artwork, handed in by the parent, which already holds
+    /// the query - a thumbnail no longer looks its own documents up.
+    var documentsByPageID: [UUID: [ImportedDocument]] = [:]
     var onSelect: (UUID) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -20,7 +20,7 @@ struct LinkDestinationPickerView: View {
                         dismiss()
                     } label: {
                         HStack {
-                            PageThumbnailView(page: page, importedDocument: documentsByPageID[page.id])
+                            PageThumbnailView(page: page, importedDocuments: documentsByPageID[page.id] ?? [])
                             Text("Page \(index + 1)")
                         }
                     }

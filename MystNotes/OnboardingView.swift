@@ -23,7 +23,7 @@ struct OnboardingView: View {
         Slide(
             symbol: "pencil.tip.crop.circle",
             title: "Draw naturally",
-            subtitle: "Five ink types, custom colors and widths, a shape tool that cleans up rough lines, and a lasso to move what you've drawn."
+            subtitle: "Five ink types, custom colors and widths, a shape tool that cleans up rough lines, and a lasso to move, resize and rotate what you've drawn."
         ),
         Slide(
             symbol: "rectangle.stack.badge.plus",

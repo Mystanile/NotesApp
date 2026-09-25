@@ -26,6 +26,31 @@ final class DurabilityTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    // MARK: Copy
+
+    /// Copying a page to another notebook gives the copy its own file with
+    /// the same strokes under fresh ids, and leaves the source untouched.
+    func testCopy_writesTheSameStrokesUnderNewIDs() async throws {
+        let source = UUID(), copy = UUID()
+        let drawing = makeDrawing(strokes: 3)
+        try store.save(drawing, pageID: source)
+
+        let ref = try await DrawingStore.copyDetached(store, from: source, to: copy).value.get()
+
+        XCTAssertEqual(ref, DrawingStore.fileName(for: copy))
+        let loaded = try XCTUnwrap(store.load(pageID: copy))
+        assertStrokesEqual(drawing, loaded, "copy")
+        assertStrokesEqual(drawing, try XCTUnwrap(store.load(pageID: source)), "source")
+        let sourceIDs = store.ids.map(for: source), copyIDs = store.ids.map(for: copy)
+        for stroke in drawing.strokes {
+            XCTAssertNotEqual(sourceIDs.existingID(for: stroke), copyIDs.existingID(for: stroke))
+            XCTAssertNotNil(copyIDs.existingID(for: stroke))
+        }
+        // No ink: nothing written, nothing to point at.
+        let none = try await DrawingStore.copyDetached(store, from: UUID(), to: UUID()).value.get()
+        XCTAssertNil(none)
+    }
+
     // MARK: Mid-stroke
 
     /// A stroke in progress lives only in `PKCanvasView`; autosave fires a

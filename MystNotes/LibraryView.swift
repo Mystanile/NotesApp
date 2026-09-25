@@ -19,8 +19,7 @@ struct LibraryView: View {
 
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
-    @State private var showingNewNotebookAlert = false
-    @State private var newNotebookTitle = ""
+    @State private var showingNewNotebookSheet = false
 
     @State private var itemToRename: LibraryItem?
     @State private var renameText = ""
@@ -108,8 +107,9 @@ struct LibraryView: View {
             exportMessage = "That notebook has no pages to export."
             return
         }
+        let stacked = ImportedDocument.stacksByPage(allImportedDocuments)
         let entries = pages.map { page in
-            (page: page, document: allImportedDocuments.first { $0.page?.id == page.id })
+            (page: page, artwork: ArtworkLayer.stack(for: page, stacked: stacked))
         }
         let data = PageRenderer.pdfData(for: entries)
         do {
@@ -202,8 +202,7 @@ struct LibraryView: View {
                         Label("New Folder", systemImage: "folder.badge.plus")
                     }
                     Button {
-                        newNotebookTitle = ""
-                        showingNewNotebookAlert = true
+                        showingNewNotebookSheet = true
                     } label: {
                         Label("New Notebook", systemImage: "book.badge.plus")
                     }
@@ -222,8 +221,7 @@ struct LibraryView: View {
                         Label("New Folder", systemImage: "folder.badge.plus")
                     }
                     Button {
-                        newNotebookTitle = ""
-                        showingNewNotebookAlert = true
+                        showingNewNotebookSheet = true
                     } label: {
                         Label("New Notebook", systemImage: "book.badge.plus")
                     }
@@ -248,10 +246,8 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
             Button("Create") { createFolder() }
         }
-        .alert("New Notebook", isPresented: $showingNewNotebookAlert) {
-            TextField("Notebook title", text: $newNotebookTitle)
-            Button("Cancel", role: .cancel) {}
-            Button("Create") { createNotebook() }
+        .sheet(isPresented: $showingNewNotebookSheet) {
+            NewNotebookSheet { title, template in createNotebook(title: title, template: template) }
         }
         .alert("Rename", isPresented: renameAlertBinding) {
             TextField("Name", text: $renameText)
@@ -365,11 +361,11 @@ struct LibraryView: View {
         save()
     }
 
-    private func createNotebook() {
-        let trimmed = newNotebookTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func createNotebook(title: String, template: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmed.isEmpty ? "Untitled Notebook" : trimmed
         let notebook = Notebook(title: title, folder: parentFolder)
-        let firstPage = Page(index: 0, type: "paged", template: AppSettings.defaultTemplate, notebook: notebook)
+        let firstPage = Page(index: 0, type: "paged", template: template, notebook: notebook)
         notebook.pages = [firstPage]
         modelContext.insert(notebook)
         modelContext.insert(firstPage)
@@ -517,5 +513,43 @@ private struct SearchableModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// Title and first-page paper for a new notebook. A sheet rather than an
+/// alert because an alert can hold text fields and buttons only, and the
+/// paper used to be whatever Settings said with no say at creation.
+private struct NewNotebookSheet: View {
+    var onCreate: (String, String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var template = AppSettings.defaultTemplate
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Notebook title", text: $title)
+                Picker("First Page", selection: $template) {
+                    ForEach(PageTemplate.options, id: \.id) { option in
+                        Text(option.label).tag(option.id)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .navigationTitle("New Notebook")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        onCreate(title, template)
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }

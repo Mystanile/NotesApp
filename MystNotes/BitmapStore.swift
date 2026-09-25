@@ -16,9 +16,19 @@ import UIKit
 ///    wanted it and again every time a view was rebuilt. `inFlight` collapses
 ///    concurrent requests and the cache serves the rest.
 ///  - **nothing could re-fire a load.** The store is `@Observable`: a render
-///    landing re-evaluates every view reading that key, and `generation`
-///    changes on a purge so their `.task(id:)` runs again. No path leaves a
-///    view showing nothing when a bitmap exists or could be made.
+///    landing re-evaluates every view reading that key, `generation`
+///    changes on a purge so their `.task(id:)` runs again, and a body that
+///    reads a bitmap the store doesn't have asks for it there and then. No
+///    path leaves a view showing nothing when a bitmap exists or could be
+///    made.
+///
+/// Eviction is least-recently-*read*, and never touches anything read in
+/// the last moment. Those are the bitmaps on screen. The first version
+/// evicted oldest-inserted and told the views: with a strip that needed
+/// more than the budget, dropping A to land B re-fired A's view, which
+/// dropped B, which re-fired B's view - and the strip cycled forever,
+/// one thumbnail visible at a time (seen on the iPad, Sept 19, 2026).
+/// Going over budget by what is on screen is the lesser evil.
 ///
 /// Rendering itself happens off the main actor - it decodes ink records and
 /// rasterizes PDF pages, neither of which may sit on the drawing path
@@ -35,11 +45,14 @@ final class BitmapStore<Request: Hashable & Sendable> {
     private(set) var generation = 0
 
     private var cache: [Request: UIImage] = [:]
-    /// Oldest first. Insertion order, not use order: bumping an entry on
-    /// read would mean mutating observable state from inside a view body.
-    private var order: [Request] = []
     private var bytes = 0
-    private var inFlight: Set<Request> = []
+    /// When each entry was last read (or, until then, inserted). Not
+    /// observed: a read from a view body updates it, and observable state
+    /// must not change during a body.
+    @ObservationIgnored private var lastRead: [Request: TimeInterval] = [:]
+    @ObservationIgnored private var inFlight: Set<Request> = []
+    /// An entry read this recently is on screen and is never evicted.
+    @ObservationIgnored var recentWindow: TimeInterval = 1
 
     private let byteLimit: Int
     private let render: Renderer
@@ -55,9 +68,16 @@ final class BitmapStore<Request: Hashable & Sendable> {
     }
 
     /// The bitmap for `request`, if it has been rendered. Reading this from
-    /// a view body is what subscribes that body to the store.
+    /// a view body is what subscribes that body to the store - and, if the
+    /// bitmap isn't there, what asks for it: a view whose entry was evicted
+    /// gets it back the next time it draws, with no task to re-fire.
     func image(for request: Request) -> UIImage? {
-        cache[request]
+        if let image = cache[request] {
+            lastRead[request] = Self.now
+            return image
+        }
+        self.request(request)
+        return nil
     }
 
     /// Makes sure `request` is rendered, now or shortly. Idempotent: a
@@ -79,18 +99,29 @@ final class BitmapStore<Request: Hashable & Sendable> {
     private func finish(_ request: Request, image: UIImage?) {
         inFlight.remove(request)
         guard let image else { return }
+        if let previous = cache[request] { bytes -= cost(of: previous) }
         cache[request] = image
-        order.removeAll { $0 == request }
-        order.append(request)
+        lastRead[request] = Self.now
         bytes += cost(of: image)
-        evictIfNeeded()
+        evictIfNeeded(keeping: request)
     }
 
-    private func evictIfNeeded() {
+    /// Drops the least recently read entries until the budget is met -
+    /// except the one that just landed, and entries read within
+    /// `recentWindow`, which are on screen. If everything is on screen,
+    /// the budget is exceeded and nothing is dropped: dropping one would
+    /// only have it asked for again.
+    private func evictIfNeeded(keeping landed: Request) {
+        guard bytes > byteLimit else { return }
+        let cutoff = Self.now - recentWindow
+        let evictable = lastRead
+            .filter { $0.key != landed && $0.value < cutoff && cache[$0.key] != nil }
+            .sorted { $0.value < $1.value }
+            .map(\.key)
         var dropped = false
-        while bytes > byteLimit, order.count > 1 {
-            let oldest = order.removeFirst()
-            if let image = cache.removeValue(forKey: oldest) { bytes -= cost(of: image) }
+        for request in evictable where bytes > byteLimit {
+            if let image = cache.removeValue(forKey: request) { bytes -= cost(of: image) }
+            lastRead.removeValue(forKey: request)
             dropped = true
         }
         if dropped { generation &+= 1 }
@@ -99,10 +130,15 @@ final class BitmapStore<Request: Hashable & Sendable> {
     private func purge() {
         guard !cache.isEmpty else { return }
         cache.removeAll()
-        order.removeAll()
+        lastRead.removeAll()
         bytes = 0
         generation &+= 1
     }
+
+    /// How many bytes are cached right now - the tests watch it.
+    var cachedBytes: Int { bytes }
+
+    private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     private func cost(of image: UIImage) -> Int {
         image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
@@ -119,10 +155,11 @@ enum PageBitmaps {
         await ArtworkRenderer.render(request)
     }
 
-    /// Page-strip thumbnails: ~80 KB each, so this holds a long notebook's
-    /// worth. Without it, every page turn and every scroll of the strip
-    /// decoded each page's ink record again.
-    static let thumbnails = BitmapStore<PageThumbnailRequest>(byteLimit: 8 * 1024 * 1024) { request in
+    /// Page-strip thumbnails: ~300 KB each at the default strip height,
+    /// ~2.8 MB at its tallest, so this holds a notebook's worth of the
+    /// former and a screenful of the latter. Without it, every page turn
+    /// and every scroll of the strip decoded each page's ink record again.
+    static let thumbnails = BitmapStore<PageThumbnailRequest>(byteLimit: 24 * 1024 * 1024) { request in
         await PageThumbnailRenderer.render(request)
     }
 }

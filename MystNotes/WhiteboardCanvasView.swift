@@ -27,6 +27,8 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     var onDrawingChanged: () -> Void = {}
     /// Apple Pencil (Pro) double-tap: parent toggles the eraser.
     var onPencilDoubleTap: () -> Void = {}
+    /// Apple Pencil Pro squeeze: parent opens the colour options.
+    var onPencilSqueeze: () -> Void = {}
     /// Solid / dashed / dotted for shapes made by holding a stroke still.
     var shapeLineStyle: ShapeLineStyle = .solid
 
@@ -61,6 +63,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     func updateUIView(_ host: CanvasHostView, context: Context) {
         context.coordinator.onDrawingChanged = onDrawingChanged
         context.coordinator.shortcuts.onPencilDoubleTap = onPencilDoubleTap
+        context.coordinator.shortcuts.onPencilSqueeze = onPencilSqueeze
         context.coordinator.canvas = canvasView
 
         // Each whiteboard brings its own fresh canvas (see PageCanvasView);

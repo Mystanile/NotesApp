@@ -69,6 +69,9 @@ struct DrawingToolbarView: View {
 
     var style: Style = .floating
     @Binding var toolState: DrawingToolState
+    /// Which tool's options popover is open. Owned by the parent so a
+    /// Pencil squeeze can open it from the canvas.
+    @Binding var openPopover: DrawingToolKind?
     var canUndo: Bool
     var canRedo: Bool
     var isFillToolAvailable: Bool
@@ -79,8 +82,8 @@ struct DrawingToolbarView: View {
     var onUndo: () -> Void
     var onRedo: () -> Void
     var onAddTextBox: () -> Void
-
-    @State private var openPopover: DrawingToolKind?
+    var onAddSticker: () -> Void
+    var onAddLink: () -> Void
 
     // Lets the whole bar be dragged out of the way instead of sitting fixed
     // over the canvas. Session-only (resets to the default top-center spot
@@ -134,7 +137,10 @@ struct DrawingToolbarView: View {
 
             // Shapes have no button: draw one and hold the pencil still at
             // the end, and it snaps (see ShapeHoldRecognizer).
+            // Stickers and links share the text box's rule: paged pages only.
             iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox)
+            iconButton("face.smiling", disabled: !isTextBoxAvailable, action: onAddSticker)
+            iconButton("link", disabled: !isTextBoxAvailable, action: onAddLink)
         }
     }
 
