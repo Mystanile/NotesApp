@@ -122,6 +122,8 @@ struct NotebookDetailView: View {
     /// Non-nil while cropping that artwork; the crop rect in page
     /// coordinates, always kept inside `adjustingImageFrame`.
     @State private var croppingRect: CGRect?
+    /// See `newPageSizeLabel`.
+    @State private var newPageAspect: Double?
     /// The artwork as it was when the handles opened: one undo step per
     /// session, however many moves, rotations and crops it held.
     @State private var adjustingSnapshot: ArtworkSnapshot?
@@ -425,10 +427,17 @@ struct NotebookDetailView: View {
                 .help(showingPageStrip ? "Hide the page strip" : "Show the page strip")
 
                 Menu {
-                    Button("Blank") { addPage(type: "paged", template: "blank") }
-                    Button("Lined") { addPage(type: "paged", template: "lined") }
-                    Button("Grid") { addPage(type: "paged", template: "grid") }
-                    Button("Dotted") { addPage(type: "paged", template: "dotted") }
+                    Section {
+                        ForEach(PageTemplate.options, id: \.id) { option in
+                            Button(option.label) { addPage(type: "paged", template: option.id) }
+                        }
+                    }
+                    Menu("Size: \(newPageSizeLabel)") {
+                        Button("Same as This Page") { newPageAspect = nil }
+                        ForEach(PageGeometry.sizes, id: \.label) { size in
+                            Button(size.label) { newPageAspect = size.aspect }
+                        }
+                    }
                     Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
                 } label: {
                     Label("New Page", systemImage: "plus")
@@ -836,6 +845,23 @@ struct NotebookDetailView: View {
                         } label: {
                             Label("Copy to Notebook…", systemImage: "doc.on.doc")
                         }
+                        if page.type == "paged" {
+                            Menu("Paper") {
+                                ForEach(PageTemplate.options, id: \.id) { option in
+                                    Button {
+                                        page.template = option.id
+                                        page.markModified()
+                                        saveMetadata("Failed to change the paper")
+                                    } label: {
+                                        if page.template == option.id {
+                                            Label(option.label, systemImage: "checkmark")
+                                        } else {
+                                            Text(option.label)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                         if artwork(for: page).first?.isPaper == true {
                             Button {
@@ -917,11 +943,22 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to reorder pages")
     }
 
+    /// The shape the next New Page takes: a size picked from the menu, or
+    /// nil for the shape of the page you're on - so a landscape notebook,
+    /// or one continuing a PDF, keeps going in that shape.
+    private var newPageSizeLabel: String {
+        guard let aspect = newPageAspect else { return "Same as This Page" }
+        return PageGeometry.sizes.first { abs($0.aspect - aspect) < 0.0001 }?.label ?? "Custom"
+    }
+
     private func addPage(type: String, template: String) {
         saveCurrentPage()
 
         let newIndex = sortedPages.count
         let page = Page(index: newIndex, type: type, template: template, notebook: notebook)
+        if type == "paged" {
+            page.aspectRatio = newPageAspect ?? (currentPage?.type == "paged" ? currentPage?.aspectRatio : nil)
+        }
         modelContext.insert(page)
 
         if notebook.pages == nil {

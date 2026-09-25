@@ -29,6 +29,14 @@ enum PageGeometry {
         return CGFloat(raw)
     }
 
+    /// Page sizes a new page can take (width / height). Every page is the
+    /// same height in page points (`nominalHeight`); the shape is the
+    /// aspect.
+    static let sizes: [(label: String, aspect: Double)] = [
+        ("Portrait", 0.75), ("A4", 210.0 / 297), ("US Letter", 8.5 / 11),
+        ("Square", 1), ("Landscape", 4.0 / 3), ("Widescreen", 16.0 / 9),
+    ]
+
     static func contentSize(aspectRatio: CGFloat) -> CGSize {
         CGSize(width: (nominalHeight * aspectRatio).rounded(), height: nominalHeight)
     }

@@ -23,10 +23,17 @@ nonisolated enum PageTemplate {
     /// The papers a user can pick, in menu order.
     static let options: [(id: String, label: String)] = [
         ("blank", "Blank"), ("lined", "Lined"), ("grid", "Grid"), ("dotted", "Dotted"),
+        ("engineering", "Engineering"), ("cornell", "Cornell"),
     ]
 
     static let lineSpacing: CGFloat = 32
     static let dotSpacing: CGFloat = 24
+    /// Engineering paper: a fine grid, every fifth line heavier.
+    static let engineeringSpacing: CGFloat = 16
+    /// Cornell notes: the cue column's width, and the summary box's height,
+    /// as fractions of the page.
+    static let cornellCueFraction: CGFloat = 0.28
+    static let cornellSummaryFraction: CGFloat = 0.2
     /// White 0.5 at 25% - what `Color.gray.opacity(0.25)` resolved to in
     /// light mode, which is the ruling everyone has been looking at.
     static let patternGray: CGFloat = 0.5
@@ -35,7 +42,7 @@ nonisolated enum PageTemplate {
     /// Whether `template` puts anything on the page at all.
     static func isEmpty(_ template: String) -> Bool {
         switch template {
-        case "lined", "grid", "dotted": return false
+        case "lined", "grid", "dotted", "engineering", "cornell": return false
         default: return true
         }
     }
@@ -71,6 +78,43 @@ nonisolated enum PageTemplate {
                 }
                 y += dotSpacing
             }
+        case "engineering":
+            // Minor lines, then the heavier every-fifth ones over them.
+            var major: [CGFloat] = []
+            var index = 1
+            context.setStrokeColor(color)
+            context.setLineWidth(0.75)
+            var offset = engineeringSpacing
+            while offset < max(size.width, size.height) {
+                if index % 5 == 0 { major.append(offset) } else {
+                    if offset < size.height { context.move(to: CGPoint(x: 0, y: offset)); context.addLine(to: CGPoint(x: size.width, y: offset)) }
+                    if offset < size.width { context.move(to: CGPoint(x: offset, y: 0)); context.addLine(to: CGPoint(x: offset, y: size.height)) }
+                }
+                offset += engineeringSpacing
+                index += 1
+            }
+            context.strokePath()
+            context.setStrokeColor(CGColor(gray: patternGray, alpha: patternAlpha * 2))
+            context.setLineWidth(1.25)
+            for offset in major {
+                if offset < size.height { context.move(to: CGPoint(x: 0, y: offset)); context.addLine(to: CGPoint(x: size.width, y: offset)) }
+                if offset < size.width { context.move(to: CGPoint(x: offset, y: 0)); context.addLine(to: CGPoint(x: offset, y: size.height)) }
+            }
+            context.strokePath()
+        case "cornell":
+            // Lined notes, a cue column down the left and a summary box
+            // across the bottom - the lines stop at the summary.
+            let summaryTop = size.height * (1 - cornellSummaryFraction)
+            context.setStrokeColor(color)
+            context.setLineWidth(1)
+            strokeRows(in: CGSize(width: size.width, height: summaryTop), context: context)
+            context.strokePath()
+            context.setStrokeColor(CGColor(gray: patternGray, alpha: patternAlpha * 2.5))
+            context.setLineWidth(1.5)
+            let cueX = size.width * cornellCueFraction
+            context.move(to: CGPoint(x: cueX, y: 0)); context.addLine(to: CGPoint(x: cueX, y: summaryTop))
+            context.move(to: CGPoint(x: 0, y: summaryTop)); context.addLine(to: CGPoint(x: size.width, y: summaryTop))
+            context.strokePath()
         default:
             break
         }
@@ -103,7 +147,7 @@ nonisolated enum PageTemplate {
 /// what you write on, what the thumbnail shows and what you export are the
 /// same paper.
 struct PageBackgroundView: View {
-    let template: String  // "blank" | "lined" | "grid" | "dotted"
+    let template: String  // one of `PageTemplate.options`; unknown ones are blank
     /// The paper itself. An imported photo draws its own white behind it
     /// only when it covers the page; otherwise the paper below shows
     /// through, which is the point.
