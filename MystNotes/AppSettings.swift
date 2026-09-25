@@ -16,6 +16,7 @@ nonisolated enum AppSettings {
         static let toolType = "defaultToolType"
         static let inkColorHex = "defaultInkColorHex"
         static let inkWidth = "defaultInkWidth"
+        static let shapeLineStyle = "shapeLineStyle"
         static let template = "defaultTemplate"
         static let pageStripVisible = "pageStripVisible"
         static let pageStripHeight = "pageStripHeight"
@@ -162,6 +163,12 @@ nonisolated enum AppSettings {
     static var defaultInkWidth: Double {
         get { defaults.object(forKey: Keys.inkWidth) as? Double ?? 4 }
         set { defaults.set(newValue, forKey: Keys.inkWidth) }
+    }
+
+    /// Solid, dashed or dotted for snapped shapes: the last one picked.
+    static var shapeLineStyle: ShapeLineStyle {
+        get { defaults.string(forKey: Keys.shapeLineStyle).flatMap(ShapeLineStyle.init(rawValue:)) ?? .solid }
+        set { defaults.set(newValue.rawValue, forKey: Keys.shapeLineStyle) }
     }
 
     /// The tool a fresh canvas should start with, from the user's settings.

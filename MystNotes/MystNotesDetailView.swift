@@ -47,7 +47,8 @@ struct NotebookDetailView: View {
     @State private var toolState = DrawingToolState(
         penInkType: AppSettings.inkType(for: AppSettings.defaultToolType),
         penColor: Color(hex: AppSettings.defaultInkColorHex),
-        penWidth: AppSettings.defaultInkWidth
+        penWidth: AppSettings.defaultInkWidth,
+        shapeLineStyle: AppSettings.shapeLineStyle
     )
     /// The toolbar's open options popover; a Pencil squeeze sets it.
     @State private var openToolOptions: DrawingToolKind?
@@ -339,6 +340,7 @@ struct NotebookDetailView: View {
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: toolState) { _, _ in applyToolState() }
+        .onChange(of: toolState.shapeLineStyle) { _, style in AppSettings.shapeLineStyle = style }
         // Switching between a paged page and a whiteboard rebuilds the canvas
         // representable; re-push the tool the user actually has selected
         // (deferred so it lands after the new canvas is made).
@@ -664,6 +666,9 @@ struct NotebookDetailView: View {
                 isZoomEnabled: adjustingImageFrame == nil && !inkSelection.hasSelection,
                 onDrawingChanged: scheduleAutosave,
                 onLongPress: { location in
+                    // Not with the lasso in hand: a Pencil resting mid-loop
+                    // over a photo would open its handles.
+                    guard toolState.activeKind != .lasso else { return }
                     beginAdjustingImage(on: page, at: viewport.pagePoint(from: location))
                 },
                 onFillTap: toolState.activeKind == .fill && !isPresenting ? { location in
