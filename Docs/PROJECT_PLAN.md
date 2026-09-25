@@ -257,7 +257,7 @@ Everything through M5 works fine unpaid.
 
 Seven milestones. **The app is releasable at the end of each one.** Week counts assume serious part-time hours alongside first-year engineering; treat them as sequence, not schedule.
 
-### M0 — Correctness (3–4 weeks) · *blocking, no new features*
+### M0 — Correctness (3–4 weeks) · *blocking, no new features* · ✅ done Sept 25, 2026
 
 Fix the three blockers. Nothing else matters until these are done.
 

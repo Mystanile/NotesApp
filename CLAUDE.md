@@ -10,19 +10,19 @@ MystNotes is a handwriting-first note app for iPad and Mac (Mac Catalyst), built
 
 Long-term thesis: notes are a **connected graph you can draw on**, with **stroke-level time travel** and **recall built in**. Not a filing cabinet.
 
-Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASELINE.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (task 8 decided: outcome B, done). **Start here after Sept 13, 2026:** the "Open on the morning of" section at the top of `Docs/BACKLOG.md`.
+Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASELINE.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (task 8 decided: outcome B, done). **Current milestone: M1** — task order under Milestones below.
 
 ---
 
 ## Current state (read this before proposing anything)
 
-**~14,200 lines of Swift in 56 app files, plus ~4,400 lines of tests in 14 files (171 tests, all green). Branches: `m0-correctness` carries M0 on top of `custom-drawing-toolbar` (never merged), and `m1-images-and-shapes` carries the Sept 18 image and shape-tool work on top of that. `main` is 69 commits behind. Merge in that order when M0 exits. Far more is built than a phase list suggests.**
+**~14,200 lines of Swift in 56 app files, plus ~4,400 lines of tests in 14 files (171 tests, all green). All earlier branches merged into `main` on Sept 25, 2026; M1 work branches off `main`. Far more is built than a phase list suggests.**
 
 Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, our own lasso (move, pinch-resize, rotate, cut/copy/paste/duplicate — `InkSelection`, Sept 19, 2026; the whiteboard still has PencilKit's), shape recognition (hold-to-snap, solid/dashed/dotted), fill/bucket tool, per-page canvas with real zoom, PDF and image import from Photos / Files / ⌘V / drag with crop/rotate/resize (any number per page, stacked — Sept 19, 2026), nested folders, notebook covers, thumbnail strip, four templates (drawn under imported artwork, and in thumbnails and exports), whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync.
 
-**One shipped tool is broken (M1).** ~~The shape tool~~ — rebuilt Sept 15, 2026 and given a second pass Sept 18 after field use: the hold timer was scheduled in the default run-loop mode, which never fires while a pencil is down (`.common` now, plus an elapsed-time check in `touchesMoved`); a line with a hook on the end came back as an arrow; snapped shapes were drawn at the tool's heaviest possible mark instead of the weight of the stroke they replace; lines didn't snap to the axes; there were no dashed or dotted shapes. All fixed, 29 tests. Still owed on the iPad: that the host's recognizer receives the Pencil touch during a PencilKit stroke. The fill tool doesn't work and has been fixed twice; the leading hypothesis is that HEAD's page-zoom commit broke the coordinate-space assumption its own doc comment spells out. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md` — part 4 is the lasso rebuild (Sept 19), part 3 covers the imported-image bugs fixed Sept 18 (a photo import wiped the page template; artwork vanished on page turns; no Files/paste/drag import on a Mac).
+**One shipped tool is broken (M1).** ~~The shape tool~~ — rebuilt Sept 15, 2026 and given a second pass Sept 18 after field use: the hold timer was scheduled in the default run-loop mode, which never fires while a pencil is down (`.common` now, plus an elapsed-time check in `touchesMoved`); a line with a hook on the end came back as an arrow; snapped shapes were drawn at the tool's heaviest possible mark instead of the weight of the stroke they replace; lines didn't snap to the axes; there were no dashed or dotted shapes. All fixed, 29 tests. Still owed on the iPad: that the host's recognizer receives the Pencil touch during a PencilKit stroke. The fill tool doesn't work and has been fixed twice; the page-zoom coordinate hypothesis is already fixed (`viewport.pagePoint`), so the real cause is unknown — M1 task 1 instruments it. Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md` — part 4 is the lasso rebuild (Sept 19), part 3 covers the imported-image bugs fixed Sept 18 (a photo import wiped the page template; artwork vanished on page turns; no Files/paste/drag import on a Mac).
 
-**Three things blocked shipping. As of Sept 12, 2026 (M0, `m0-correctness`) all three are closed in code; what remains is on hardware — see the M0 task list below.**
+**Three things blocked shipping. All three are closed (M0, done Sept 25, 2026).**
 
 1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
 2. ~~**`library.json` holds the entire library in one file**~~ **Closed (M0 tasks 6–15, Sept 12, 2026).** Split into `index.json` + `notebooks/<uuid>.json` with partial push/pull, index history, `tombstones.json`, content-addressed payloads, trash-not-delete, debounced push, folder watching, non-blocking downloads, one storage root — and iCloud conflict versions read and merged (task 8; the spike found outcome B on real hardware).
@@ -158,8 +158,8 @@ Detail and exit criteria in `Docs/PROJECT_PLAN.md`.
 
 | # | Milestone | Purpose |
 |---|---|---|
-| **M0** | Correctness | Tests, sync rewrite, storage cleanup, ink format. **Blocking. No new features.** |
-| **M1** | Parity Floor | Real PDF annotation, shape tool rebuild, fill tool, lasso-to-text, per-page templates, favorites, note lock |
+| **M0** | Correctness | ✅ Done Sept 25, 2026. Tests, sync rewrite, storage cleanup, ink format. |
+| **M1** | Parity Floor (current) | Real PDF annotation, shape tool rebuild, fill tool, lasso-to-text, per-page templates, favorites, note lock |
 | **M2** | The Graph | Nodes, links, backlinks, graph canvas, ink transclusion |
 | **M3** | Time & Voice | Stroke timeline, replay, audio, transcription, stroke-bound playback |
 | **M4** | Recall | Semantic search, cloze on ink, spaced repetition, math |
@@ -167,53 +167,25 @@ Detail and exit criteria in `Docs/PROJECT_PLAN.md`.
 | **M6** | Ship | Membership, accessibility, privacy manifest, TestFlight, App Store |
 | **M7** | Cross-Platform | Web renderer, share links, sync service spike |
 
-### M0 task order (current milestone)
+### M0 — done (Sept 25, 2026)
 
-In order. Each gates the next.
+All 22 tasks done, exit criteria met, and the user confirmed it on the iPad on Sept 25, 2026. The full task list and its findings are in `Docs/PROJECT_PLAN.md` §4 and in git history. Branches merged `custom-drawing-toolbar` → `m0-correctness` → `m1-images-and-shapes` → `main` the same day. M0 items still open in `BACKLOG.md` moved to M1.
 
-**Tests first, so the rest is verifiable**
-1. Add a test target.
-2. `DurabilityTests`: kill the process mid-stroke, mid-save, mid-migration. Assert clean load.
-3. `SyncTests`: a two-library harness driving `SyncEngine` against a temp folder. **First test: edit page 3 in library A, page 7 in library B, sync, assert both survive.** It should fail today. Do not fix anything until it fails for the right reason.
+### M1 task order (current milestone)
 
-**Sync rewrite**
-4. Add `Page.modifiedAt`, maintained on every mutation.
-5. Merge per page. Remove `rebuild()`'s delete-all-pages behavior.
-6. Split `library.json` into `index.json` + `notebooks/<uuid>.json`.
-7. Keep the last N index snapshots in `index-history/`.
-8. ~~Read and resolve `NSFileVersion` conflict versions~~ done — spike confirmed outcome B on real hardware; versions merged sequentially, resolved after a complete merge.
-9. Move tombstones from `UserDefaults` into `tombstones.json` in the folder.
-10. Content-address payloads by SHA-256; drop mtime comparison in `copyFiles`.
-11. Prune orphaned payloads; route deletions to `trash/`, never `removeItem`.
-12. Periodic debounced push (~30s after last edit), not only on background.
-13. `NSFilePresenter` so folder changes land while the app is open.
-14. Make `ensureDownloaded` async; stop blocking a loop on `Thread.sleep`.
+Already done early: shape tool rebuild (Sept 15/18), images on a page with stacking and Mac import (Sept 18/19), text block typography (Sept 15), our own lasso with move/resize/rotate/cut/copy/paste (Sept 19), copy pages to another notebook (Sept 19).
 
-**Storage cleanup**
-15. Delete the iCloud ubiquity path from `FileStore`. One storage root. Remove the dual-location fallback in `url(for:)`.
+1. **Fill tool** — instrument, then fix or hide (`TOOL_FIXES.md` Part 2). In progress on `m1-fill-tool`. The coordinate hypothesis is already fixed (`viewport.pagePoint`, `32de133`), so the cause is unknown until the log says.
+2. **Real PDF annotation** — live PDFKit layer instead of rasterize-to-JPEG. The highest-value item.
+3. Lasso: convert to text, recolor, cross-page move, copy as image.
+4. Per-page templates, custom page sizes, imported templates.
+5. Favorites, bookmarks, page outline.
+6. Sticker resize and rotate; stickers and link anchors in exports.
+7. Pen on Mac (reproduce first).
+8. Export additions: layered PDF, markdown, whole-library zip.
+9. Note lock via Face ID; off-device backup target.
 
-**Ink format**
-16. ~~Neutral stroke codec~~ done — `StrokeCodec` + `StrokeIDMap`, spec §5 rewritten against the SDK.
-17. ~~Pixel-diff fidelity harness per ink type~~ done — 5 of 7 inks exact, marker/crayon within a one-time quantization drift; numbers in spec §5.
-16b. ~~Storage flip~~ done — `.strokes` is the record, `.drawing` a hash-keyed cache, legacy `.drawing`-only pages migrate on first load.
-
-**Proof**
-18. Two-device test on real hardware against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync.
-19. ~~SwiftData index rebuild~~ done — `LibraryRebuild`, two tests (shape equality after rebuild; a rebuild never pushes and trashes unpushed ink).
-20. ~~Performance baseline~~ done except ink latency (needs the iPad) — numbers and thresholds in `Docs/PERFORMANCE_BASELINE.md`, tests in `PerformanceTests`. Findings: the record was ~6× PencilKit's size — now LZFSE-compressed (~2×); no-op sync cost is linear in payload bytes (persist hashes, backlog).
-21. ~~Crash reporting~~ done — MetricKit subscriber + `AppLog` + Settings → Export Diagnostics (`Diagnostics.swift`). **Device verification still owed:** MetricKit payloads never arrive on the simulator or under the debugger; crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in the export.
-22. ~~Trash retention~~ done (Sept 18, 2026) — 30 days, `TrashRetention`, swept in the folder during a sync run and locally at launch, with a Trash section in Settings. Invariant 3's one exception; 14 tests.
-
-**M0 exit:** the task-3 scenario passes ✅, no known path to data loss ✅, index proven rebuildable ✅ (folder and local mirror), durability suite green ✅, trash retention decided and implemented ✅ (30 days, `TrashRetention`, Sept 18, 2026 — that commit sits on `m1-images-and-shapes`, not on `m0-correctness`, because it was written on top of it; the merge order below picks it up either way).
-
-**Still owed before calling M0 done — all four need the iPad, none need more code:**
-
-1. **Task 18, the two-device test on real hardware** against the real folder: offline edits both sides, simultaneous same-page edit, evicted file, open mid-sync. Plus the spike checklist §3 clean offline round (`BACKLOG.md`), which has still not been run on a build free of the old-build saves and the launch hangs.
-2. **The ink-latency baseline** — Instruments, 30 s of continuous drawing at 120 Hz; the method is in `PERFORMANCE_BASELINE.md`. The invariant is that autosave, OCR and a debounced push never show up in the trace while the pencil is down.
-3. **Crash-report verification** — MetricKit payloads never arrive on the simulator or under the debugger. Crash the app once on the iPad, relaunch, confirm a `diagnostic-*.json` in Settings → Export Diagnostics.
-4. **The remaining launch-time main-thread hang** (`BACKLOG.md`, "Open on the morning of Sept 13"). The build on the iPad captures the main thread's real stack into `Documents/diagnostics/app.log`; read it before guessing again.
-
-Then merge `custom-drawing-toolbar` → `m0-correctness` → `m1-images-and-shapes` → `main`, in that order.
+**M1 exit:** a GoodNotes user can do a full day of classes without hitting a wall.
 
 ---
 
