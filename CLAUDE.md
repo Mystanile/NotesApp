@@ -130,6 +130,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Simulator launch failures: quit and relaunch Xcode. Stalled iPad pairing needs manual intervention.
 - `NSFilePresenter` on a user-picked folder inside iCloud Drive **does** fire for other processes' writes — coordinated or not, any depth — about a second after the write, several times per write. Verified Sept 12, 2026 with a two-process script on the Mac. It is *not* verified for a folder outside iCloud Drive with an uncoordinated writer (Dropbox etc.); the foreground pull and Sync Now still cover that.
 - `xcodebuild test` against a simulator that isn't booted fails with `Simulator device failed to launch … Busy ("Application failed preflight checks")` — SpringBoard is still coming up. Boot first: `xcrun simctl boot <udid> && xcrun simctl bootstatus <udid> -b`, then run. A leftover test host from a previous run does the same; `xcrun simctl terminate <udid> com.mozynas.Mystnotes` clears it.
+- **An incremental `xcodebuild test` has run stale app code after an app-source edit** — twice on Sept 25, 2026, once each way (a new test passed that should have failed; a fix showed no effect). When a result is surprising, or when proving a test fails without a fix, run `xcodebuild clean test`.
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.

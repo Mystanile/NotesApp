@@ -74,12 +74,12 @@ final class FillToolTests: XCTestCase {
 
     /// A closed ellipse in one pen stroke: every row of its inside has a
     /// different width, so the fill can't merge rows into thick bands.
-    private func ellipseDrawing() -> PKDrawing {
+    private func ellipseDrawing(lineSize: CGFloat = 3) -> PKDrawing {
         let points = (0...180).map { step -> PKStrokePoint in
             let t = CGFloat(step) / 180 * 2 * .pi
             return PKStrokePoint(location: CGPoint(x: ellipse.midX + ellipse.width / 2 * cos(t),
                                                    y: ellipse.midY + ellipse.height / 2 * sin(t)),
-                                 timeOffset: Double(step) * 0.01, size: CGSize(width: 3, height: 3),
+                                 timeOffset: Double(step) * 0.01, size: CGSize(width: lineSize, height: lineSize),
                                  opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
         }
         return PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black),
@@ -142,6 +142,93 @@ final class FillToolTests: XCTestCase {
             XCTAssertEqual(insideSolid, insideTotal, "at \(scale)x: \(insideTotal - insideSolid) inside pixels not solid fill")
             XCTAssertEqual(outsideFilled, 0, "at \(scale)x: fill escaped the ellipse")
         }
+    }
+
+    /// Field report, Sept 25, 2026: a thin white line between the fill and
+    /// its outline, on the sides where the passes end. The outline's
+    /// inner edge is anti-aliased - partly see-through - and the fill
+    /// stopped where that edge began, so a light or thin hand-drawn line
+    /// showed paper through half its width. The fill has to run on under
+    /// the line to its centre. Checked on the fill alone, because whether
+    /// the gap shows depends on how solid a particular line is.
+    func testFillRunsUnderItsOutline_toTheLinesCentre() async throws {
+        for lineSize: CGFloat in [2, 3] {
+            let drawing = ellipseDrawing(lineSize: lineSize)
+            let result = await FillTool.fill(drawing, in: page, at: CGPoint(x: ellipse.midX, y: ellipse.midY), color: .red)
+            let filled = try XCTUnwrap(result)
+            let fillOnly = PKDrawing(strokes: Array(filled.strokes.prefix(filled.strokes.count - drawing.strokes.count)))
+            let scale: CGFloat = 3
+            let (px, width, height) = pixels(of: fillOnly, scale: scale)
+            let toCentre = ellipse.insetBy(dx: 0.75, dy: 0.75)
+            var short = 0
+            for y in 0..<height {
+                for x in 0..<width {
+                    let point = CGPoint(x: (CGFloat(x) + 0.5) / scale, y: (CGFloat(y) + 0.5) / scale)
+                    if isInside(point, toCentre), px[(y * width + x) * 4 + 3] < 250 { short += 1 }
+                }
+            }
+            XCTAssertEqual(short, 0, "\(lineSize)pt line: \(short) pixels short of the line's centre")
+        }
+    }
+
+    /// The page from the field report, straight off the iPad: a snapped
+    /// rectangle and ellipse in `.pen` at force 0.858, thinner than any
+    /// line these tests draw. Filled on the device, the rectangle showed
+    /// a white line down its left and right sides - measured ~1pt clear
+    /// between the outline's edge and the fill. The fill reads the page
+    /// at 1px per point, and the outline's faint edge put alpha just over
+    /// the threshold into one more pixel: the fill started a point in,
+    /// and a thin line doesn't cover that point.
+    func testRealSnappedRectangle_fillsRightUpToItsOutline() async throws {
+        let bundle = Bundle(for: FillToolTests.self)
+        let url = try XCTUnwrap(bundle.url(forResource: "snapped-shapes-2026-09-25", withExtension: "strokes", subdirectory: "Fixtures")
+                                ?? bundle.url(forResource: "snapped-shapes-2026-09-25", withExtension: "strokes"))
+        let outlines = try StrokeCodec.decode(Data(contentsOf: url)).drawing.strokes.filter { $0.ink.inkType == .pen }
+        let rectangle = try XCTUnwrap(outlines.first { $0.renderBounds.width < 200 }).renderBounds
+        let drawing = PKDrawing(strokes: outlines)
+        let result = await FillTool.fill(drawing, in: CGSize(width: 780, height: 1040),
+                                         at: CGPoint(x: rectangle.midX, y: rectangle.midY), color: .black)
+        let filled = try XCTUnwrap(result)
+
+        let scale: CGFloat = 3
+        let inside = rectangle.insetBy(dx: 3.5, dy: 3.5)
+        var image: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            image = filled.image(from: inside, scale: scale)
+        }
+        let cg = try XCTUnwrap(image?.cgImage)
+        var px = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+        px.withUnsafeMutableBytes { raw in
+            CGContext(data: raw.baseAddress, width: cg.width, height: cg.height, bitsPerComponent: 8,
+                      bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                .draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        }
+        let gaps = stride(from: 3, to: px.count, by: 4).filter { px[$0] < 250 }.count
+        XCTAssertEqual(gaps, 0, "\(gaps) see-through pixels inside the rectangle's outline")
+    }
+
+    /// The grow under the outline goes into ink, never through it: a
+    /// hairline wall still holds the fill on its side.
+    func testFillGrowsUnderAThinLine_butNotThroughIt() async throws {
+        func line(_ a: CGPoint, _ b: CGPoint, size: CGFloat) -> PKStroke {
+            let points = (0...20).map { step -> PKStrokePoint in
+                let t = CGFloat(step) / 20
+                return PKStrokePoint(location: CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t),
+                                     timeOffset: Double(step) * 0.01, size: CGSize(width: size, height: size),
+                                     opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+            }
+            return PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+        }
+        // A box cut in two by a thin wall at x = 200.
+        let drawing = PKDrawing(strokes: squareDrawing().strokes + [line(CGPoint(x: 200, y: 95), CGPoint(x: 200, y: 305), size: 2)])
+        let result = await FillTool.fill(drawing, in: page, at: CGPoint(x: 150, y: 200),
+                                         color: UIColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let (px, width, _) = pixels(of: try XCTUnwrap(result), scale: 2)
+        XCTAssertTrue(isSolid(px, width, CGPoint(x: 150, y: 200)), "left side filled")
+        var leaked = 0
+        for y in 220..<380 { for x in 410..<580 where px[(y * width + x) * 4 + 3] > 0 { leaked += 1 } }
+        XCTAssertEqual(leaked, 0, "fill crossed the thin wall")
     }
 
     /// Field report, Sept 25, 2026: a fill couldn't be erased as one

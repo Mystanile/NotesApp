@@ -23,6 +23,15 @@ enum FillTool {
     /// size each band from its own height, and a one-row band came out at
     /// 0.75pt: an ellipse filled as a few lines across its middle.
     private static let bandRows = 2
+
+    /// How far the fill runs on under its outline, in pixels of the 1pt
+    /// alpha map - into ink only, so never through a line. The map is
+    /// coarse: a line's faint anti-aliased edge tips one more pixel over
+    /// `alphaThreshold`, the region stops a whole point short of the
+    /// line, and a thin line (a snapped shape at force 0.858, Sept 25,
+    /// 2026) doesn't cover that point - a white line down the sides. The
+    /// fill is under the ink, so what it covers of the line never shows.
+    private static let growPixels = 2
     private static let strokeSize: CGFloat = 4
 
     /// `point` and `canvasSize` must be in the same coordinate space as
@@ -71,7 +80,8 @@ enum FillTool {
                 AppLog.note("fill", "rejected: tapped on ink"); return nil
             }
 
-            let spans = scanlineFloodFill(alpha: alpha, width: width, height: height, startX: startX, startY: startY)
+            let flooded = scanlineFloodFill(alpha: alpha, width: width, height: height, startX: startX, startY: startY)
+            let spans = growUnderInk(flooded, alpha: alpha, width: width, height: height)
             let area = spans.reduce(0) { $0 + $1.maxX - $1.minX + 1 }
             AppLog.note("fill", "flood: \(spans.count) spans, \(area) px (\(area * 100 / max(alpha.count, 1))% of the page)")
             guard !spans.isEmpty else { return nil }
@@ -155,6 +165,47 @@ enum FillTool {
             }
         }
         return spans
+    }
+
+    /// The flooded region grown `growPixels` steps into neighbouring ink
+    /// pixels (4-connected), like an image editor's "Expand" but confined
+    /// to ink: an open pixel the flood didn't reach is outside the region,
+    /// so it is never taken, and a line thinner than the grow still holds.
+    private static func growUnderInk(_ spans: [(y: Int, minX: Int, maxX: Int)], alpha: [UInt8],
+                                     width: Int, height: Int) -> [(y: Int, minX: Int, maxX: Int)] {
+        guard let top = spans.map(\.y).min(), let bottom = spans.map(\.y).max(),
+              let left = spans.map(\.minX).min(), let right = spans.map(\.maxX).max() else { return spans }
+        var mask = [Bool](repeating: false, count: width * height)
+        for span in spans { for x in span.minX...span.maxX { mask[span.y * width + x] = true } }
+
+        let ys = max(top - growPixels, 0)...min(bottom + growPixels, height - 1)
+        let xs = max(left - growPixels, 0)...min(right + growPixels, width - 1)
+        for _ in 0..<growPixels {
+            var grown: [Int] = []
+            for y in ys {
+                for x in xs {
+                    let i = y * width + x
+                    guard !mask[i], alpha[i] > alphaThreshold else { continue }
+                    if (x > 0 && mask[i - 1]) || (x < width - 1 && mask[i + 1])
+                        || (y > 0 && mask[i - width]) || (y < height - 1 && mask[i + width]) {
+                        grown.append(i)
+                    }
+                }
+            }
+            for i in grown { mask[i] = true }
+        }
+
+        var result: [(y: Int, minX: Int, maxX: Int)] = []
+        for y in ys {
+            var x = xs.lowerBound
+            while x <= xs.upperBound {
+                guard mask[y * width + x] else { x += 1; continue }
+                let start = x
+                while x <= xs.upperBound, mask[y * width + x] { x += 1 }
+                result.append((y: y, minX: start, maxX: x - 1))
+            }
+        }
+        return result
     }
 
     // MARK: - Stroke synthesis
