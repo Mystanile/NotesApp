@@ -129,6 +129,15 @@ The haptic matters. It's what tells the user the hold registered, before they li
 
 ## Part 2 — Fill tool
 
+### Fixed, Sept 25, 2026: the strokes were too thin to draw
+
+Logging on the iPad settled it in one tap. The coordinates were right: the page point landed inside the shape, the flood covered 54,967 px (the ellipse's area), and 264 strokes were added to the canvas. They were almost all invisible. PencilKit draws nothing for a stroke under ~2pt (measured: sizes 0.5–1.5 render zero pixels), and the fill sized each band from its own height as `height / 2`, assuming a stroke renders about twice its size. A curved region has a different width on every row, so nearly every band was one row high and drawn at 0.75pt. Only the few middle rows of equal width merged into bands thick enough to see, which is exactly the "a few yellow lines across the middle" in the field report. The invisible strokes were also invisible to the next fill, so every tap stacked another few hundred of them on the page.
+
+The fix is in the stroke synthesis only. Bands are a fixed 3 rows drawn at 4pt as monoline, so they overlap and every one renders. The runs within a band are merged. The fill goes under the existing ink, so the edges a pixel or two past the region sit beneath the outline. Result: an ellipse is >99% covered, with 82 strokes instead of 264. `FillToolTests` now checks rendered pixels, not just stroke positions. That is why the two earlier fixes and the first version of this test missed it.
+
+The zoom hypothesis below was the right thing to rule out, and `viewport.pagePoint` (`32de133`) had already fixed it.
+
+
 ### Symptom
 
 Doesn't work. Has been fixed twice already (`24eac63` "pixel buffer was never actually written", `f1d8411` "the fill tool's tap capture") and still doesn't.

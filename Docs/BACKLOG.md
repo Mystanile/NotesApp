@@ -64,6 +64,11 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] The image long-press (`onLongPress`) still fires while a Pencil loop is being drawn, if the Pencil rests for 0.6 s mid-loop with artwork on the page. It did with `PKLassoTool` too. Gate it on `inkSelection.display.lasso.isEmpty`.
 - [M1] Every gesture step sets `canvas.drawing` with all strokes, so PencilKit re-lays the whole page per frame. Fine on a notes page; a page with thousands of strokes may stutter under a pinch. If it does, the fix is to render the *unselected* strokes once to a bitmap for the gesture's duration and only re-set the selected ones — never to remove them from the canvas (invariant 1).
 
+## Found while fixing the fill tool (Sept 25, 2026)
+
+- [M1] Pages where the old fill tool was tried hold hundreds of invisible sub-2pt strokes per tap (one test page had 1,356 before its first logged tap). They are harmless to see, but they bloat the record and sync. A cleanup would be deleting ink, so it needs its own decision: detect by the old fill's exact signature (`.pen`, four points on one horizontal line, size < 2) and move them to `trash/` as a normal edit, never drop them silently.
+- [M1] Filling an already filled region does nothing now, because the fill is ink. Recolouring a fill (tap with another colour) would need the fill's strokes to be recognisable as one fill, a group id in the neutral format. Not now.
+
 ## Parked from planning (Sept 12, 2026)
 
 - [M1] Scanned document capture with `VisionKit` + Live Text — Apple Notes parity, cheap

@@ -15,11 +15,15 @@ import PencilKit
 enum FillTool {
     private static let alphaThreshold: UInt8 = 20
 
-    /// Merged bands are capped at this many rows. A PencilKit stroke also
-    /// extends roughly `size` past each endpoint along its own direction,
-    /// so unbounded band heights would bleed far outside the filled region
-    /// horizontally; capping keeps that overshoot small and correctable.
-    private static let maxBandHeight = 8
+    /// Rows per synthesized stroke, and that stroke's point size. Measured
+    /// (Sept 25, 2026): PencilKit draws *nothing* for a stroke under ~2pt,
+    /// a 4pt stroke is ~4-6px tall, and it runs ~size/2 past each end. So
+    /// every band is a fixed 3 rows drawn at 4pt - thick enough to render,
+    /// overlapping its neighbours so no row is left bare. The fill used to
+    /// size each band from its own height, and a one-row band came out at
+    /// 0.75pt: an ellipse filled as a few lines across its middle.
+    private static let bandRows = 3
+    private static let strokeSize: CGFloat = 4
 
     /// `point` and `canvasSize` must be in the same coordinate space as
     /// `drawing` itself (i.e. the PKCanvasView's own local coordinates) -
@@ -75,7 +79,9 @@ enum FillTool {
             let fillStrokes = strokes(for: spans, color: color)
             AppLog.note("fill", "synthesized \(fillStrokes.count) strokes")
             guard !fillStrokes.isEmpty else { return nil }
-            return PKDrawing(strokes: existingStrokes + fillStrokes)
+            // Under the ink, like paint under a line: the band edges that
+            // run a pixel or two past the region sit beneath its outline.
+            return PKDrawing(strokes: fillStrokes + existingStrokes)
         }.value
     }
 
@@ -153,41 +159,38 @@ enum FillTool {
 
     // MARK: - Stroke synthesis
 
-    /// Merges vertically adjacent spans that cover the same x-range into a
-    /// single thicker stroke - a rectangular region collapses from hundreds
-    /// of hairlines into a handful of bands, while curved edges naturally
-    /// stay fine-grained where the span width changes row to row.
+    /// One stroke per `bandRows` rows per run: the spans of those rows,
+    /// merged where they overlap, drawn along the band's centre. The ends
+    /// are pulled in by the stroke's own overshoot so it stays in the run.
     private static func strokes(for spans: [(y: Int, minX: Int, maxX: Int)], color: UIColor) -> [PKStroke] {
-        let sorted = spans.sorted { $0.y < $1.y }
+        let byRow = Dictionary(grouping: spans, by: \.y)
+        guard let top = byRow.keys.min(), let bottom = byRow.keys.max() else { return [] }
         var result: [PKStroke] = []
 
-        var bandStart = 0
-        while bandStart < sorted.count {
-            let first = sorted[bandStart]
-            var bandEnd = bandStart
-            while bandEnd + 1 < sorted.count,
-                  sorted[bandEnd + 1].y == sorted[bandEnd].y + 1,
-                  sorted[bandEnd + 1].minX == first.minX,
-                  sorted[bandEnd + 1].maxX == first.maxX,
-                  (bandEnd - bandStart + 1) < maxBandHeight {
-                bandEnd += 1
+        for bandTop in stride(from: top, through: bottom, by: bandRows) {
+            let rows = bandTop..<min(bandTop + bandRows, bottom + 1)
+            let centerY = CGFloat(rows.lowerBound + rows.upperBound) / 2
+            for run in mergedRuns(rows.flatMap { byRow[$0] ?? [] }) {
+                let inset = min(strokeSize / 2, CGFloat(run.maxX - run.minX + 1) / 2)
+                let fromX = CGFloat(run.minX) + inset
+                let toX = max(CGFloat(run.maxX + 1) - inset, fromX)
+                result.append(horizontalStroke(fromX: fromX, toX: toX, y: centerY, size: strokeSize, color: color))
             }
-
-            let bandHeight = CGFloat(sorted[bandEnd].y - first.y + 1)
-            let centerY = CGFloat(first.y) + bandHeight / 2
-            // A stroke renders roughly 2x its point size thick.
-            let size = max(bandHeight / 2, 0.75)
-            // ...and extends about `size` past each endpoint along its own
-            // direction, so pull the ends in to stay inside the region.
-            let spanWidth = CGFloat(first.maxX - first.minX + 1)
-            let inset = min(size, spanWidth / 2)
-            let fromX = CGFloat(first.minX) + inset
-            let toX = CGFloat(first.maxX + 1) - inset
-
-            result.append(horizontalStroke(fromX: fromX, toX: max(toX, fromX), y: centerY, size: size, color: color))
-            bandStart = bandEnd + 1
         }
         return result
+    }
+
+    /// Overlapping or touching x-ranges folded into one.
+    private static func mergedRuns(_ spans: [(y: Int, minX: Int, maxX: Int)]) -> [(minX: Int, maxX: Int)] {
+        var runs: [(minX: Int, maxX: Int)] = []
+        for span in spans.sorted(by: { $0.minX < $1.minX }) {
+            if let last = runs.last, span.minX <= last.maxX + 1 {
+                runs[runs.count - 1].maxX = max(last.maxX, span.maxX)
+            } else {
+                runs.append((span.minX, span.maxX))
+            }
+        }
+        return runs
     }
 
     private static func horizontalStroke(fromX: CGFloat, toX: CGFloat, y: CGFloat, size: CGFloat, color: UIColor) -> PKStroke {
@@ -202,7 +205,7 @@ enum FillTool {
             ))
         }
         let path = PKStrokePath(controlPoints: points, creationDate: Date())
-        return PKStroke(ink: PKInk(.pen, color: color), path: path)
+        return PKStroke(ink: PKInk(.monoline, color: color), path: path)
     }
 }
 #endif
