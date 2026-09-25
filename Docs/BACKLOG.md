@@ -75,6 +75,13 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Exported ink is still a 2x bitmap on top of the vector PDF. PencilKit has no vector output; a stroke-to-path renderer from the neutral format would give one, and is the M7 web renderer's first half anyway.
 - [M1] `SearchIndex.pdfTextCache` is an unbounded static dictionary read on every keystroke, with no lock. Fine at today's sizes; bound it and move extraction off the main thread when PDFs get big.
 
+## Found while fixing the artwork handles (Sept 25, 2026)
+
+- [M1] **Resize preview, open:** the report (drag a corner, the picture doesn't follow until a page turn) doesn't reproduce in a hosted window, through `ImportedPageBackgroundView` or `PageViewportLayer`, during the drag or after Done (`ArtworkEditingTests`). `[adjust]` lines in `app.log` from one resize on the iPad say where it goes wrong; remove them after.
+- [M1] Undo lives on the page's canvas, so a page turn drops it - for ink as it always has, and now for artwork edits, Rotate Page and Delete Page too. A notebook-level undo stack would keep them; it is a bigger change to how the canvas's undo is owned.
+- [M1] Text blocks, stickers and link anchors keep their size when a page rotates while the ink scales with the page (by 1/aspect). Scaling them too is one more multiply each, if it looks wrong in use.
+- [M1] Two background ink saves of one page aren't ordered (`saveDetached` tasks), so an older one can land last. Pre-existing; Rotate Page saves blocking but can't stop an older detached save still in flight. A per-page serial queue in `DrawingStore` would close it.
+
 ## Parked from planning (Sept 12, 2026)
 
 - [M1] Scanned document capture with `VisionKit` + Live Text — Apple Notes parity, cheap

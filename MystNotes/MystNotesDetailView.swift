@@ -836,6 +836,11 @@ struct NotebookDetailView: View {
                         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                         if artwork(for: page).first?.isPaper == true {
                             Button {
+                                rotatePage(page)
+                            } label: {
+                                Label("Rotate Page", systemImage: "rotate.right")
+                            }
+                            Button {
                                 cropPage(page)
                             } label: {
                                 Label("Crop Page", systemImage: "crop")
@@ -1104,6 +1109,38 @@ struct NotebookDetailView: View {
         guard let pressed = ImportedArtwork.layerToAdjust(at: point, in: artwork(for: page),
                                                           pageSize: PageGeometry.contentSize(for: page)) else { return }
         beginAdjustingImage(on: page, layerID: pressed)
+    }
+
+    /// Page strip menu: a quarter turn of the page and everything on it
+    /// (`PageRotation`). Undo turns it back, and registers redo.
+    ///
+    /// The ink comes from the record, never the canvas: a canvas can be
+    /// blank only because its ink hasn't arrived, and a turned blank saved
+    /// now would out-date the real ink in the merge.
+    private func rotatePage(_ page: Page, clockwise: Bool = true) {
+        jumpToPage(withID: page.id)
+        saveCurrentPage(blocking: true)
+        let stored = drawingStore.load(pageID: page.id)
+        if stored == nil, page.drawingFileRef != nil {
+            exportMessage = "This page's ink is still downloading. Try again in a moment."
+            return
+        }
+        let turned = PageRotation.rotate(page, clockwise: clockwise, documents: allImportedDocuments,
+                                         links: allLinks, drawing: stored ?? PKDrawing())
+        if stored != nil {
+            saveBlocking(turned, to: page)
+        } else {
+            page.markModified()
+            saveMetadata("Failed to rotate page")
+        }
+        // The same canvas, not a fresh one: a fresh canvas brings a fresh
+        // undo stack, and the redo that undoing this registers would land
+        // on it as one more undo. The canvas refits to the page's new
+        // shape by itself (`PagedCanvasHostView.apply`).
+        canvasView.drawing = turned
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in rotatePage(page, clockwise: !clockwise) }
+        refreshUndoRedoState()
     }
 
     /// Page strip menu: the crop handles on the PDF that is the page, which
