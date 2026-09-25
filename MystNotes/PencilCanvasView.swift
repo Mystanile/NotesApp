@@ -132,13 +132,15 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     /// on the page popped straight out of the notebook. Two fingers pan and
     /// pinch at every scale, the way Procreate moves its canvas.
     ///
-    /// On a Mac the pointer is the only "finger" there is and there's no
-    /// edge swipe to lose to, so a drag always pans (and trackpad scrolling,
-    /// which carries no touches at all, is never held to a two-touch rule).
+    /// On a Mac the pointer is the pen (`PKCanvasViewDrawingPolicy.mystNotes`),
+    /// so a drag never pans: the page moves with the trackpad and scroll
+    /// wheel, which the host handles itself (`CanvasHostView.handleWheel`),
+    /// and with Space + drag. A one-touch pan here is what took the drag
+    /// away from the ink.
     private func updatePanTouchRequirement() {
         guard let canvas else { return }
         let zoomedIn = canvas.zoomScale > canvas.minimumZoomScale * 1.001
-        let required = (zoomedIn || CanvasInput.isMac) ? 1 : 2
+        let required = (zoomedIn && !CanvasInput.isMac) ? 1 : 2
         if canvas.panGestureRecognizer.minimumNumberOfTouches != required {
             canvas.panGestureRecognizer.minimumNumberOfTouches = required
         }
@@ -324,8 +326,8 @@ struct PencilCanvasView: UIViewRepresentable {
     /// recognizers and re-resolve traits, and none of that belongs on the
     /// drawing path.
     private func configure(_ canvas: PKCanvasView, context: Context) {
-        // finger never draws
-        if canvas.drawingPolicy != .pencilOnly { canvas.drawingPolicy = .pencilOnly }
+        // A finger never draws on an iPad; the mouse does on a Mac.
+        if canvas.drawingPolicy != .mystNotes { canvas.drawingPolicy = .mystNotes }
         if canvas.backgroundColor != .clear { canvas.backgroundColor = .clear }
         if canvas.isOpaque { canvas.isOpaque = false }
         if canvas.delegate !== context.coordinator { canvas.delegate = context.coordinator }

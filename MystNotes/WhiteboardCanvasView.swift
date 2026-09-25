@@ -91,7 +91,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     }
 
     private func configure(_ canvas: PKCanvasView, context: Context) {
-        canvas.drawingPolicy = .pencilOnly          // finger pans, never draws
+        canvas.drawingPolicy = .mystNotes           // finger pans on an iPad; the mouse draws on a Mac
         canvas.backgroundColor = .white
         canvas.isOpaque = true
         canvas.delegate = context.coordinator
@@ -114,8 +114,9 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         // mid-stroke - that was part of "the writing keeps moving".
         canvas.contentInsetAdjustmentBehavior = .never
         // One finger pans (a finger never draws on the board); two fingers
-        // pinch-zoom.
-        canvas.panGestureRecognizer.minimumNumberOfTouches = 1
+        // pinch-zoom. On a Mac the pointer draws, so it never pans - the
+        // trackpad and scroll wheel move the board instead.
+        canvas.panGestureRecognizer.minimumNumberOfTouches = CanvasInput.isMac ? 2 : 1
         canvas.panGestureRecognizer.maximumNumberOfTouches = 2
     }
 

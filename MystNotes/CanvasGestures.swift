@@ -162,6 +162,22 @@ extension PKCanvasView {
     }
 }
 
+extension PKCanvasViewDrawingPolicy {
+    /// Who may ink. On an iPad, only the Pencil: a finger pans, pinches and
+    /// taps the undo shortcuts, and never leaves a mark. A Mac has no Pencil
+    /// and no finger - the mouse and trackpad arrive as touches, so
+    /// `.pencilOnly` meant nothing could draw at all there (reported Sept
+    /// 12, 2026: "can't actually use the pen on Mac"). The page pans with
+    /// the scroll wheel and trackpad instead.
+    static var mystNotes: PKCanvasViewDrawingPolicy {
+        #if targetEnvironment(macCatalyst)
+        return .anyInput
+        #else
+        return .pencilOnly
+        #endif
+    }
+}
+
 // MARK: - Per-page canvas
 
 /// The `PKCanvasView` a single page draws into.
