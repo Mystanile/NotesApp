@@ -321,6 +321,9 @@ final class Sticker {
     var frameY: Double = 0
     var frameWidth: Double = 60
     var frameHeight: Double = 60
+    /// Clockwise, about the frame's centre. nil is unturned: every sticker
+    /// from before stickers could rotate (Sept 25, 2026).
+    var rotationDegrees: Double?
 
     var page: Page?
 

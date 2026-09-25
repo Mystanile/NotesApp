@@ -307,6 +307,11 @@ private struct StickerElementView: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var dragOrigin: (x: Double, y: Double)?
+    /// The sticker as it was when a pinch/rotate began; every step is
+    /// applied to this, so steps don't compound.
+    @State private var gestureBase: (frame: CGRect, rotation: Double)?
+
+    private static let sideRange: ClosedRange<Double> = 20...600
 
     var body: some View {
         Image(systemName: sticker.assetRef.isEmpty ? "star.fill" : sticker.assetRef)
@@ -314,9 +319,18 @@ private struct StickerElementView: View {
             .scaledToFit()
             .foregroundStyle(.yellow)
             .frame(width: sticker.frameWidth, height: sticker.frameHeight)
+            .rotationEffect(.degrees(sticker.rotationDegrees ?? 0))
             .offset(x: sticker.frameX, y: sticker.frameY)
             .gesture(dragGesture)
+            .simultaneousGesture(pinchAndRotate)
             .contextMenu {
+                // A Mac has no pinch: the same, a step at a time.
+                Button { resize(by: 1.25); onSave() } label: { Label("Larger", systemImage: "plus.magnifyingglass") }
+                Button { resize(by: 0.8); onSave() } label: { Label("Smaller", systemImage: "minus.magnifyingglass") }
+                Button {
+                    sticker.rotationDegrees = ((sticker.rotationDegrees ?? 0) + 90).truncatingRemainder(dividingBy: 360)
+                    onSave()
+                } label: { Label("Rotate", systemImage: "rotate.right") }
                 Button(role: .destructive) {
                     modelContext.delete(sticker)
                     onSave()
@@ -340,6 +354,39 @@ private struct StickerElementView: View {
                 dragOrigin = nil
                 onSave()
             }
+    }
+
+    /// Two fingers on the sticker: pinch resizes it and twisting turns it,
+    /// both about its centre.
+    private var pinchAndRotate: some Gesture {
+        MagnifyGesture().simultaneously(with: RotateGesture())
+            .onChanged { value in
+                let base = gestureBase ?? (frame: currentFrame, rotation: sticker.rotationDegrees ?? 0)
+                if gestureBase == nil { gestureBase = base }
+                resize(from: base.frame, by: Double(value.first?.magnification ?? 1))
+                sticker.rotationDegrees = base.rotation + (value.second?.rotation.degrees ?? 0)
+            }
+            .onEnded { _ in
+                gestureBase = nil
+                onSave()
+            }
+    }
+
+    private var currentFrame: CGRect {
+        CGRect(x: sticker.frameX, y: sticker.frameY, width: sticker.frameWidth, height: sticker.frameHeight)
+    }
+
+    private func resize(by factor: Double) { resize(from: currentFrame, by: factor) }
+
+    /// Scales `frame` about its centre, keeping its shape, within
+    /// `sideRange`.
+    private func resize(from frame: CGRect, by factor: Double) {
+        let width = min(max(frame.width * factor, Self.sideRange.lowerBound), Self.sideRange.upperBound)
+        let height = frame.height * width / max(frame.width, 1)
+        sticker.frameX = frame.midX - width / 2
+        sticker.frameY = frame.midY - height / 2
+        sticker.frameWidth = width
+        sticker.frameHeight = height
     }
 }
 

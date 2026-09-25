@@ -21,6 +21,8 @@ nonisolated struct PageElements: Hashable, Sendable {
     struct Symbol: Hashable, Sendable {
         var name: String
         var frame: CGRect
+        /// Clockwise degrees about the frame's centre.
+        var rotation: Double = 0
     }
     struct Anchor: Hashable, Sendable {
         var frame: CGRect
@@ -54,10 +56,17 @@ nonisolated struct PageElements: Hashable, Sendable {
             ]).draw(with: rect, options: [.usesLineFragmentOrigin], context: nil)
         }
         for sticker in stickers {
-            Self.symbol(sticker.name, color: .systemYellow)?.draw(in: Self.fitted(sticker.frame))
+            guard let image = Self.symbol(sticker.name, color: .systemYellow),
+                  let context = UIGraphicsGetCurrentContext() else { continue }
+            let frame = Self.fitted(image.size, in: sticker.frame)
+            context.saveGState()
+            context.translateBy(x: frame.midX, y: frame.midY)
+            context.rotate(by: sticker.rotation * .pi / 180)
+            image.draw(in: CGRect(x: -frame.width / 2, y: -frame.height / 2, width: frame.width, height: frame.height))
+            context.restoreGState()
         }
         for link in links {
-            let circle = Self.fitted(link.frame)
+            let circle = Self.fitted(CGSize(width: 1, height: 1), in: link.frame)
             UIColor.white.setFill()
             UIBezierPath(ovalIn: circle).fill()
             Self.symbol("link.circle.fill", color: .systemBlue)?.draw(in: circle)
@@ -99,10 +108,14 @@ nonisolated struct PageElements: Hashable, Sendable {
         return configured?.withTintColor(color, renderingMode: .alwaysOriginal)
     }
 
-    /// A symbol aspect-fitted in its frame, as `.scaledToFit()` places it.
-    private static func fitted(_ frame: CGRect) -> CGRect {
-        let side = min(frame.width, frame.height)
-        return CGRect(x: frame.midX - side / 2, y: frame.midY - side / 2, width: side, height: side)
+    /// A picture of `size`'s shape aspect-fitted in `frame`, centred - as
+    /// `.scaledToFit()` places a symbol.
+    private static func fitted(_ size: CGSize, in frame: CGRect) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return frame }
+        let scale = min(frame.width / size.width, frame.height / size.height)
+        let fitted = CGSize(width: size.width * scale, height: size.height * scale)
+        return CGRect(x: frame.midX - fitted.width / 2, y: frame.midY - fitted.height / 2,
+                      width: fitted.width, height: fitted.height)
     }
 }
 
@@ -119,7 +132,8 @@ extension PageElements {
         }
         stickers = (page.stickers ?? []).map {
             Symbol(name: $0.assetRef.isEmpty ? "star.fill" : $0.assetRef,
-                   frame: CGRect(x: $0.frameX, y: $0.frameY, width: $0.frameWidth, height: $0.frameHeight))
+                   frame: CGRect(x: $0.frameX, y: $0.frameY, width: $0.frameWidth, height: $0.frameHeight),
+                   rotation: $0.rotationDegrees ?? 0)
         }
         let all = links ?? (try? page.modelContext?.fetch(FetchDescriptor<Link>())) ?? []
         self.links = all.filter { $0.sourcePageID == page.id }.map {

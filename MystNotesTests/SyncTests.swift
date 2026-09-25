@@ -1059,6 +1059,37 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(TextBlockFontDesign.from("comic-sans"), .default, "unknown designs render as the system font")
     }
 
+    /// Stickers resize and rotate now (M1, Sept 25, 2026): the new size and
+    /// turn reach the other device, and a sticker from before rotation
+    /// existed decodes as unturned.
+    func testStickerSizeAndRotation_reachTheOtherDevice_andOldSnapshotsStillDecode() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Chem", pageCount: 1).id
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebookID)?.first)
+
+        let sticker = Sticker(assetRef: "flame.fill", page: page)
+        (sticker.frameX, sticker.frameY, sticker.frameWidth, sticker.frameHeight) = (50, 60, 120, 120)
+        sticker.rotationDegrees = 45
+        ipad.context.insert(sticker)
+        page.stickers?.append(sticker)
+        page.markModified(at: harness.clock.advance())
+        try ipad.context.save()
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.pages(ofNotebook: notebookID)?.first?.stickers?.first, "no sticker on the Mac")
+        XCTAssertEqual(arrived.id, sticker.id)
+        XCTAssertEqual(arrived.frameWidth, 120)
+        XCTAssertEqual(arrived.rotationDegrees, 45)
+
+        let legacy = """
+        {"id": "\(UUID().uuidString)", "assetRef": "star.fill", "frameX": 1, "frameY": 2, "frameWidth": 60, "frameHeight": 60}
+        """
+        XCTAssertNil(try JSONDecoder().decode(StickerDTO.self, from: Data(legacy.utf8)).rotationDegrees)
+    }
+
     // MARK: PROJECT_PLAN §1.2 - the blocker
 
     /// Offline, the iPad writes on page 3 and the Mac writes on page 7 of the

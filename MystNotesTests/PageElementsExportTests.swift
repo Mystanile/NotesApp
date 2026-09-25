@@ -100,4 +100,32 @@ final class PageElementsExportTests: XCTestCase {
         let textRegion = CGRect(x: 20, y: 20, width: 300, height: 60)   // in thumbnail points
         XCTAssertGreaterThan(try inkedPixels(in: textRegion, of: image), 500, "no text in the thumbnail")
     }
+
+    /// A turned sticker exports turned: a wide symbol at 90 degrees is tall.
+    func testRotatedSticker_exportsRotated() throws {
+        func inkedBounds(rotation: Double) throws -> CGRect {
+            let elements = PageElements(stickers: [.init(name: "rectangle.fill", frame: CGRect(x: 100, y: 100, width: 200, height: 200),
+                                                         rotation: rotation)])
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 400), format: format).image { context in
+                UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 400, height: 400))
+                elements.draw(in: CGSize(width: 400, height: 400))
+            }
+            let cg = try XCTUnwrap(image.cgImage)
+            var px = [UInt8](repeating: 0, count: 400 * 400 * 4)
+            px.withUnsafeMutableBytes { raw in
+                CGContext(data: raw.baseAddress, width: 400, height: 400, bitsPerComponent: 8, bytesPerRow: 1600,
+                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                    .draw(cg, in: CGRect(x: 0, y: 0, width: 400, height: 400))
+            }
+            var box = CGRect.null
+            for y in 0..<400 { for x in 0..<400 where px[(y * 400 + x) * 4 + 2] < 128 {
+                box = box.union(CGRect(x: x, y: y, width: 1, height: 1)) } }
+            return box
+        }
+        let flat = try inkedBounds(rotation: 0), turned = try inkedBounds(rotation: 90)
+        XCTAssertGreaterThan(flat.width, flat.height * 1.2, "rectangle.fill should be wide: \(flat)")
+        XCTAssertGreaterThan(turned.height, turned.width * 1.2, "turned 90 it should be tall: \(turned)")
+    }
 }

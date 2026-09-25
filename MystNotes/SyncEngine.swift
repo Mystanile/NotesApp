@@ -1133,7 +1133,8 @@ nonisolated struct SyncRunner {
                     stickers: (page.stickers ?? []).map {
                         StickerDTO(id: $0.id, assetRef: $0.assetRef,
                                    frameX: $0.frameX, frameY: $0.frameY,
-                                   frameWidth: $0.frameWidth, frameHeight: $0.frameHeight)
+                                   frameWidth: $0.frameWidth, frameHeight: $0.frameHeight,
+                                   rotationDegrees: $0.rotationDegrees)
                     },
                     importedDocuments: (docsByPage[page.id] ?? []).map {
                         ImportedDocumentDTO(id: $0.id, sourceType: $0.sourceType, fileRef: $0.fileRef,
@@ -1357,6 +1358,7 @@ nonisolated struct SyncRunner {
             sticker.frameY = stickerDTO.frameY
             sticker.frameWidth = stickerDTO.frameWidth
             sticker.frameHeight = stickerDTO.frameHeight
+            sticker.rotationDegrees = stickerDTO.rotationDegrees
             context.insert(sticker)
             stickers.append(sticker)
         }

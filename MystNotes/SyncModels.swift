@@ -327,6 +327,9 @@ nonisolated struct StickerDTO: Codable {
     var frameY: Double
     var frameWidth: Double
     var frameHeight: Double
+    /// Absent in snapshots from before stickers could rotate; nil is
+    /// unturned. See `Sticker.rotationDegrees`.
+    var rotationDegrees: Double?
 }
 
 nonisolated struct ImportedDocumentDTO: Codable {
