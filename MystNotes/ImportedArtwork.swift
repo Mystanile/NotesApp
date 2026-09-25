@@ -220,6 +220,15 @@ nonisolated enum ImportedArtwork {
         }
     }
 
+    /// The picture a long-press at `point` opens the handles on: the
+    /// topmost one under the finger, or none. The PDF that is the page is
+    /// paper and never picked (field report, Sept 25, 2026: a press
+    /// anywhere on a PDF page selected all of it); its crop and rotation
+    /// are in the page strip's menu instead.
+    static func layerToAdjust(at point: CGPoint, in layers: [ArtworkLayer], pageSize: CGSize) -> UUID? {
+        layers.reversed().first { !$0.isPaper && $0.rect(in: pageSize).contains(point) }?.id
+    }
+
     /// Draws a PDF layer as vectors into `rect` (page points): the same
     /// picture `displayImage` bakes into a bitmap - white paper, the
     /// layer's rotation, then its crop, stretched to the rect - so it
@@ -346,6 +355,14 @@ nonisolated struct ArtworkLayer: Hashable, Sendable, Identifiable {
     var rotationDegrees: Double?
 
     var isPDF: Bool { fileRef.lowercased().hasSuffix(".pdf") }
+
+    /// A PDF page that is the page: placed edge to edge (how a PDF imports
+    /// as pages), or never placed (a page from before placement existed).
+    var isPaper: Bool {
+        guard isPDF else { return false }
+        guard let x = frameX, let y = frameY, let width = frameWidth, let height = frameHeight else { return true }
+        return abs(x) < 0.001 && abs(y) < 0.001 && abs(width - 1) < 0.001 && abs(height - 1) < 0.001
+    }
 
     /// Loads this layer at no more than `targetSize`, with its crop and
     /// rotation applied.

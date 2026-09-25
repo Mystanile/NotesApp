@@ -815,6 +815,15 @@ struct NotebookDetailView: View {
                         } label: {
                             Label("Copy to Notebook…", systemImage: "doc.on.doc")
                         }
+                        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+                        if artwork(for: page).first?.isPaper == true {
+                            Button {
+                                cropPage(page)
+                            } label: {
+                                Label("Crop Page", systemImage: "crop")
+                            }
+                        }
+                        #endif
                         Button(role: .destructive) {
                             pageToDelete = page
                         } label: {
@@ -1083,17 +1092,23 @@ struct NotebookDetailView: View {
     }
     #endif
 
-    /// Opens the move/resize handles on the artwork under a long-press.
-    /// With several pictures on the page it is the topmost one under the
-    /// finger; a press on bare paper takes the topmost picture there is,
-    /// which is what a page with one picture always did.
+    /// Opens the move/resize handles on the picture under a long-press:
+    /// the topmost one under the finger, or none - never the PDF that is
+    /// the page (`ImportedArtwork.layerToAdjust`).
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private func beginAdjustingImage(on page: Page, at point: CGPoint) {
-        let layers = artwork(for: page)
-        let pageSize = PageGeometry.contentSize(for: page)
-        let pressed = layers.reversed().first { $0.rect(in: pageSize).contains(point) } ?? layers.last
-        guard let pressed else { return }
-        beginAdjustingImage(on: page, layerID: pressed.id)
+        guard let pressed = ImportedArtwork.layerToAdjust(at: point, in: artwork(for: page),
+                                                          pageSize: PageGeometry.contentSize(for: page)) else { return }
+        beginAdjustingImage(on: page, layerID: pressed)
+    }
+
+    /// Page strip menu: the crop handles on the PDF that is the page, which
+    /// a long-press no longer opens.
+    private func cropPage(_ page: Page) {
+        guard let paper = artwork(for: page).first, paper.isPaper else { return }
+        jumpToPage(withID: page.id)
+        beginAdjustingImage(on: page, layerID: paper.id)
+        toggleCropMode()
     }
 
     /// Opens the handles on one layer. Used right after importing onto an
