@@ -148,4 +148,86 @@ final class ArtworkEditingTests: XCTestCase {
         let placedPDF = layer(pdf: true, frame: CGRect(x: 0.5, y: 0.5, width: 0.4, height: 0.4))
         XCTAssertEqual(ImportedArtwork.layerToAdjust(at: CGPoint(x: 400, y: 500), in: [placedPDF], pageSize: pageSize), placedPDF.id)
     }
+
+    // MARK: - Undo
+
+    @MainActor
+    private func contextWithPage() throws -> (ModelContext, Page) {
+        let container = try ModelContainer(for: Self.schema,
+                                           configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let page = Page(index: 0)
+        context.insert(page)
+        return (context, page)
+    }
+
+    @MainActor
+    private func documents(in context: ModelContext) throws -> [ImportedDocument] {
+        try context.fetch(FetchDescriptor<ImportedDocument>())
+    }
+
+    /// Remove, undo, redo: the picture comes back as the same row with
+    /// every field, and its file is only reported unused while it's gone.
+    @MainActor
+    func testRemoveThenUndo_bringsBackTheSameDocument() throws {
+        let (context, page) = try contextWithPage()
+        let doc = ImportedDocument(sourceType: "image", fileRef: "photo.png", pdfPageIndex: 0, page: page)
+        doc.frameX = 0.1; doc.frameY = 0.2; doc.frameWidth = 0.3; doc.frameHeight = 0.4
+        doc.cropX = 0.05; doc.cropY = 0.06; doc.cropWidth = 0.7; doc.cropHeight = 0.8
+        doc.rotationDegrees = 90; doc.stackOrder = 3
+        context.insert(doc)
+        page.backgroundRef = "photo.png"
+        try context.save()
+        let before = ArtworkSnapshot(doc)
+
+        let orphan = ArtworkEdits.apply(nil, id: before.id, page: page, in: context)
+        try context.save()
+        XCTAssertEqual(orphan, "photo.png", "the removed picture's file should be reported unused")
+        XCTAssertTrue(try documents(in: context).isEmpty)
+        XCTAssertNil(page.backgroundRef)
+
+        let back = ArtworkEdits.apply(before, id: before.id, page: page, in: context)
+        try context.save()
+        XCTAssertNil(back)
+        let restored = try XCTUnwrap(try documents(in: context).first)
+        XCTAssertEqual(ArtworkSnapshot(restored), before)
+        XCTAssertEqual(restored.page?.id, page.id)
+        XCTAssertEqual(page.backgroundRef, "photo.png")
+
+        XCTAssertEqual(ArtworkEdits.apply(nil, id: before.id, page: page, in: context), "photo.png", "redo")
+    }
+
+    /// A multi-page PDF import shares one file across pages: removing it
+    /// from one page leaves the file in use.
+    @MainActor
+    func testRemovingASharedFile_reportsNoOrphan() throws {
+        let (context, page) = try contextWithPage()
+        let other = Page(index: 1)
+        context.insert(other)
+        let here = ImportedDocument(sourceType: "pdf", fileRef: "book.pdf", pdfPageIndex: 0, page: page)
+        let there = ImportedDocument(sourceType: "pdf", fileRef: "book.pdf", pdfPageIndex: 1, page: other)
+        context.insert(here); context.insert(there)
+        try context.save()
+        XCTAssertNil(ArtworkEdits.apply(nil, id: here.id, page: page, in: context))
+    }
+
+    /// Move, resize, rotate, crop: undo puts every field back.
+    @MainActor
+    func testUndoingAnAdjustment_restoresEveryField() throws {
+        let (context, page) = try contextWithPage()
+        let doc = ImportedDocument(sourceType: "image", fileRef: "photo.png", pdfPageIndex: 0, page: page)
+        doc.frameX = 0; doc.frameY = 0; doc.frameWidth = 1; doc.frameHeight = 1
+        context.insert(doc)
+        try context.save()
+        let before = ArtworkSnapshot(doc)
+
+        doc.frameX = 0.25; doc.frameWidth = 0.5; doc.rotationDegrees = 90; doc.cropX = 0.1; doc.cropY = 0.1
+        doc.cropWidth = 0.5; doc.cropHeight = 0.5
+        let after = ArtworkSnapshot(doc)
+        XCTAssertNotEqual(before, after)
+
+        XCTAssertNil(ArtworkEdits.apply(before, id: doc.id, page: page, in: context))
+        XCTAssertEqual(ArtworkSnapshot(doc), before)
+        XCTAssertEqual(try documents(in: context).count, 1, "undo must edit the row in place, not add one")
+    }
 }

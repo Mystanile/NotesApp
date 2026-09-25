@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import SwiftData
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 import UIKit
 import PDFKit
@@ -399,6 +400,67 @@ extension ImportedArtwork {
             cropWidth: layer.cropWidth, cropHeight: layer.cropHeight,
             rotationDegrees: layer.rotationDegrees
         )
+    }
+}
+
+/// Every stored field of one `ImportedDocument`, to put it back exactly -
+/// undo and redo for the artwork handles.
+struct ArtworkSnapshot: Equatable {
+    var id: UUID
+    var sourceType: String
+    var fileRef: String
+    var pdfPageIndex: Int
+    var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
+    var rotationDegrees: Double?
+    var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
+    var stackOrder: Int?
+
+    init(_ doc: ImportedDocument) {
+        id = doc.id; sourceType = doc.sourceType; fileRef = doc.fileRef; pdfPageIndex = doc.pdfPageIndex
+        frameX = doc.frameX; frameY = doc.frameY; frameWidth = doc.frameWidth; frameHeight = doc.frameHeight
+        rotationDegrees = doc.rotationDegrees
+        cropX = doc.cropX; cropY = doc.cropY; cropWidth = doc.cropWidth; cropHeight = doc.cropHeight
+        stackOrder = doc.stackOrder
+    }
+
+    func apply(to doc: ImportedDocument) {
+        doc.sourceType = sourceType; doc.fileRef = fileRef; doc.pdfPageIndex = pdfPageIndex
+        doc.frameX = frameX; doc.frameY = frameY; doc.frameWidth = frameWidth; doc.frameHeight = frameHeight
+        doc.rotationDegrees = rotationDegrees
+        doc.cropX = cropX; doc.cropY = cropY; doc.cropWidth = cropWidth; doc.cropHeight = cropHeight
+        doc.stackOrder = stackOrder
+    }
+}
+
+enum ArtworkEdits {
+    /// Puts document `id` on `page` into `state`: gone (nil), or exactly
+    /// the snapshot - edited in place, or re-inserted under the same id.
+    /// Returns the file a removal left no document using, for the caller
+    /// to trash once the change can no longer be undone - never here, or
+    /// undo would bring back a picture with no file.
+    @discardableResult
+    static func apply(_ state: ArtworkSnapshot?, id: UUID, page: Page, in context: ModelContext) -> String? {
+        let all = (try? context.fetch(FetchDescriptor<ImportedDocument>())) ?? []
+        let existing = all.first { $0.id == id }
+        guard let state else {
+            guard let existing else { return nil }
+            let ref = existing.fileRef
+            context.delete(existing)
+            let remaining = all.filter { $0.id != id }
+            page.backgroundRef = remaining.first { $0.page?.id == page.id }?.fileRef
+            return ref.isEmpty || remaining.contains { $0.fileRef == ref } ? nil : ref
+        }
+        if let existing {
+            state.apply(to: existing)
+        } else {
+            let doc = ImportedDocument(sourceType: state.sourceType, fileRef: state.fileRef,
+                                       pdfPageIndex: state.pdfPageIndex, page: page)
+            doc.id = state.id
+            state.apply(to: doc)
+            context.insert(doc)
+        }
+        if page.backgroundRef == nil { page.backgroundRef = state.fileRef }
+        return nil
     }
 }
 

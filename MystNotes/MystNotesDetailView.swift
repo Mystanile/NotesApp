@@ -122,6 +122,14 @@ struct NotebookDetailView: View {
     /// Non-nil while cropping that artwork; the crop rect in page
     /// coordinates, always kept inside `adjustingImageFrame`.
     @State private var croppingRect: CGRect?
+    /// The artwork as it was when the handles opened: one undo step per
+    /// session, however many moves, rotations and crops it held.
+    @State private var adjustingSnapshot: ArtworkSnapshot?
+    /// Files a removed picture left unused. Trashed only once the removal
+    /// can't be undone - when the page's undo stack goes, on a page turn or
+    /// leaving the notebook - so undo never brings back a picture with no
+    /// file. Killed before then, the file just stays (invariant 1).
+    @State private var pendingTrash: Set<String> = []
     @State private var showingStickerPicker = false
     @State private var linkNeedingDestination: Link?
 
@@ -294,6 +302,7 @@ struct NotebookDetailView: View {
             openFirstPage()
             applyToolState()
         }
+        .onDisappear { commitPendingTrash() }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: toolState) { _, _ in applyToolState() }
         // Switching between a paged page and a whiteboard rebuilds the canvas
@@ -1123,6 +1132,7 @@ struct NotebookDetailView: View {
         // whole page.
         adjustingImageFrame = layer.rect(in: PageGeometry.contentSize(for: page))
         adjustingLayerID = layerID
+        adjustingSnapshot = documents(on: page).first { $0.id == layerID }.map(ArtworkSnapshot.init)
         updateCanvasInteractionEnabled()
     }
 
@@ -1216,34 +1226,45 @@ struct NotebookDetailView: View {
     }
 
     /// Removes the artwork the handles are on - only that one; the rest
-    /// of the stack stays. Its file goes to `trash/` if nothing else uses
-    /// it (a multi-page PDF import shares one file across its pages).
+    /// of the stack stays. Undoable: its file waits in `pendingTrash`.
     private func removeImage(from page: Page) {
-        defer {
-            adjustingImageFrame = nil
-            adjustingLayerID = nil
-            croppingRect = nil
-            updateCanvasInteractionEnabled()
-        }
+        defer { endAdjusting() }
         guard let doc = adjustingDocument(on: page) else { return }
-        let ref = doc.fileRef
-        modelContext.delete(doc)
-        let remaining = documents(on: page).filter { $0.id != doc.id }
-        page.backgroundRef = remaining.first?.fileRef
-        if !ref.isEmpty, !allImportedDocuments.contains(where: { $0.id != doc.id && $0.fileRef == ref }) {
+        changeArtwork(doc.id, on: page, from: adjustingSnapshot ?? ArtworkSnapshot(doc), to: nil)
+    }
+
+    /// Moves one piece of artwork from `old` to `new` (nil: not there) and
+    /// registers the way back on the page's undo stack; undoing registers
+    /// the way forward again, which is redo.
+    private func changeArtwork(_ id: UUID, on page: Page, from old: ArtworkSnapshot?, to new: ArtworkSnapshot?) {
+        if let orphan = ArtworkEdits.apply(new, id: id, page: page, in: modelContext) { pendingTrash.insert(orphan) }
+        if let ref = new?.fileRef { pendingTrash.remove(ref) }
+        page.markModified()
+        saveMetadata("Failed to change artwork")
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in
+            changeArtwork(id, on: page, from: new, to: old)
+        }
+        refreshUndoRedoState()
+    }
+
+    private func commitPendingTrash() {
+        for ref in pendingTrash where !allImportedDocuments.contains(where: { $0.fileRef == ref }) {
             drawingStore.trashPayload(named: ref)
         }
-        page.markModified()
-        saveMetadata("Failed to remove image")
+        pendingTrash = []
+    }
+
+    private func endAdjusting() {
+        adjustingImageFrame = nil
+        adjustingLayerID = nil
+        adjustingSnapshot = nil
+        croppingRect = nil
+        updateCanvasInteractionEnabled()
     }
 
     private func finishAdjustingImage(on page: Page) {
-        defer {
-            adjustingImageFrame = nil
-            adjustingLayerID = nil
-            croppingRect = nil
-            updateCanvasInteractionEnabled()
-        }
+        defer { endAdjusting() }
         guard let frame = adjustingImageFrame,
               let doc = adjustingDocument(on: page),
               // Stored as fractions of the page so the placement survives a
@@ -1256,8 +1277,15 @@ struct NotebookDetailView: View {
         doc.frameWidth = fractions.width
         doc.frameHeight = fractions.height
         AppLog.note("adjust", "done \(doc.id.uuidString.prefix(8)) frame \(frame) fractions \(fractions)")
-        page.markModified()
-        saveMetadata("Failed to save image placement")
+        // One undo step for the whole session: the placement, and any
+        // rotation or crop made while the handles were up. A page from
+        // before `ImportedDocument` had no row to snapshot; not undoable.
+        if let before = adjustingSnapshot, before != ArtworkSnapshot(doc) {
+            changeArtwork(doc.id, on: page, from: before, to: ArtworkSnapshot(doc))
+        } else {
+            page.markModified()
+            saveMetadata("Failed to save image placement")
+        }
     }
     #else
     // Not available on native macOS (no PencilKit canvas to place against).
@@ -1723,6 +1751,8 @@ struct NotebookDetailView: View {
     /// nothing to inherit: its drawing is exactly what's passed in, its
     /// undo history is empty, and its scroll view has never been anywhere.
     private func installFreshCanvas(with drawing: PKDrawing = PKDrawing(), forPageID pageID: UUID?) {
+        // The outgoing canvas takes its undo stack with it.
+        commitPendingTrash()
         canvasPageID = pageID
         canvasIsDirty = false
         ownSaveDate = nil
