@@ -131,6 +131,8 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - `NSFilePresenter` on a user-picked folder inside iCloud Drive **does** fire for other processes' writes — coordinated or not, any depth — about a second after the write, several times per write. Verified Sept 12, 2026 with a two-process script on the Mac. It is *not* verified for a folder outside iCloud Drive with an uncoordinated writer (Dropbox etc.); the foreground pull and Sync Now still cover that.
 - `xcodebuild test` against a simulator that isn't booted fails with `Simulator device failed to launch … Busy ("Application failed preflight checks")` — SpringBoard is still coming up. Boot first: `xcrun simctl boot <udid> && xcrun simctl bootstatus <udid> -b`, then run. A leftover test host from a previous run does the same; `xcrun simctl terminate <udid> com.mozynas.Mystnotes` clears it.
 - **An incremental `xcodebuild test` has run stale app code after an app-source edit** — twice on Sept 25, 2026, once each way (a new test passed that should have failed; a fix showed no effect). When a result is surprising, or when proving a test fails without a fix, run `xcodebuild clean test`.
+- **A `CATiledLayer` under a SwiftUI `.scaleEffect` draws its tiles at zoom × screen scale**, including when the zoom changes while it's on screen (measured Sept 25, 2026). That is what keeps imported PDFs sharp without moving them into the canvas's scroll view. Its tiles draw on background threads, so the layer subclass is `nonisolated` with a lock (`PDFTileLayer`).
+- **A test that needs something on screen needs a window with a scene:** `UIWindow(windowScene:)` from `UIApplication.shared.connectedScenes`. `UIWindow(frame:)` is never shown, and nothing in it draws.
 - Xcode full-screen hides the toolbar and Play/Stop buttons.
 - Watch for `CGFloat`/`Double` mismatches in drag gesture handling.
 - Tool color must be read from the active `PKInkingTool`, never hardcoded.
@@ -178,7 +180,7 @@ All 22 tasks done, exit criteria met, and the user confirmed it on the iPad on S
 Already done early: shape tool rebuild (Sept 15/18), images on a page with stacking and Mac import (Sept 18/19), text block typography (Sept 15), our own lasso with move/resize/rotate/cut/copy/paste (Sept 19), copy pages to another notebook (Sept 19).
 
 1. ~~**Fill tool**~~ — done Sept 25, 2026, confirmed on the iPad (`TOOL_FIXES.md` Part 2): one erasable stroke per fill, the pen's colour, pan/zoom while selected, no gap at the outline.
-2. **Real PDF annotation** — live PDFKit layer instead of rasterize-to-JPEG. The highest-value item.
+2. ~~**Real PDF annotation**~~ — done Sept 25, 2026 on `m1-pdf-vectors`: PDF pages sharp at every zoom (vector tiles over the bitmap), export keeps the PDF's real text. Owed: a look on the iPad zoomed to 5x. Text selection is in the backlog.
 3. Lasso: convert to text, recolor, cross-page move, copy as image.
 4. Per-page templates, custom page sizes, imported templates.
 5. Favorites, bookmarks, page outline.

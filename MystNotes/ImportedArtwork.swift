@@ -44,12 +44,17 @@ nonisolated enum ImportedArtwork {
     /// `.scaledToFit()` in a full-page frame used to produce, so artwork
     /// imported before placement was adjustable renders unchanged.
     static func fittedRect(for image: UIImage?, in container: CGSize) -> CGRect {
-        guard let image, image.size.width > 0, image.size.height > 0,
+        fittedRect(for: image?.size ?? .zero, in: container)
+    }
+
+    /// Aspect-fit a picture of `natural`'s shape centered inside `container`.
+    static func fittedRect(for natural: CGSize, in container: CGSize) -> CGRect {
+        guard natural.width > 0, natural.height > 0,
               container.width > 0, container.height > 0 else {
             return CGRect(origin: .zero, size: container)
         }
-        let scale = min(container.width / image.size.width, container.height / image.size.height)
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let scale = min(container.width / natural.width, container.height / natural.height)
+        let size = CGSize(width: natural.width * scale, height: natural.height * scale)
         return CGRect(
             x: (container.width - size.width) / 2,
             y: (container.height - size.height) / 2,
@@ -215,6 +220,62 @@ nonisolated enum ImportedArtwork {
         }
     }
 
+    /// Draws a PDF layer as vectors into `rect` (page points): the same
+    /// picture `displayImage` bakes into a bitmap - white paper, the
+    /// layer's rotation, then its crop, stretched to the rect - so it
+    /// stays sharp at any zoom and an exported PDF keeps the page's real
+    /// text. Every step mirrors `render`, `rotate` and `transformed`.
+    static func drawPDF(_ page: PDFPage, layer: ArtworkLayer, in rect: CGRect, context cg: CGContext) {
+        guard let natural = naturalSize(of: page), rect.width > 0, rect.height > 0 else { return }
+        let degrees = ((layer.rotationDegrees ?? 0).truncatingRemainder(dividingBy: 360) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        let rotated = displayedSize(natural: natural, rotationDegrees: degrees)
+        let crop = cropRect(of: layer, in: rotated)
+
+        cg.saveGState()
+        defer { cg.restoreGState() }
+        cg.clip(to: rect)
+        // Rotated-and-cropped picture space onto the rect...
+        cg.translateBy(x: rect.minX, y: rect.minY)
+        cg.scaleBy(x: rect.width / crop.width, y: rect.height / crop.height)
+        cg.translateBy(x: -crop.minX, y: -crop.minY)
+        // ...the rotation about the picture's centre, as `rotate` does...
+        cg.translateBy(x: rotated.width / 2, y: rotated.height / 2)
+        cg.rotate(by: degrees * .pi / 180)
+        cg.translateBy(x: -natural.width / 2, y: -natural.height / 2)
+        // ...and the page itself, on white, bottom-up, as `render` does.
+        cg.setFillColor(UIColor.white.cgColor)
+        cg.fill(CGRect(origin: .zero, size: natural))
+        cg.translateBy(x: 0, y: natural.height)
+        cg.scaleBy(x: 1, y: -1)
+        page.draw(with: .mediaBox, to: cg)
+    }
+
+    /// The shape a PDF layer shows in: its page with the layer's rotation
+    /// and crop applied - what `displayImage`'s bitmap would measure.
+    static func displayedSize(of page: PDFPage, layer: ArtworkLayer) -> CGSize? {
+        guard let natural = naturalSize(of: page) else { return nil }
+        let rotated = displayedSize(natural: natural, rotationDegrees: layer.rotationDegrees ?? 0)
+        return cropRect(of: layer, in: rotated).size
+    }
+
+    /// Quarter turns swap the axes; any other angle keeps the page's
+    /// size, clipping its corners, as `rotate` does.
+    private static func displayedSize(natural: CGSize, rotationDegrees: Double) -> CGSize {
+        let degrees = (rotationDegrees.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+        return degrees == 90 || degrees == 270 ? CGSize(width: natural.height, height: natural.width) : natural
+    }
+
+    /// The layer's crop in rotated picture space, or all of it - with the
+    /// same sanity checks `transformed` applies.
+    private static func cropRect(of layer: ArtworkLayer, in size: CGSize) -> CGRect {
+        guard let x = layer.cropX, let y = layer.cropY, let width = layer.cropWidth, let height = layer.cropHeight,
+              width > 0, height > 0, x >= 0, y >= 0, x + width <= 1.0001, y + height <= 1.0001 else {
+            return CGRect(origin: .zero, size: size)
+        }
+        return CGRect(x: x * size.width, y: y * size.height, width: width * size.width, height: height * size.height)
+    }
+
     /// A PDF page's size as displayed, i.e. with a 90/270-degree /Rotate
     /// already applied - the shape the page actually appears in.
     static func naturalSize(of page: PDFPage, box: PDFDisplayBox = .mediaBox) -> CGSize? {
@@ -283,6 +344,8 @@ nonisolated struct ArtworkLayer: Hashable, Sendable, Identifiable {
     var frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?
     var cropX: Double?, cropY: Double?, cropWidth: Double?, cropHeight: Double?
     var rotationDegrees: Double?
+
+    var isPDF: Bool { fileRef.lowercased().hasSuffix(".pdf") }
 
     /// Loads this layer at no more than `targetSize`, with its crop and
     /// rotation applied.

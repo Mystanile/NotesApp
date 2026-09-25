@@ -5,6 +5,7 @@ import CoreGraphics
 import UIKit
 import PencilKit
 import Photos
+import PDFKit
 
 /// Flattens a page - its paper, the imported PDF pages and photos on it,
 /// plus the PencilKit ink on top - into an image or a PDF, for export.
@@ -23,15 +24,23 @@ enum PageRenderer {
 
     /// `artwork` is the page's stack, bottom first (`ArtworkLayer.stack`).
     static func image(for page: Page, artwork: [ArtworkLayer], scale: CGFloat = exportScale) -> UIImage {
-        let nominal = PageGeometry.contentSize(for: page)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
-
-        let targetSize = CGSize(width: nominal.width * scale, height: nominal.height * scale)
-        let layers: [(layer: ArtworkLayer, image: UIImage)] = artwork.compactMap { layer in
-            layer.image(targetSize: targetSize).map { (layer: layer, image: $0) }
+        return UIGraphicsImageRenderer(size: PageGeometry.contentSize(for: page), format: format).image { context in
+            draw(page, artwork: artwork, scale: scale, in: context.cgContext)
         }
+    }
+
+    /// The page, bottom up, into `context` in page points: paper, ruling,
+    /// artwork, ink, text. PDF artwork is drawn as vectors - into a PDF
+    /// context that keeps its real text, where flattening it to a bitmap
+    /// used to leave the export with none. Photos and ink are bitmaps at
+    /// `scale`; PencilKit has no vector output.
+    static func draw(_ page: Page, artwork: [ArtworkLayer], scale: CGFloat,
+                     documents: inout [String: PDFDocument], in context: CGContext) {
+        let nominal = PageGeometry.contentSize(for: page)
+        let targetSize = CGSize(width: nominal.width * scale, height: nominal.height * scale)
         // Pinned to light, like the canvas, `FillTool` and the recognizer:
         // PencilKit inverts ink for a dark appearance, and this render has
         // no view to take its traits from - on an iPad in dark mode every
@@ -44,21 +53,42 @@ enum PageRenderer {
             }
         }
 
-        let template = page.template
-        return UIGraphicsImageRenderer(size: nominal, format: format).image { context in
-            UIColor.white.setFill()
-            context.fill(CGRect(origin: .zero, size: nominal))
-            // The paper's own ruling, under everything - an export of a
-            // lined page used to come out blank whether or not anything had
-            // been imported onto it.
-            PageTemplate.draw(template, in: nominal, context: context.cgContext)
+        UIGraphicsPushContext(context)
+        defer { UIGraphicsPopContext() }
+        UIColor.white.setFill()
+        context.fill(CGRect(origin: .zero, size: nominal))
+        // The paper's own ruling, under everything - an export of a
+        // lined page used to come out blank whether or not anything had
+        // been imported onto it.
+        PageTemplate.draw(page.template, in: nominal, context: context)
 
-            for entry in layers {
-                entry.image.draw(in: entry.layer.rect(for: entry.image, in: nominal))
+        for layer in artwork {
+            if layer.isPDF, let pdfPage = document(layer.fileRef, in: &documents)?.page(at: layer.pdfPageIndex),
+               let shape = ImportedArtwork.displayedSize(of: pdfPage, layer: layer) {
+                let rect = ImportedArtwork.placedRect(x: layer.frameX, y: layer.frameY,
+                                                      width: layer.frameWidth, height: layer.frameHeight, in: nominal)
+                    ?? ImportedArtwork.fittedRect(for: CGSize(width: shape.width, height: shape.height), in: nominal)
+                ImportedArtwork.drawPDF(pdfPage, layer: layer, in: rect, context: context)
+            } else if let image = layer.image(targetSize: targetSize) {
+                image.draw(in: layer.rect(for: image, in: nominal))
             }
-            inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
-            drawTextBlocks(of: page, in: nominal)
         }
+        inkImage?.draw(in: CGRect(origin: .zero, size: nominal))
+        drawTextBlocks(of: page, in: nominal)
+    }
+
+    static func draw(_ page: Page, artwork: [ArtworkLayer], scale: CGFloat, in context: CGContext) {
+        var documents: [String: PDFDocument] = [:]
+        draw(page, artwork: artwork, scale: scale, documents: &documents, in: context)
+    }
+
+    /// One open document per file for a whole export: a 300-page import is
+    /// one file, and re-opening it per page would parse it 300 times.
+    private static func document(_ fileRef: String, in documents: inout [String: PDFDocument]) -> PDFDocument? {
+        if let open = documents[fileRef] { return open }
+        let opened = PDFDocument(url: FileStore.url(for: fileRef))
+        documents[fileRef] = opened
+        return opened
     }
 
     /// Typed text blocks, laid out the way `TextBlockView` shows them: the
@@ -121,12 +151,12 @@ enum PageRenderer {
             origin: .zero,
             size: pages.first.map { PageGeometry.contentSize(for: $0.page) } ?? nominalPageSize
         )
+        var documents: [String: PDFDocument] = [:]
         return UIGraphicsPDFRenderer(bounds: firstBounds).pdfData { context in
             for entry in pages {
                 let bounds = CGRect(origin: .zero, size: PageGeometry.contentSize(for: entry.page))
                 context.beginPage(withBounds: bounds, pageInfo: [:])
-                image(for: entry.page, artwork: entry.artwork)
-                    .draw(in: bounds)
+                draw(entry.page, artwork: entry.artwork, scale: exportScale, documents: &documents, in: context.cgContext)
             }
         }
     }

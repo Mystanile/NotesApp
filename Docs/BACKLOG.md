@@ -69,6 +69,12 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Pages where the old fill tool was tried hold hundreds of invisible sub-2pt strokes per tap (one test page had 1,356 before its first logged tap). They are harmless to see, but they bloat the record and sync. A cleanup would be deleting ink, so it needs its own decision: detect by the old fill's exact signature (`.pen`, four points on one horizontal line, size < 2) and move them to `trash/` as a normal edit, never drop them silently.
 - [M1] Filling an already filled region does nothing now, because the fill is ink. Recolouring a fill (tap with another colour) would need the fill's strokes to be recognisable as one fill, a group id in the neutral format. Not now.
 
+## Found while making PDFs sharp (Sept 25, 2026)
+
+- [M1] Select, copy and highlight an imported PDF's text. Left out of M1 task 2 on purpose: it needs its own gesture on a page where the Pencil inks and the lasso selects, so it's a design question first. `PDFPage.selection(from:to:)` gives the text; the page space is already shared with the ink.
+- [M1] Exported ink is still a 2x bitmap on top of the vector PDF. PencilKit has no vector output; a stroke-to-path renderer from the neutral format would give one, and is the M7 web renderer's first half anyway.
+- [M1] `SearchIndex.pdfTextCache` is an unbounded static dictionary read on every keystroke, with no lock. Fine at today's sizes; bound it and move extraction off the main thread when PDFs get big.
+
 ## Parked from planning (Sept 12, 2026)
 
 - [M1] Scanned document capture with `VisionKit` + Live Text — Apple Notes parity, cheap

@@ -72,9 +72,11 @@ nonisolated enum ArtworkRenderer {
 /// (`PageBackgroundView`) is drawn underneath by the detail view; this layer
 /// is transparent except where the artwork is.
 ///
-/// PDF pages are rasterized to a UIImage via PDFKit rather than an embedded
-/// interactive PDFView - simpler, and it keeps the coordinate space
-/// straightforward to combine with the PencilKit annotation layer on top.
+/// Every layer is a bitmap first (instant, cached, shared with the page
+/// strip). A PDF layer is then redrawn over its bitmap as vectors by a
+/// tiled layer, at the detail the page is zoomed to (`PDFVectorLayer`).
+/// Not an interactive PDFView: the ink on top owns the touches, and one
+/// page space for artwork and ink keeps them lined up.
 struct ImportedPageBackgroundView: View {
     let page: Page
     /// While the adjust handles are up, the in-progress rect (in page
@@ -180,11 +182,94 @@ private struct ArtworkLayerView: View {
                     .resizable()
                     .frame(width: frame.width, height: frame.height)
                     .offset(x: frame.minX, y: frame.minY)
+                // A PDF page redrawn as vectors over its bitmap, at whatever
+                // zoom the page is shown - the bitmap is 2.5x, soft past
+                // that. The bitmap stays underneath as the instant picture
+                // on a page turn. Not while the handles are moving it: a
+                // live frame would redraw every tile every step.
+                if layer.isPDF, liveFrame == nil {
+                    PDFVectorLayer(artwork: layer)
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: frame.minY)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .task(id: LoadID(request: request, generation: store.generation)) {
             store.request(request)
         }
+    }
+}
+
+/// Draws one PDF layer as vectors, tile by tile, at the detail it is shown
+/// at. Verified in the simulator (Sept 25, 2026): a `CATiledLayer` under
+/// the page's SwiftUI `.scaleEffect` draws its tiles at zoom x screen
+/// scale, including when the zoom changes while it is on screen.
+private struct PDFVectorLayer: UIViewRepresentable {
+    let artwork: ArtworkLayer
+
+    func makeUIView(context: Context) -> PDFLayerView { PDFLayerView() }
+
+    func updateUIView(_ view: PDFLayerView, context: Context) {
+        view.tiles.show(artwork)
+    }
+}
+
+class PDFLayerView: UIView {
+    override class var layerClass: AnyClass { PDFTileLayer.self }
+    var tiles: PDFTileLayer { layer as! PDFTileLayer }
+
+    init() {
+        super.init(frame: .zero)
+        isOpaque = false
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        // A new size redraws the tiles rather than stretching old ones.
+        contentMode = .redraw
+        // From a quarter of the page's size up to 16x: the canvas zooms to
+        // 5x fit, and fit is itself ~1.5x on an iPad.
+        tiles.levelsOfDetail = 7
+        tiles.levelsOfDetailBias = 4
+        tiles.tileSize = CGSize(width: 512, height: 512)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+}
+
+/// The tiles are drawn on Core Animation's background threads, so this is
+/// `nonisolated` (the project defaults to the main actor) and holds its
+/// state behind a lock. The lock also serializes the tiles' PDFKit calls:
+/// PDFKit is not documented as safe to draw from several threads at once.
+nonisolated class PDFTileLayer: CATiledLayer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var artwork: ArtworkLayer?
+    private var document: PDFDocument?
+
+    override init() { super.init() }
+    override init(layer: Any) { super.init(layer: layer) }
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Called on the main thread on every SwiftUI update; redraws only
+    /// when the artwork actually changed.
+    func show(_ newArtwork: ArtworkLayer) {
+        lock.lock()
+        let changed = artwork != newArtwork
+        if artwork?.fileRef != newArtwork.fileRef { document = nil }
+        artwork = newArtwork
+        lock.unlock()
+        if changed { setNeedsDisplay() }
+    }
+
+    // ponytail: one lock per layer serializes its tiles; a page is fast to
+    // draw, but a huge scanned page might fill in slowly at 16x. Per-thread
+    // documents if that shows up.
+    override func draw(in context: CGContext) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let artwork else { return }
+        if document == nil { document = PDFDocument(url: FileStore.url(for: artwork.fileRef)) }
+        guard let page = document?.page(at: artwork.pdfPageIndex) else { return }
+        ImportedArtwork.drawPDF(page, layer: artwork, in: bounds, context: context)
     }
 }
 #endif
