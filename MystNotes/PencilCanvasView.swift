@@ -210,6 +210,11 @@ struct PencilCanvasView: UIViewRepresentable {
     /// maps it onto the page) so the parent can pick which of several
     /// pictures was pressed.
     var onLongPress: (CGPoint) -> Void = { _ in }
+    /// Set while the fill tool is in hand: a tap - finger or Pencil - on
+    /// the page, in host coordinates like `onLongPress`. A recognizer on
+    /// the host, not a view over the canvas, so two fingers still pan and
+    /// pinch the page with the fill tool selected.
+    var onFillTap: ((CGPoint) -> Void)? = nil
     /// Apple Pencil (Pro) double-tap: parent toggles the eraser.
     var onPencilDoubleTap: () -> Void = {}
     /// Apple Pencil Pro squeeze: parent opens the colour options.
@@ -243,6 +248,7 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.canvas = canvasView
         context.coordinator.host = host
         context.coordinator.attachLongPress(to: host)
+        context.coordinator.installFillTap(on: host, onTap: onFillTap)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -277,6 +283,7 @@ struct PencilCanvasView: UIViewRepresentable {
         host.embed(canvasView)
         configure(canvasView, context: context)
         context.coordinator.attachLongPress(to: host)
+        context.coordinator.installFillTap(on: host, onTap: onFillTap)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -295,6 +302,7 @@ struct PencilCanvasView: UIViewRepresentable {
     static func dismantleUIView(_ host: PagedCanvasHostView, coordinator: Coordinator) {
         coordinator.shortcuts.removeAll()
         coordinator.removeShapeHold()
+        coordinator.removeFillTap()
         host.viewport = nil
         host.inkSelection = nil
     }
@@ -364,6 +372,8 @@ struct PencilCanvasView: UIViewRepresentable {
         let shapeHold = ShapeHoldRecognizer()
         let shapeSnap = ShapeSnapController()
         private weak var longPressRecognizer: UILongPressGestureRecognizer?
+        private let fillTap = UITapGestureRecognizer()
+        private var onFillTap: ((CGPoint) -> Void)?
         private var isApplyingScribbleErase = false
         private var isApplyingShapeSnap = false
 
@@ -411,6 +421,29 @@ struct PencilCanvasView: UIViewRepresentable {
             recognizer.delegate = self
             view.addGestureRecognizer(recognizer)
             longPressRecognizer = recognizer
+        }
+
+        /// Idempotent. Enabled only while the fill tool is in hand.
+        func installFillTap(on host: UIView, onTap: ((CGPoint) -> Void)?) {
+            onFillTap = onTap
+            if fillTap.view !== host {
+                fillTap.view?.removeGestureRecognizer(fillTap)
+                fillTap.removeTarget(nil, action: nil)
+                fillTap.addTarget(self, action: #selector(handleFillTap(_:)))
+                fillTap.cancelsTouchesInView = false
+                fillTap.delegate = self
+                host.addGestureRecognizer(fillTap)
+            }
+            if fillTap.isEnabled != (onTap != nil) { fillTap.isEnabled = onTap != nil }
+        }
+
+        func removeFillTap() {
+            fillTap.view?.removeGestureRecognizer(fillTap)
+        }
+
+        @objc private func handleFillTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            onFillTap?(recognizer.location(in: recognizer.view))
         }
 
         @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {

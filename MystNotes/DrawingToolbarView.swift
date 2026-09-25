@@ -17,13 +17,17 @@ enum DrawingToolKind: Equatable {
 struct DrawingToolState: Equatable {
     var activeKind: DrawingToolKind = .pen
     var penInkType: PKInkingTool.InkType = .pen
-    var penColor: Color = .black
+    /// Picking a pen colour picks the fill's too; the fill's own colour
+    /// row can still choose another until the pen's changes again.
+    var penColor: Color = .black {
+        didSet { if penColor != oldValue { fillColor = penColor } }
+    }
     var penWidth: Double = 4
     var highlighterColor: Color = .yellow
     var highlighterWidth: Double = 20
     var eraserType: PKEraserTool.EraserType = .vector
     var eraserWidth: Double = 20
-    var fillColor: Color = .yellow
+    var fillColor: Color = .black
     /// Solid / dashed / dotted, for shapes made by holding a stroke still
     /// (`ShapeHoldRecognizer`). Freehand ink is always solid - PencilKit
     /// has no dashed ink, and a dashed shape is many short strokes.
@@ -40,10 +44,10 @@ struct DrawingToolState: Equatable {
         case .eraser:
             return PKEraserTool(eraserType, width: eraserWidth)
         case .fill:
-            // Fill isn't a real PKTool - NotebookDetailView disables canvas
-            // interaction while it's active and taps go to FillTool instead
-            // (see canvasSection's fill-tap overlay). This is just an inert
-            // fallback so canvasView.tool always has a valid value.
+            // Fill isn't a real PKTool - NotebookDetailView stands the
+            // canvas's drawing gesture down while it's active and a tap on
+            // the host goes to FillTool instead (`onFillTap`). This is just
+            // an inert fallback so canvasView.tool always has a valid value.
             return PKLassoTool()
         case .lasso:
             return PKLassoTool()

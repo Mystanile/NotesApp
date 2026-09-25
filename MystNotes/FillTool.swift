@@ -15,14 +15,14 @@ import PencilKit
 enum FillTool {
     private static let alphaThreshold: UInt8 = 20
 
-    /// Rows per synthesized stroke, and that stroke's point size. Measured
+    /// Rows per pass of the fill's stroke, and its point size. Measured
     /// (Sept 25, 2026): PencilKit draws *nothing* for a stroke under ~2pt,
-    /// a 4pt stroke is ~4-6px tall, and it runs ~size/2 past each end. So
-    /// every band is a fixed 3 rows drawn at 4pt - thick enough to render,
-    /// overlapping its neighbours so no row is left bare. The fill used to
+    /// a 4pt stroke is solid for ~4px, and it runs ~size/2 past each end.
+    /// So passes are 2 rows apart at 4pt - only solid centres overlap,
+    /// never two soft edges, which read as faint lines. The fill used to
     /// size each band from its own height, and a one-row band came out at
     /// 0.75pt: an ellipse filled as a few lines across its middle.
-    private static let bandRows = 3
+    private static let bandRows = 2
     private static let strokeSize: CGFloat = 4
 
     /// `point` and `canvasSize` must be in the same coordinate space as
@@ -159,22 +159,42 @@ enum FillTool {
 
     // MARK: - Stroke synthesis
 
-    /// One stroke per `bandRows` rows per run: the spans of those rows,
-    /// merged where they overlap, drawn along the band's centre. The ends
-    /// are pulled in by the stroke's own overshoot so it stays in the run.
+    /// One zig-zag stroke per branch of the region, so the precise eraser
+    /// takes a fill in one touch. Each band (`bandRows` rows, its spans
+    /// merged where they overlap) is one pass along the band's centre,
+    /// alternating direction; a pass links to the next band's first unused
+    /// run that overlaps it in x. A run with nothing below it, or a run
+    /// already taken by another branch, starts a new stroke - so a U is a
+    /// few strokes and a convex shape exactly one. The ends are pulled in
+    /// by the stroke's own overshoot so it stays inside the run.
     private static func strokes(for spans: [(y: Int, minX: Int, maxX: Int)], color: UIColor) -> [PKStroke] {
         let byRow = Dictionary(grouping: spans, by: \.y)
         guard let top = byRow.keys.min(), let bottom = byRow.keys.max() else { return [] }
-        var result: [PKStroke] = []
 
-        for bandTop in stride(from: top, through: bottom, by: bandRows) {
+        typealias Run = (minX: Int, maxX: Int)
+        let bands: [(centerY: CGFloat, runs: [Run])] = stride(from: top, through: bottom, by: bandRows).map { bandTop in
             let rows = bandTop..<min(bandTop + bandRows, bottom + 1)
-            let centerY = CGFloat(rows.lowerBound + rows.upperBound) / 2
-            for run in mergedRuns(rows.flatMap { byRow[$0] ?? [] }) {
-                let inset = min(strokeSize / 2, CGFloat(run.maxX - run.minX + 1) / 2)
-                let fromX = CGFloat(run.minX) + inset
-                let toX = max(CGFloat(run.maxX + 1) - inset, fromX)
-                result.append(horizontalStroke(fromX: fromX, toX: toX, y: centerY, size: strokeSize, color: color))
+            return (CGFloat(rows.lowerBound + rows.upperBound) / 2, mergedRuns(rows.flatMap { byRow[$0] ?? [] }))
+        }
+        var used = bands.map { [Bool](repeating: false, count: $0.runs.count) }
+
+        var result: [PKStroke] = []
+        for (startBand, band) in bands.enumerated() {
+            for startRun in band.runs.indices where !used[startBand][startRun] {
+                var passes: [(y: CGFloat, run: Run)] = []
+                var bandIndex = startBand, runIndex: Int? = startRun
+                while let index = runIndex {
+                    used[bandIndex][index] = true
+                    let run = bands[bandIndex].runs[index]
+                    passes.append((bands[bandIndex].centerY, run))
+                    bandIndex += 1
+                    guard bandIndex < bands.count else { break }
+                    runIndex = bands[bandIndex].runs.indices.first { next in
+                        let candidate = bands[bandIndex].runs[next]
+                        return !used[bandIndex][next] && candidate.minX <= run.maxX && candidate.maxX >= run.minX
+                    }
+                }
+                result.append(zigzagStroke(passes, color: color))
             }
         }
         return result
@@ -193,16 +213,27 @@ enum FillTool {
         return runs
     }
 
-    private static func horizontalStroke(fromX: CGFloat, toX: CGFloat, y: CGFloat, size: CGFloat, color: UIColor) -> PKStroke {
+    /// Every pass end is a sharp corner: a cubic B-spline only passes
+    /// through a control point repeated three times (as in
+    /// `ShapeRecognizer`), and between two such points it is a straight
+    /// line - so each pass is straight and each turn is exact.
+    private static func zigzagStroke(_ passes: [(y: CGFloat, run: (minX: Int, maxX: Int))], color: UIColor) -> PKStroke {
         var points: [PKStrokePoint] = []
-        for i in 0..<4 {
-            let t = CGFloat(i) / 3
-            points.append(PKStrokePoint(
-                location: CGPoint(x: fromX + (toX - fromX) * t, y: y),
-                timeOffset: Double(i) * 0.01,
-                size: CGSize(width: size, height: size),
-                opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
-            ))
+        func add(_ location: CGPoint) {
+            for _ in 0..<3 {
+                points.append(PKStrokePoint(
+                    location: location, timeOffset: Double(points.count) * 0.001,
+                    size: CGSize(width: strokeSize, height: strokeSize),
+                    opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
+                ))
+            }
+        }
+        for (index, pass) in passes.enumerated() {
+            let inset = min(strokeSize / 2, CGFloat(pass.run.maxX - pass.run.minX + 1) / 2)
+            let left = CGFloat(pass.run.minX) + inset
+            let right = max(CGFloat(pass.run.maxX + 1) - inset, left)
+            let ends = index.isMultiple(of: 2) ? [left, right] : [right, left]
+            for x in ends { add(CGPoint(x: x, y: pass.y)) }
         }
         let path = PKStrokePath(controlPoints: points, creationDate: Date())
         return PKStroke(ink: PKInk(.monoline, color: color), path: path)

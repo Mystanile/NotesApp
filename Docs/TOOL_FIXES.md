@@ -135,7 +135,16 @@ Logging on the iPad settled it in one tap. The coordinates were right: the page 
 
 The fix is in the stroke synthesis only. Bands are a fixed 3 rows drawn at 4pt as monoline, so they overlap and every one renders. The runs within a band are merged. The fill goes under the existing ink, so the edges a pixel or two past the region sit beneath the outline. Result: an ellipse is >99% covered, with 82 strokes instead of 264. `FillToolTests` now checks rendered pixels, not just stroke positions. That is why the two earlier fixes and the first version of this test missed it.
 
-The zoom hypothesis below was the right thing to rule out, and `viewport.pagePoint` (`32de133`) had already fixed it.
+### Second pass, Sept 25, 2026: after the first use on the iPad
+
+Four reports, four causes:
+
+- **Colour.** The fill had its own colour (`DrawingToolState.fillColor`, yellow) and nothing linked it to the pen. Now picking a pen colour sets the fill's. The fill's own colour row can still override it until the pen's next change.
+- **Erasing as one piece.** One fill was 80+ strokes, and the precise eraser takes one stroke per touch. A fill is now one zig-zag stroke per branch of the region (a convex shape is exactly one, a U is two). Each end of a pass is a control point repeated three times, so the B-spline turns sharply and runs straight between turns.
+- **No pan or zoom with the fill tool selected.** The canvas was switched off (`isUserInteractionEnabled = false`), and a SwiftUI overlay took every touch. Now a `UITapGestureRecognizer` on the canvas host takes the tap (`PencilCanvasView.onFillTap`), and only PencilKit's drawing gesture is stood down, in `applyToolState` together with the lasso's.
+- **Faint lines in the fill.** Passes are now 2 rows apart at 4pt, so only solid centres overlap, and it is one stroke. Not reproduced offscreen: `drawing.image(from:scale:)` rendered the old bands solid at 2x and 3x. So it came from somewhere the offscreen render doesn't go (the on-screen tiles at a seam between strokes, or the old invisible strokes on the test page). One stroke leaves no seams; confirm on the device.
+
+, and `viewport.pagePoint` (`32de133`) had already fixed it.
 
 
 ### Symptom

@@ -595,6 +595,10 @@ struct NotebookDetailView: View {
                 onLongPress: { location in
                     beginAdjustingImage(on: page, at: viewport.pagePoint(from: location))
                 },
+                onFillTap: toolState.activeKind == .fill && !isPresenting ? { location in
+                    AppLog.note("fill", "tap \(location) in host, zoom \(viewport.zoomScale), offset \(viewport.contentOffset)")
+                    performFill(at: viewport.pagePoint(from: location), on: page)
+                } : nil,
                 onPencilDoubleTap: togglePencilEraser,
                 onPencilSqueeze: openColorOptions,
                 onShapePreview: { shapePreview = $0 },
@@ -645,18 +649,6 @@ struct NotebookDetailView: View {
                     onSave: scheduleAutosave,
                     onRequestLinkDestinationChange: { link in linkNeedingDestination = link }
                 )
-            }
-
-            if toolState.activeKind == .fill && !isPresenting {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onEnded { value in
-                                AppLog.note("fill", "tap \(value.location) in view, zoom \(viewport.zoomScale), offset \(viewport.contentOffset), canvas bounds \(canvasView.bounds.size), contentSize \(canvasView.contentSize), inset \(canvasView.contentInset)")
-                                performFill(at: viewport.pagePoint(from: value.location), on: page)
-                            }
-                    )
             }
 
             if adjustingImageFrame != nil {
@@ -1603,6 +1595,13 @@ struct NotebookDetailView: View {
         inkSelection.canvas = usesOurLasso ? canvasView : nil
         inkSelection.onDrawingChanged = scheduleAutosave
         inkSelection.isActive = usesOurLasso && toolState.activeKind == .lasso
+        // Neither our lasso nor the fill leaves ink: the Pencil draws a
+        // loop or taps. Written here, from both, so neither undoes the
+        // other when switching straight from one to the other.
+        let inks = !inkSelection.isActive && toolState.activeKind != .fill
+        if canvasView.drawingGestureRecognizer.isEnabled != inks {
+            canvasView.drawingGestureRecognizer.isEnabled = inks
+        }
         updateCanvasInteractionEnabled()
     }
 
@@ -1627,11 +1626,9 @@ struct NotebookDetailView: View {
         openToolOptions = [.pen, .highlighter, .fill].contains(kind) ? kind : .pen
     }
 
-    /// The canvas needs real touches routed to a capture overlay instead
-    /// (see canvasSection's fill-tap overlay) while Fill is the active tool.
+    /// Image handles take the touches while an image is being adjusted.
     private func updateCanvasInteractionEnabled() {
-        canvasView.isUserInteractionEnabled =
-            toolState.activeKind != .fill && adjustingImageFrame == nil
+        canvasView.isUserInteractionEnabled = adjustingImageFrame == nil
     }
 
     private func performFill(at point: CGPoint, on page: Page) {
@@ -1651,9 +1648,8 @@ struct NotebookDetailView: View {
     // MARK: - Presentation
 
     /// Presentation mode is meant to be a clean, non-interactive view, but
-    /// the fill tool works through a transparent gesture-capture overlay -
-    /// left armed, it would sit invisibly over the presented page and turn
-    /// a stray tap into a filled region. Stand it down on the way in.
+    /// the fill tool acts on a tap - left armed, a stray tap on the
+    /// presented page would fill a region. Stand it down on the way in.
     private func enterPresentationMode() {
         shapePreview = nil
         adjustingImageFrame = nil
