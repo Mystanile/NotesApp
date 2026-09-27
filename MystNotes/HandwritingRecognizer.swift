@@ -106,9 +106,14 @@ nonisolated enum HandwritingRecognizer {
         // Vision finds nothing and the page silently becomes unsearchable.
         // That's why pages written in dark mode never showed up in search
         // while older, light-mode-indexed ones still did.
-        var renderedInk: UIImage?
-        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
-            renderedInk = drawing.image(from: bounds, scale: 2)
+        // On the ink render queue, never the cooperative pool this async
+        // function runs on (`InkRenderQueue`).
+        let renderedInk: UIImage? = await InkRenderQueue.run {
+            var image: UIImage?
+            UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+                image = drawing.image(from: bounds, scale: 2)
+            }
+            return image
         }
         guard let inkImage = renderedInk else { return nil }
 

@@ -60,7 +60,9 @@ nonisolated struct PageThumbnailRequest: Hashable, Sendable {
 /// the main thread at launch for a real library.
 nonisolated enum PageThumbnailRenderer {
     static func render(_ request: PageThumbnailRequest) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
+        // On the ink render queue, not the cooperative pool: see
+        // `InkRenderQueue` for the deadlock that blanked every page.
+        await InkRenderQueue.run {
             let drawing = DrawingStore.live.load(pageID: request.pageID)
             // Ink renders through the current traits; pinned to light so a
             // dark-mode iPad doesn't get white-on-white thumbnails (see
@@ -116,7 +118,7 @@ nonisolated enum PageThumbnailRenderer {
                 ink?.draw(in: CGRect(origin: .zero, size: nominal))
                 request.elements.draw(in: nominal)
             }
-        }.value
+        }
     }
 }
 #endif

@@ -128,14 +128,14 @@ private struct InkPreview: View {
         }
         .task {
             let entry = entry
-            image = await Task.detached(priority: .utility) { () -> UIImage? in
+            image = await InkRenderQueue.run { () -> UIImage? in
                 guard let drawing = TrashRestore.drawing(in: entry), !drawing.bounds.isEmpty else { return nil }
                 var rendered: UIImage?
                 UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
                     rendered = drawing.image(from: drawing.bounds.insetBy(dx: -10, dy: -10), scale: 0.5)
                 }
                 return rendered
-            }.value
+            }
         }
     }
 }
