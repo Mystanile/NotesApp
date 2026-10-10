@@ -93,7 +93,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 ## Found while fixing squeeze, swipe and the freeze (Oct 4, 2026)
 
-- [M1] The same 7 orphaned `.drawing` files in the sync folder's `files/` are "moved to trash" on every push and never leave: `DrawingStore.moveToTrash` swallows the `moveItem` error with `try?`. Log the error first, then fix whatever it says (probably a coordinated move in the user-picked folder). The files are old-build render caches, so nothing is lost meanwhile.
+- [M1] The same 7 orphaned `.drawing` files in the sync folder's `files/` are "moved to trash" on every push and never leave: `DrawingStore.moveToTrash` swallows the `moveItem` error with `try?`. Log the error first, then fix whatever it says (probably a coordinated move in the user-picked folder). The files are old-build render caches, so nothing is lost meanwhile. **Oct 10, 2026:** the error is logged now (`[trash] move failed: <name>: <error>`), and `moveToTrash` returns whether it moved. The Oct 9–10 log shows the pattern: new `.strokes` orphans move once and are gone, but the same seven `.drawing` files come back on every push, so only `.drawing` moves fail. Read the `move failed` line from the next iPad diagnostics, then fix.
 - [M1] Page swipe: the old page slides off as a snapshot. A real two-page slide (the new page sliding in beside it) needs the incoming page rendered before the turn.
 
 ## Parked from planning (Sept 12, 2026)

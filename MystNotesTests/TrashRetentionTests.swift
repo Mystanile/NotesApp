@@ -187,6 +187,28 @@ final class TrashRetentionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path), "the root isn't a trash directory")
     }
 
+    /// Oct 4, 2026: the same orphans were "moved to trash" on every push and
+    /// never left, because the move's error was swallowed. A failed move must
+    /// say so and leave the file where it was.
+    func testMoveToTrash_thatFails_reportsIt_andKeepsTheFile() throws {
+        let dir = root.appendingPathComponent("blocked", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("not a folder".utf8).write(to: dir.appendingPathComponent("trash"))
+        let file = dir.appendingPathComponent("page.drawing")
+        try Data(repeating: 0x41, count: 16).write(to: file)
+
+        XCTAssertFalse(DrawingStore.moveToTrash(file, tag: "orphan"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testMoveToTrash_thatSucceeds_reportsIt() throws {
+        let file = root.appendingPathComponent("page.drawing")
+        try Data(repeating: 0x41, count: 16).write(to: file)
+
+        XCTAssertTrue(DrawingStore.moveToTrash(file, tag: "orphan"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testLocalDirectories_areThePayloadTrashAndTheMirrors() {
         let payloads = URL(fileURLWithPath: "/tmp/payloads")
         let mirror = URL(fileURLWithPath: "/tmp/payloads/Library")

@@ -265,15 +265,24 @@ nonisolated struct DrawingStore {
     /// (invariant 3), under a name that can't collide with a later copy of
     /// the same page. `tag` says why it went there - "unreadable",
     /// "conflict", "deleted" - so the user can tell the entries apart.
-    static func moveToTrash(_ file: URL, tag: String) {
+    /// Returns whether the file is out of the way: true if moved or already
+    /// gone. A failure is logged with its error and the file is left alone.
+    @discardableResult
+    static func moveToTrash(_ file: URL, tag: String) -> Bool {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: file.path) else { return }
+        guard fm.fileExists(atPath: file.path) else { return true }
         if tag != "deleted" { AppLog.note("trash", "\(tag): \(file.lastPathComponent)") }
         let trash = file.deletingLastPathComponent().appendingPathComponent("trash", isDirectory: true)
-        try? fm.createDirectory(at: trash, withIntermediateDirectories: true)
         let stamp = Int(Date().timeIntervalSince1970 * 1000)
         let name = file.deletingPathExtension().lastPathComponent + "-\(stamp)-\(tag)." + file.pathExtension
-        try? fm.moveItem(at: file, to: trash.appendingPathComponent(name))
+        do {
+            try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+            try fm.moveItem(at: file, to: trash.appendingPathComponent(name))
+            return true
+        } catch {
+            AppLog.note("trash", "move failed: \(file.lastPathComponent): \(error)")
+            return false
+        }
     }
 }
 
