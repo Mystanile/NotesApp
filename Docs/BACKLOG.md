@@ -123,3 +123,8 @@ Keep these here so they don't get re-proposed.
 - Network AI chat with notes — per-query cost a free app can't absorb; on-device semantic search covers most of the value
 - Native Android / Windows clients — the web viewer is the cheap reach
 - Any paywall or StoreKit work — app is free
+
+## Read from the iPad diagnostics of Oct 10, 2026
+
+- [M1] **The "hangs in `saveCurrentPage`" are the share sheet, not the save.** Oct 7, 22:08–22:09: three 4 s hangs, each with checkpoint `DetailView.saveCurrentPage` (the last checkpoint passed, not the work). Symbolicated against the 26.6.2 device symbols, the stack is `UIActivityViewController viewDidLoad/viewIsAppearing` → `SHSheetSession createShareServiceUIConfiguration` → `_UIActivityApplicationExtensionDiscovery extensionMatchingDictionariesForExtensionItems:` → `-[NSExtensionItem _matchingDictionaryRepresentation]` → `-[NSExtensionURLResult wait:]`: the share sheet blocks the main thread while it asks which share extensions accept the exported file URL. Apple's code, at export time, not on the drawing path. Possible mitigation, **unverified**: hand the sheet an `NSItemProvider`/`UIActivityItemSource` with a declared type instead of a bare file URL. Spike on the iPad (time `ShareSheet` creation both ways) before changing it. The Sept 19 `saveCurrentPage` stalls may be the same thing; read their stacks if they recur.
+- [M1] One 653 ms stall opening a notebook right after launch (Oct 7, 19:52): `openFirstPage` → `loadCurrentPageDrawing` → `installFreshCanvas` → PencilKit setting the drawing. First canvas of the session, once. Watch, don't fix.
