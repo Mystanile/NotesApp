@@ -1448,4 +1448,18 @@ final class SyncTests: XCTestCase {
         XCTAssertFalse(try mac.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id },
                        "the Mac still links to a deleted page")
     }
+
+    /// M2 tags: a page's tags travel with the page.
+    func testPageTags_reachTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Tagged", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)?.first)
+        harness.clock.advance()
+        page.setTags(["Exam", " derivatives ", "exam"], at: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.first?.tags, ["derivatives", "Exam"])
+    }
 }

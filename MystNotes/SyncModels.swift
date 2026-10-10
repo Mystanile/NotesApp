@@ -307,6 +307,8 @@ nonisolated struct PageDTO: Codable {
     /// Absent before bookmarks (Sept 25, 2026). See `Page.isBookmarked`.
     var isBookmarked: Bool? = nil
     var title: String? = nil
+    /// M2 tags, format 3. See `Page.tags`.
+    var tags: [String]? = nil
     /// SHA-256 of the payload behind `drawingFileRef` / `backgroundRef`,
     /// which is also its file name in the folder (`files/<hash>.<ext>`).
     /// Absent in snapshots from before content addressing, whose payloads

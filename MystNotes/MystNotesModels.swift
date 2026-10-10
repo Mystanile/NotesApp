@@ -88,6 +88,9 @@ final class Page {
     /// content: set it, then `markModified()`.
     var isBookmarked: Bool?
     var title: String?
+    /// M2 tags. Set through `setTags(_:at:)`, which normalizes them and
+    /// marks the page modified so they sync.
+    var tags: [String]?
 
     // File on disk, not stored in the DB directly
     var drawingFileRef: String?

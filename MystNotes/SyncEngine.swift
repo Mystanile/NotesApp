@@ -1149,6 +1149,7 @@ nonisolated struct SyncRunner {
                     aspectRatio: page.aspectRatio,
                     isBookmarked: page.isBookmarked,
                     title: page.title,
+                    tags: page.tags,
                     drawingHash: page.drawingFileRef.flatMap { hashes.hash(of: $0, in: local) },
                     backgroundHash: page.backgroundRef.flatMap { hashes.hash(of: $0, in: local) },
                     textBlocks: (page.textBlocks ?? []).map {
@@ -1343,6 +1344,7 @@ nonisolated struct SyncRunner {
         if let aspectRatio = dto.aspectRatio { page.aspectRatio = aspectRatio }
         page.isBookmarked = dto.isBookmarked
         page.title = dto.title
+        page.tags = dto.tags
     }
 
     /// Derived data merges on its own clock, whichever side won the page:
