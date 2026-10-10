@@ -912,12 +912,21 @@ struct NotebookDetailView: View {
 #endif
     }
 
+    /// Only the pages that link to `pageID`, fetched by id: walking every
+    /// notebook's pages here would fault the whole library in on each
+    /// redraw, and this view redraws on every colour change.
+    func pagesLinking(to pageID: UUID) -> [Page] {
+        let ids = Array(Set(allLinks.lazy.filter { $0.destinationPageID == pageID }.map(\.sourcePageID)))
+        guard !ids.isEmpty else { return [] }
+        return (try? modelContext.fetch(FetchDescriptor<Page>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+    }
+
     /// Pages that link here (M2).
     @ViewBuilder
     var linkedFromStrip: some View {
         if !isPresenting, let page = currentPage {
             LinkedFromStrip(
-                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: allNotebooks.flatMap { $0.pages ?? [] }),
+                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: pagesLinking(to: page.id)),
                 currentNotebookID: notebook.id,
                 onSelect: { jumpToPage(withID: $0) })
         }
