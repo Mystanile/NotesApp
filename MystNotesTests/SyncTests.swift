@@ -1422,4 +1422,30 @@ final class SyncTests: XCTestCase {
     func testFormatVersion_isThree_forTheM2LinkFields() {
         XCTAssertEqual(librarySnapshotFormatVersion, 3)
     }
+
+    /// M2 link integrity: deleting a page deletes the links that point at
+    /// it, and those links live on *other* pages. Those pages must count as
+    /// changed, or the other device keeps a link to a page that is gone.
+    func testDeletingAPage_removesLinksToIt_onTheOtherDeviceToo() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Links", pageCount: 3)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance()
+        let link = try ipad.addLink(from: pages[0], to: pages[2])
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertTrue(try mac.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id })
+
+        harness.clock.advance()
+        PageDeletion.delete(pages[2], from: notebook, in: ipad.context,
+                            drawingStore: DrawingStore.inDirectory(ipad.filesDirectory),
+                            tombstones: ipad.state, now: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertFalse(try mac.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id },
+                       "the Mac still links to a deleted page")
+    }
 }

@@ -15,8 +15,19 @@ enum PageDeletion {
                        drawingStore: DrawingStore, tombstones: SyncStateStore = LiveSyncStateStore.shared,
                        now: Date = Date()) {
         let links = (try? context.fetch(FetchDescriptor<Link>())) ?? []
+        var sourcesToTouch: Set<UUID> = []
         for link in links where link.sourcePageID == page.id || link.destinationPageID == page.id {
+            if link.sourcePageID != page.id { sourcesToTouch.insert(link.sourcePageID) }
             context.delete(link)
+        }
+        // A link travels with its source page, so the pages that linked
+        // here changed: mark them, or another device keeps those links to
+        // a page that's gone (M2, Oct 10, 2026).
+        if !sourcesToTouch.isEmpty {
+            let pages = (try? context.fetch(FetchDescriptor<Page>())) ?? []
+            for source in pages where sourcesToTouch.contains(source.id) {
+                source.markModified(at: now)
+            }
         }
         // Work out which imported files this page is the last user of
         // BEFORE deleting its records - a multi-page PDF import shares one
