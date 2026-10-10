@@ -99,6 +99,8 @@ struct InkSelectionToolbar: View {
     var onRecolor: (Color) -> Void = { _ in }
     var onCopyAsImage: () -> Void = {}
     var onConvertToText: () -> Void = {}
+    /// Nil hides the button (the whiteboard draws no link anchors yet).
+    var onLinkTo: (() -> Void)? = nil
     var onDone: () -> Void
 
     private let colors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
@@ -126,6 +128,9 @@ struct InkSelectionToolbar: View {
             .help("Colour")
             iconButton("photo", help: "Copy as Image", action: onCopyAsImage)
             iconButton("character.textbox", help: "Convert to Text", action: onConvertToText)
+            if let onLinkTo {
+                iconButton("link", help: "Link This To…", action: onLinkTo)
+            }
             Divider().frame(height: 24)
             iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
             Divider().frame(height: 24)

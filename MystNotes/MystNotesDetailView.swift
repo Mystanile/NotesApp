@@ -227,120 +227,7 @@ struct NotebookDetailView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                if let page = currentPage {
-                    canvasSection(for: page)
-                        #if targetEnvironment(macCatalyst) || canImport(UIKit)
-                        .overlay(alignment: .top) {
-                            // Hidden while placing an image: this is an
-                            // overlay, so it draws ON TOP of the canvas
-                            // content - including the image toolbar, which
-                            // occupies the same top-center spot and was
-                            // completely covered by it. Drawing is disabled
-                            // during adjust anyway, so there's nothing to
-                            // lose by standing it down.
-                            if !drawingToolbarInNavigationBar && !isPresenting && adjustingImageFrame == nil {
-                                // GeometryReader gives the bar the canvas
-                                // area to clamp its dragging within, which
-                                // is also what keeps it from sliding down
-                                // underneath the page-thumbnail strip.
-                                GeometryReader { geo in
-                                    DrawingToolbarView(
-                                        style: .floating,
-                                        toolState: $toolState,
-                                        openPopover: $openToolOptions,
-                                        canUndo: canUndo,
-                                        canRedo: canRedo,
-                                        isFillToolAvailable: page.type != "whiteboard",
-                                        isTextBoxAvailable: page.type != "whiteboard",
-                                        containerSize: geo.size,
-                                        onUndo: { canvasView.undoManager?.undo() },
-                                        onRedo: { canvasView.undoManager?.redo() },
-                                        onAddTextBox: addTextBlock,
-                                        onAddSticker: { showingStickerPicker = true },
-                                        onAddLink: addLink
-                                    )
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                }
-                                .padding(.top, 8)
-                            }
-                        }
-                        .overlay(alignment: .bottomTrailing) {
-                            // Page position, moved off the navigation bar
-                            // to make room for the drawing toolbar there.
-                            if !isPresenting && !sortedPages.isEmpty {
-                                Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
-                                    .font(.footnote.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                                    .padding(10)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .overlay(alignment: .bottom) {
-                            if pendingDeletion != nil && showingDeletionBanner && !isPresenting {
-                                HStack(spacing: 14) {
-                                    Text("Page deleted")
-                                    Button("Undo", action: undoPendingDeletion)
-                                        .fontWeight(.semibold)
-                                }
-                                .font(.subheadline)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-                                .padding(.bottom, 12)
-                            }
-                        }
-                        .overlay(alignment: .topTrailing) {
-                            if !isPresenting, let page = currentPage {
-                                LinkedFromStrip(
-                                    sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: sortedPages),
-                                    onSelect: { jumpToPage(withID: $0) })
-                            }
-                        }
-                        .overlay(alignment: .bottom) {
-                            if showingSaveConfirmation {
-                                Label("Saved", systemImage: "checkmark.circle.fill")
-                                    .font(.subheadline.weight(.medium))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-                                    .padding(.bottom, 12)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                            }
-                        }
-                        #endif
-                    if showingPageStrip && !isPresenting {
-                        pageStrip
-                    }
-                } else {
-                    ProgressView("Loading…")
-                }
-            }
-
-            // Presentation mode is a chrome toggle on this SAME view, not a
-            // separate modal — a fullScreenCover would mount a brand-new
-            // PencilCanvasView backed by the same PKCanvasView instance,
-            // which re-parents that UIView into the modal's hierarchy and
-            // never returns it on dismiss (the pen/canvas going blank after
-            // exiting presentation mode). Toggling visibility in place keeps
-            // canvasView mounted exactly once, always.
-            if isPresenting {
-                Button {
-                    isPresenting = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title)
-                        .foregroundStyle(.secondary)
-                        .padding()
-                }
-            }
-        }
+        mainContent
         .navigationTitle(notebook.title)
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .navigationBarTitleDisplayMode(.inline)
@@ -450,7 +337,7 @@ struct NotebookDetailView: View {
                         onRedo: { canvasView.undoManager?.redo() },
                         onAddTextBox: addTextBlock,
                         onAddSticker: { showingStickerPicker = true },
-                        onAddLink: addLink
+                        onAddLink: { addLink() }
                     )
                 }
             }
@@ -641,6 +528,118 @@ struct NotebookDetailView: View {
         #endif
     }
 
+    /// The screen without its modifiers; `body` adds those.
+    var mainContent: some View {
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                if let page = currentPage {
+                    canvasSection(for: page)
+                        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+                        .overlay(alignment: .top) {
+                            // Hidden while placing an image: this is an
+                            // overlay, so it draws ON TOP of the canvas
+                            // content - including the image toolbar, which
+                            // occupies the same top-center spot and was
+                            // completely covered by it. Drawing is disabled
+                            // during adjust anyway, so there's nothing to
+                            // lose by standing it down.
+                            if !drawingToolbarInNavigationBar && !isPresenting && adjustingImageFrame == nil {
+                                // GeometryReader gives the bar the canvas
+                                // area to clamp its dragging within, which
+                                // is also what keeps it from sliding down
+                                // underneath the page-thumbnail strip.
+                                GeometryReader { geo in
+                                    DrawingToolbarView(
+                                        style: .floating,
+                                        toolState: $toolState,
+                                        openPopover: $openToolOptions,
+                                        canUndo: canUndo,
+                                        canRedo: canRedo,
+                                        isFillToolAvailable: page.type != "whiteboard",
+                                        isTextBoxAvailable: page.type != "whiteboard",
+                                        containerSize: geo.size,
+                                        onUndo: { canvasView.undoManager?.undo() },
+                                        onRedo: { canvasView.undoManager?.redo() },
+                                        onAddTextBox: addTextBlock,
+                                        onAddSticker: { showingStickerPicker = true },
+                                        onAddLink: { addLink() }
+                                    )
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            // Page position, moved off the navigation bar
+                            // to make room for the drawing toolbar there.
+                            if !isPresenting && !sortedPages.isEmpty {
+                                Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .padding(10)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .overlay(alignment: .bottom) {
+                            if pendingDeletion != nil && showingDeletionBanner && !isPresenting {
+                                HStack(spacing: 14) {
+                                    Text("Page deleted")
+                                    Button("Undo", action: undoPendingDeletion)
+                                        .fontWeight(.semibold)
+                                }
+                                .font(.subheadline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                                .padding(.bottom, 12)
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) { linkedFromStrip }
+                        .overlay(alignment: .bottom) {
+                            if showingSaveConfirmation {
+                                Label("Saved", systemImage: "checkmark.circle.fill")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                                    .padding(.bottom, 12)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
+                        }
+                        #endif
+                    if showingPageStrip && !isPresenting {
+                        pageStrip
+                    }
+                } else {
+                    ProgressView("Loading…")
+                }
+            }
+
+            // Presentation mode is a chrome toggle on this SAME view, not a
+            // separate modal — a fullScreenCover would mount a brand-new
+            // PencilCanvasView backed by the same PKCanvasView instance,
+            // which re-parents that UIView into the modal's hierarchy and
+            // never returns it on dismiss (the pen/canvas going blank after
+            // exiting presentation mode). Toggling visibility in place keeps
+            // canvasView mounted exactly once, always.
+            if isPresenting {
+                Button {
+                    isPresenting = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     func canvasSection(for page: Page) -> some View {
         if page.type == "whiteboard" {
@@ -795,6 +794,7 @@ struct NotebookDetailView: View {
                         onRecolor: { inkSelection.recolor($0.fixedUIColor) },
                         onCopyAsImage: { inkSelection.copySelectionAsImage() },
                         onConvertToText: { convertSelectionToText(on: page) },
+                        onLinkTo: { linkSelection() },
                         onDone: { inkSelection.clear() }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -874,6 +874,16 @@ struct NotebookDetailView: View {
             .fill(Color.blue.opacity(0.2))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 #endif
+    }
+
+    /// Pages that link here (M2).
+    @ViewBuilder
+    var linkedFromStrip: some View {
+        if !isPresenting, let page = currentPage {
+            LinkedFromStrip(
+                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: sortedPages),
+                onSelect: { jumpToPage(withID: $0) })
+        }
     }
 
     /// The page strip, with a grabber along its top edge: drag to resize,

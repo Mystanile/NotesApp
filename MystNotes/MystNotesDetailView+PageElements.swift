@@ -94,14 +94,34 @@ extension NotebookDetailView {
         saveMetadata("Failed to save sticker")
     }
 
-    func addLink() {
+    /// Lasso → "Link This To…": a link whose tap area is the selection's
+    /// box, then the same destination picker as a plain link.
+    func linkSelection() {
+        guard let anchor = Self.linkAnchor(around: inkSelection.display.corners ?? []) else { return }
+        addLink(anchoredTo: anchor)
+        inkSelection.clear()
+    }
+
+    /// The box around a selection's corners (page coordinates, the same
+    /// space as link anchors), at least 44pt each way so it stays tappable.
+    static func linkAnchor(around corners: [CGPoint]) -> CGRect? {
+        guard let minX = corners.map(\.x).min(), let maxX = corners.map(\.x).max(),
+              let minY = corners.map(\.y).min(), let maxY = corners.map(\.y).max() else { return nil }
+        return CGRect(x: minX, y: minY, width: max(44, maxX - minX), height: max(44, maxY - minY))
+    }
+
+    func addLink(anchoredTo anchor: CGRect? = nil) {
         guard let page = currentPage else { return }
         // Placeholder self-referencing destination — immediately prompting
         // the picker below means the user always ends up choosing a real
         // target right away.
         let link = Link(sourcePageID: page.id, destinationPageID: page.id)
-        link.anchorX = 40
-        link.anchorY = 40
+        link.anchorX = anchor.map { Double($0.minX) } ?? 40
+        link.anchorY = anchor.map { Double($0.minY) } ?? 40
+        if let anchor {
+            link.anchorWidth = Double(anchor.width)
+            link.anchorHeight = Double(anchor.height)
+        }
         modelContext.insert(link)
         page.markModified()
         saveMetadata("Failed to save link")

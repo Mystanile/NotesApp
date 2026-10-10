@@ -66,4 +66,12 @@ final class LinkedFromTests: XCTestCase {
         try XCTUnwrap(image.pngData()).write(to: url)
         print("[shot] \(url.path)")
     }
+
+    func testLinkAnchor_isTheSelectionsBox_atLeastATapWide() {
+        let rotated = [CGPoint(x: 100, y: 200), CGPoint(x: 300, y: 180), CGPoint(x: 310, y: 260), CGPoint(x: 110, y: 280)]
+        XCTAssertEqual(NotebookDetailView.linkAnchor(around: rotated), CGRect(x: 100, y: 180, width: 210, height: 100))
+        let thin = [CGPoint(x: 10, y: 10), CGPoint(x: 200, y: 10), CGPoint(x: 200, y: 12), CGPoint(x: 10, y: 12)]
+        XCTAssertEqual(NotebookDetailView.linkAnchor(around: thin)?.height, 44)
+        XCTAssertNil(NotebookDetailView.linkAnchor(around: []))
+    }
 }
