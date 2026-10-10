@@ -141,6 +141,7 @@ struct NotebookDetailView: View {
     /// file. Killed before then, the file just stays (invariant 1).
     @State var pendingTrash: Set<String> = []
     @State var showingStickerPicker = false
+    @State var showingPageMap = false
     /// VisionKit's document camera; the scan arrives as new pages.
     @State var showingScanner = false
     @State var linkNeedingDestination: Link?
@@ -360,6 +361,11 @@ struct NotebookDetailView: View {
                 }
                 .help("Outline")
 
+                Button { showingPageMap = true } label: {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                }
+                .help("Page Map")
+
                 Button {
                     enterPresentationMode()
                 } label: {
@@ -455,6 +461,12 @@ struct NotebookDetailView: View {
                 }
             }
 #endif
+        }
+        .sheet(isPresented: $showingPageMap) {
+            NotebookGraphView(pages: sortedPages, links: allLinks) { id in
+                showingPageMap = false
+                jumpToPage(withID: id)
+            }
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .sheet(isPresented: $showingStickerPicker) {
