@@ -295,6 +295,13 @@ struct NotebookDetailView: View {
                                 .padding(.bottom, 12)
                             }
                         }
+                        .overlay(alignment: .topTrailing) {
+                            if !isPresenting, let page = currentPage {
+                                LinkedFromStrip(
+                                    sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: sortedPages),
+                                    onSelect: { jumpToPage(withID: $0) })
+                            }
+                        }
                         .overlay(alignment: .bottom) {
                             if showingSaveConfirmation {
                                 Label("Saved", systemImage: "checkmark.circle.fill")
