@@ -234,7 +234,13 @@ nonisolated struct DrawingStore {
             if fm.fileExists(atPath: target.path) {
                 _ = try fm.replaceItemAt(target, withItemAt: staging)
             } else {
-                try fm.moveItem(at: staging, to: target)
+                do {
+                    try fm.moveItem(at: staging, to: target)
+                } catch CocoaError.fileWriteFileExists {
+                    // Another save of the same page landed between the
+                    // check and the move: replace its file with ours.
+                    _ = try fm.replaceItemAt(target, withItemAt: staging)
+                }
             }
         } catch {
             // Only the never-committed fragment is discarded; the target

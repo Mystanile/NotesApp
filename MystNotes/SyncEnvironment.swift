@@ -89,7 +89,7 @@ nonisolated struct SyncEnvironment {
     /// `UIDevice.current.name` answers "iPad" on both iPad and Mac
     /// Catalyst (the real name is behind an entitlement), which made every
     /// index-history entry from either device indistinguishable.
-    private static var liveDeviceName: String {
+    static var liveDeviceName: String {
         #if targetEnvironment(macCatalyst)
         let platform = "Mac"
         #elseif canImport(UIKit)

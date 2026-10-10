@@ -374,6 +374,27 @@ final class DurabilityTests: XCTestCase {
         assertStrokesEqual(try XCTUnwrap(store2.load(pageID: pageID)), drawing, "round trip")
     }
 
+    /// Oct 10, 2026: the first save of a new page checked "no file yet",
+    /// then moved its staging file into place. Two first saves at once both
+    /// saw no file; the second move then failed on the file the first had
+    /// just put there, and that save - possibly the newer ink - errored.
+    /// Many rounds, so the race is hit on every run, not once in a while.
+    func testConcurrentFirstSavesOfANewPage_bothSucceed() async throws {
+        let store = DrawingStore.inDirectory(directory)
+        let first = makeDrawing(strokes: 3, xOffset: 0, seed: 1)
+        let second = makeDrawing(strokes: 3, xOffset: 300, seed: 500)
+        for round in 0..<200 {
+            let pageID = UUID()
+            async let a = DrawingStore.saveDetached(store, first, pageID: pageID).value
+            async let b = DrawingStore.saveDetached(store, second, pageID: pageID).value
+            for result in await [a, b] {
+                if case .failure(let error) = result {
+                    return XCTFail("round \(round): a first save failed: \(error)")
+                }
+            }
+        }
+    }
+
     /// Saves can now overlap - an autosave landing while a page turn saves
     /// the same page - so the staging file each write uses has to be its
     /// own. With one shared staging path they rename each other's

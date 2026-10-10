@@ -14,6 +14,27 @@ import SwiftData
 @MainActor
 final class PerformanceTests: XCTestCase {
 
+    // MARK: Scribble check on the drawing path
+
+    /// `ScribbleErase.isScribble` runs on main after every stroke (BACKLOG,
+    /// Sept 18). A long stroke - a full-width line written slowly, 2,000
+    /// points - must stay far under one 120 Hz frame (8 ms).
+    func testScribbleCheck_longStroke_staysUnderAFrame() {
+        let points = (0..<2000).map { i in
+            PKStrokePoint(location: CGPoint(x: Double(i) * 0.4, y: 100 + sin(Double(i) / 9) * 6),
+                          timeOffset: Double(i) / 240, size: CGSize(width: 3, height: 3),
+                          opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+        }
+        let stroke = PKStroke(ink: PKInk(.pen, color: .black),
+                              path: PKStrokePath(controlPoints: points, creationDate: Date()))
+        _ = ScribbleErase.isScribble(stroke)
+        let start = Date()
+        for _ in 0..<10 { _ = ScribbleErase.isScribble(stroke) }
+        let each = Date().timeIntervalSince(start) / 10
+        print("BASELINE scribble check, 2000-point stroke: \(String(format: "%.2f", each * 1000)) ms")
+        XCTAssertLessThan(each, 0.008)
+    }
+
     // MARK: Sync engine at 200 notebooks
 
     /// 200 notebooks × 10 pages, every page with ink: first push, first pull

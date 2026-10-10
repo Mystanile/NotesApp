@@ -162,12 +162,7 @@ nonisolated enum SyncDiagnostics {
         return s
     }
 
-    private static var deviceName: String {
-        #if canImport(UIKit)
-        let raw = UIDevice.current.name
-        #else
-        let raw = Host.current().localizedName ?? "Mac"
-        #endif
-        return String(raw.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "_" })
-    }
+    /// Same name sync uses: platform plus install id, so two devices'
+    /// files never share a name (`UIDevice.name` is "iPad" on a Mac too).
+    private static var deviceName: String { SyncEnvironment.liveDeviceName }
 }
