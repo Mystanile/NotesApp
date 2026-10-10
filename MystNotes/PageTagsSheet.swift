@@ -31,7 +31,7 @@ struct PageTagsSheet: View {
                                 Button {
                                     tags = Self.removing(tag, from: tags)
                                 } label: {
-                                    Label("#\(tag)", systemImage: "xmark.circle.fill")
+                                    Label("#\(tag)", systemImage: "xmark.circle.fill").lineLimit(1).fixedSize()
                                         .labelStyle(.titleAndIcon)
                                         .padding(.horizontal, 10).padding(.vertical, 6)
                                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))

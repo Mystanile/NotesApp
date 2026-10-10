@@ -196,7 +196,7 @@ struct LibraryView: View {
                             HStack {
                                 ForEach(tags) { tag in
                                     NavigationLink(destination: TagPagesView(tag: tag)) {
-                                        Text("#\(tag.name) · \(tag.pages.count)")
+                                        Text("#\(tag.name) · \(tag.pages.count)").lineLimit(1).fixedSize()
                                             .padding(.horizontal, 12).padding(.vertical, 6)
                                             .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                                     }
