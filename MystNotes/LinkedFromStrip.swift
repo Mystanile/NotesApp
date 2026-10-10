@@ -5,6 +5,7 @@ import SwiftUI
 /// SwiftData index, so `LibraryRebuild` rebuilds it with everything else.
 struct LinkedFromStrip: View {
     let sources: [Page]
+    var currentNotebookID: UUID? = nil
     let onSelect: (UUID) -> Void
 
     /// Pages in `pages` with a link to `pageID`: each once, in page order,
@@ -20,6 +21,12 @@ struct LinkedFromStrip: View {
         return "\(number) · \(title)"
     }
 
+    /// "p. N · title" in the open notebook, "<Notebook> · p. N" elsewhere.
+    static func label(for page: Page, currentNotebookID: UUID?) -> String {
+        guard let nb = page.notebook, nb.id != currentNotebookID else { return label(for: page) }
+        return "\(nb.title) · p. \(page.index + 1)"
+    }
+
     var body: some View {
         if !sources.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
@@ -27,7 +34,7 @@ struct LinkedFromStrip: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 ForEach(sources, id: \.id) { page in
-                    Button(Self.label(for: page)) { onSelect(page.id) }
+                    Button(Self.label(for: page, currentNotebookID: currentNotebookID)) { onSelect(page.id) }
                         .font(.caption)
                         .lineLimit(1)
                 }

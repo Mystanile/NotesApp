@@ -198,6 +198,9 @@ struct NotebookDetailView: View {
     }
 
     @Query var allLinks: [Link]
+    @Query(sort: \Notebook.title) var allNotebooks: [Notebook]
+    /// A link to a page of another notebook opens that notebook here.
+    @State var otherNotebookTarget: SearchResult?
     @Query var allImportedDocuments: [ImportedDocument]
 
     /// Bookmarked or named pages, in page order, with their page numbers.
@@ -479,8 +482,12 @@ struct NotebookDetailView: View {
         .sheet(isPresented: $showingStickerPicker) {
             StickerPickerView { symbol in addSticker(symbol) }
         }
+        .navigationDestination(item: $otherNotebookTarget) { target in
+            NotebookDetailView(notebook: target.notebook, initialPageID: target.pageID)
+        }
         .sheet(item: $linkNeedingDestination) { link in
-            LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID) { destinationID in
+            LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID,
+                                      notebooks: allNotebooks, currentNotebookID: notebook.id) { destinationID in
                 link.destinationPageID = destinationID
                 saveCurrentPage()
             }
@@ -910,7 +917,8 @@ struct NotebookDetailView: View {
     var linkedFromStrip: some View {
         if !isPresenting, let page = currentPage {
             LinkedFromStrip(
-                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: sortedPages),
+                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: allNotebooks.flatMap { $0.pages ?? [] }),
+                currentNotebookID: notebook.id,
                 onSelect: { jumpToPage(withID: $0) })
         }
     }

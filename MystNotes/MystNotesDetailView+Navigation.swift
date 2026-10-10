@@ -20,7 +20,14 @@ extension NotebookDetailView {
     }
 
     func jumpToPage(withID id: UUID) {
-        guard let index = sortedPages.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = sortedPages.firstIndex(where: { $0.id == id }) else {
+            if let target = allNotebooks.first(where: { $0.id != notebook.id && ($0.pages ?? []).contains { $0.id == id } }) {
+                saveCurrentPage()
+                let number = ((target.pages ?? []).first { $0.id == id }?.index ?? 0) + 1
+                otherNotebookTarget = SearchResult(notebook: target, pageID: id, pageNumber: number, snippet: "")
+            }
+            return
+        }
         jumpToPage(at: index)
     }
 
