@@ -338,7 +338,8 @@ struct NotebookDetailView: View {
                         onRedo: { canvasView.undoManager?.redo() },
                         onAddTextBox: addTextBlock,
                         onAddSticker: { showingStickerPicker = true },
-                        onAddLink: { addLink() }
+                        onAddLink: { addLink() },
+                        onAddImage: { importTarget = .currentPage; showingImagePicker = true }
                     )
                 }
             }
@@ -574,7 +575,8 @@ struct NotebookDetailView: View {
                                         onRedo: { canvasView.undoManager?.redo() },
                                         onAddTextBox: addTextBlock,
                                         onAddSticker: { showingStickerPicker = true },
-                                        onAddLink: { addLink() }
+                                        onAddLink: { addLink() },
+                        onAddImage: { importTarget = .currentPage; showingImagePicker = true }
                                     )
                                     .frame(maxWidth: .infinity, alignment: .center)
                                 }

@@ -14,7 +14,7 @@ enum DrawingToolKind: Equatable {
 /// The toolbar's optional tools, which Settings can hide. The pen and the
 /// eraser are always there.
 enum ToolbarItemChoice: String, CaseIterable, Identifiable {
-    case highlighter, lasso, fill, textBox, sticker, link
+    case highlighter, lasso, fill, textBox, sticker, image, link
     var id: String { rawValue }
 
     var label: String {
@@ -24,6 +24,7 @@ enum ToolbarItemChoice: String, CaseIterable, Identifiable {
         case .fill: return "Fill"
         case .textBox: return "Text Box"
         case .sticker: return "Stickers"
+        case .image: return "Images"
         case .link: return "Links"
         }
     }
@@ -157,6 +158,8 @@ struct DrawingToolbarView: View {
     var onAddTextBox: () -> Void
     var onAddSticker: () -> Void
     var onAddLink: () -> Void
+    /// One tap to Photos, onto the open page.
+    var onAddImage: () -> Void = {}
 
     // Lets the whole bar be dragged out of the way instead of sitting fixed
     // over the canvas. Session-only (resets to the default top-center spot
@@ -215,6 +218,7 @@ struct DrawingToolbarView: View {
             // Stickers and links share the text box's rule: paged pages only.
             if shows(.textBox) { iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox) }
             if shows(.sticker) { iconButton("face.smiling", disabled: !isTextBoxAvailable, action: onAddSticker) }
+            if shows(.image) { iconButton("photo.badge.plus", disabled: !isTextBoxAvailable, action: onAddImage) }
             if shows(.link) { iconButton("link", disabled: !isTextBoxAvailable, action: onAddLink) }
         }
     }
