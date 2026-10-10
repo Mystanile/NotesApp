@@ -1183,7 +1183,9 @@ nonisolated struct SyncRunner {
                 .map {
                     LinkDTO(id: $0.id, sourcePageID: $0.sourcePageID, destinationPageID: $0.destinationPageID,
                             anchorX: $0.anchorX, anchorY: $0.anchorY,
-                            anchorWidth: $0.anchorWidth, anchorHeight: $0.anchorHeight)
+                            anchorWidth: $0.anchorWidth, anchorHeight: $0.anchorHeight,
+                            kind: $0.kind, destinationKind: $0.destinationKind,
+                            destinationID: $0.destinationID, strokeIDs: $0.strokeIDs)
                 }
             return NotebookDTO(
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
@@ -1424,6 +1426,10 @@ nonisolated struct SyncRunner {
             link.anchorY = linkDTO.anchorY
             link.anchorWidth = linkDTO.anchorWidth
             link.anchorHeight = linkDTO.anchorHeight
+            link.kind = linkDTO.kind
+            link.destinationKind = linkDTO.destinationKind
+            link.destinationID = linkDTO.destinationID
+            link.strokeIDs = linkDTO.strokeIDs
             context.insert(link)
         }
     }

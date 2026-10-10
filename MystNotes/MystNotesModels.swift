@@ -317,6 +317,20 @@ final class Link {
     var anchorWidth: Double = 44
     var anchorHeight: Double = 44
 
+    // M2: a link is a graph edge (BACKLOG, "M2 design"). All optional; nil
+    // means what every link before M2 was - an explicit link to a page,
+    // which `destinationPageID` names. `destinationPageID` stays filled for
+    // every kind that lives on a page, so older code keeps navigating.
+    /// "explicit" (nil), later "tag" and "transclusion".
+    var kind: String?
+    /// "page" (nil), "region", "textBlock", "notebook".
+    var destinationKind: String?
+    /// The target's own id when it isn't the page: a text block's or a
+    /// notebook's UUID string.
+    var destinationID: String?
+    /// A region's strokes, by their stable ids (invariant 6).
+    var strokeIDs: [String]?
+
     init(sourcePageID: UUID = UUID(), destinationPageID: UUID = UUID()) {
         self.id = UUID()
         self.sourcePageID = sourcePageID

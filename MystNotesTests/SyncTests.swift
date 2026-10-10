@@ -357,7 +357,7 @@ final class SyncTests: XCTestCase {
         XCTAssertFalse(harness.folderFileExists("library.json"), "format 1 must never be written again")
 
         let index = try harness.readIndex()
-        XCTAssertEqual(index.formatVersion, 2)
+        XCTAssertEqual(index.formatVersion, librarySnapshotFormatVersion)
         XCTAssertEqual(Set(index.notebooks.map(\.id)), [a.id, b.id])
     }
 
@@ -1373,5 +1373,53 @@ final class SyncTests: XCTestCase {
             XCTAssertTrue(pages.contains { $0.id == pageID }, "\(device.name): a page edited after deletion was lost")
             XCTAssertEqual(device.ink(forPageID: pageID), macInk, "\(device.name): the post-deletion ink was lost")
         }
+    }
+
+    // MARK: M2 - links as graph edges
+
+    /// The council's M2 model (BACKLOG, Oct 10, 2026): `Link` grows optional
+    /// kind, destination kind and id, and stroke ids. They travel with the
+    /// source page like the rest of the link.
+    func testLink_kindAndRegion_reachTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Graph", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance()
+        let link = try ipad.addLink(from: pages[0], to: pages[1])
+        link.kind = "explicit"
+        link.destinationKind = "region"
+        link.destinationID = pages[1].id.uuidString
+        link.strokeIDs = ["A1", "B2"]
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Link>()).first { $0.id == link.id })
+        XCTAssertEqual(arrived.destinationPageID, pages[1].id)
+        XCTAssertEqual(arrived.kind, "explicit")
+        XCTAssertEqual(arrived.destinationKind, "region")
+        XCTAssertEqual(arrived.destinationID, pages[1].id.uuidString)
+        XCTAssertEqual(arrived.strokeIDs, ["A1", "B2"])
+    }
+
+    /// A link written before M2 has none of the new keys and still decodes,
+    /// as a plain page link.
+    func testLinkDTO_fromBeforeM2_decodesAsAPageLink() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","sourcePageID":"\(UUID().uuidString)","destinationPageID":"\(UUID().uuidString)",
+         "anchorX":1,"anchorY":2,"anchorWidth":44,"anchorHeight":44}
+        """
+        let dto = try JSONDecoder().decode(LinkDTO.self, from: Data(json.utf8))
+        XCTAssertNil(dto.kind)
+        XCTAssertNil(dto.destinationKind)
+        XCTAssertNil(dto.destinationID)
+        XCTAssertNil(dto.strokeIDs)
+    }
+
+    /// Format 3 carries the M2 link fields. A format-2 build would decode a
+    /// page and drop them on its next write, so it must refuse the folder.
+    func testFormatVersion_isThree_forTheM2LinkFields() {
+        XCTAssertEqual(librarySnapshotFormatVersion, 3)
     }
 }

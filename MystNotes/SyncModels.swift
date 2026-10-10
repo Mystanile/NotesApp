@@ -29,7 +29,9 @@ import CryptoKit
 
 /// The newest format this build can read. A folder written by a newer
 /// build is refused, not guessed at.
-let librarySnapshotFormatVersion = 2
+/// 3 (Oct 10, 2026): `LinkDTO` gains the M2 graph fields. A format-2 build
+/// would drop them when it writes a page back, so it must refuse instead.
+let librarySnapshotFormatVersion = 3
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
 /// `.iso8601` strategy) made two edits inside one second compare equal
@@ -374,4 +376,9 @@ nonisolated struct LinkDTO: Codable {
     var anchorY: Double
     var anchorWidth: Double
     var anchorHeight: Double
+    // M2, format 3 - see `Link`.
+    var kind: String?
+    var destinationKind: String?
+    var destinationID: String?
+    var strokeIDs: [String]?
 }
