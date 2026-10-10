@@ -64,4 +64,15 @@ final class NotebookGraphTests: XCTestCase {
         try XCTUnwrap(image.pngData()).write(to: url)
         print("[shot] \(url.path)")
     }
+
+    func testPlaced_savedPositionsWin_andADragMovesOnlyItsCard() {
+        let a = UUID(), b = UUID()
+        let circle = [a: CGPoint(x: 100, y: 100), b: CGPoint(x: 300, y: 100)]
+        let size = CGSize(width: 400, height: 200)
+        let placed = NotebookGraphView.placed(circle, saved: [a: CGPoint(x: 0.5, y: 0.5), UUID(): CGPoint(x: 0, y: 0)],
+                                              dragging: (b, CGSize(width: -20, height: 30)), in: size)
+        XCTAssertEqual(placed[a], CGPoint(x: 200, y: 100))
+        XCTAssertEqual(placed[b], CGPoint(x: 280, y: 130))
+        XCTAssertEqual(placed.count, 2, "a saved position for a page that's gone is ignored")
+    }
 }

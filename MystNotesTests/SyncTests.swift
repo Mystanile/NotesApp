@@ -1462,4 +1462,33 @@ final class SyncTests: XCTestCase {
         harness.clock.advance(); try mac.sync()
         XCTAssertEqual(try mac.pages(ofNotebook: notebook.id)?.first?.tags, ["derivatives", "Exam"])
     }
+
+    /// M2 Page Map positions are a notebook setting: they sync, and moving a
+    /// card never competes with ink - the page edited on the other device
+    /// keeps its ink.
+    func testPageMapPositions_sync_withoutTouchingPages() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Map", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance()
+        let modifiedBefore = pages[0].modifiedAt
+        notebook.setGraphPosition(CGPoint(x: 0.25, y: 0.75), forPageID: pages[0].id, at: harness.clock.now)
+        try ipad.context.save()
+        XCTAssertEqual(pages[0].modifiedAt, modifiedBefore, "a card move is not a page edit")
+        let macPages = try XCTUnwrap(try mac.pages(ofNotebook: notebook.id))
+        let ink = Data("Mac ink".utf8)
+        harness.clock.advance(); try mac.edit(page: macPages[0], ink: ink)
+
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+
+        let macNotebook = try XCTUnwrap(try mac.notebook(id: notebook.id))
+        XCTAssertEqual(macNotebook.graphPositions[pages[0].id], CGPoint(x: 0.25, y: 0.75))
+        XCTAssertEqual(ipad.ink(forPageID: pages[0].id), ink, "the Mac's ink reached the iPad")
+    }
 }

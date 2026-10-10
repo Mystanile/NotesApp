@@ -49,6 +49,11 @@ final class Notebook {
     /// Opening it asks for Face ID / the passcode (`NotebookLock`). A
     /// setting, on the settings clock like the star.
     var isLocked: Bool?
+    /// M2 Page Map: where the user put each page's card, as JSON
+    /// `{"<page id>": [x, y]}` in fractions of the map. A notebook setting,
+    /// so moving a card merges on `settingsModifiedAt` and never competes
+    /// with a page's ink. Use `graphPositions` / `setGraphPosition`.
+    var graphLayout: String?
 
     var folder: Folder?
 

@@ -5,7 +5,14 @@ import SwiftUI
 struct NotebookGraphView: View {
     let pages: [Page]
     let links: [Link]
+    /// Positions the user set, in fractions of the map (`Notebook.graphPositions`).
+    var positions: [UUID: CGPoint] = [:]
+    /// A card was dropped at this position, in fractions of the map.
+    var onMove: (UUID, CGPoint) -> Void = { _, _ in }
     let onSelect: (UUID) -> Void
+
+    /// The card being dragged and how far.
+    @State private var dragging: (id: UUID, offset: CGSize)?
 
     private static let cardSize = CGSize(width: 110, height: 44)
 
@@ -38,12 +45,26 @@ struct NotebookGraphView: View {
         return out
     }
 
+    /// The circle layout, overridden by saved positions, plus a live drag.
+    static func placed(_ circle: [UUID: CGPoint], saved: [UUID: CGPoint],
+                       dragging: (id: UUID, offset: CGSize)?, in size: CGSize) -> [UUID: CGPoint] {
+        var points = circle
+        for (id, fraction) in saved where points[id] != nil {
+            points[id] = CGPoint(x: fraction.x * size.width, y: fraction.y * size.height)
+        }
+        if let dragging, let p = points[dragging.id] {
+            points[dragging.id] = CGPoint(x: p.x + dragging.offset.width, y: p.y + dragging.offset.height)
+        }
+        return points
+    }
+
     var body: some View {
         NavigationStack {
             GeometryReader { geo in
                 let sorted = pages.sorted { $0.index < $1.index }
                 let edges = Self.edges(pages: sorted, links: links)
-                let points = Self.layout(pageIDs: sorted.map(\.id), edges: edges, in: geo.size)
+                let points = Self.placed(Self.layout(pageIDs: sorted.map(\.id), edges: edges, in: geo.size),
+                                         saved: positions, dragging: dragging, in: geo.size)
                 let linked = Set(edges.flatMap { [$0.0, $0.1] })
                 ZStack {
                     Canvas { ctx, _ in
@@ -84,6 +105,14 @@ struct NotebookGraphView: View {
                             .buttonStyle(.plain)
                             .opacity(linked.contains(page.id) ? 1 : 0.45)
                             .position(pt)
+                            .simultaneousGesture(
+                                DragGesture(minimumDistance: 8)
+                                    .onChanged { dragging = (page.id, $0.translation) }
+                                    .onEnded { _ in
+                                        dragging = nil
+                                        onMove(page.id, CGPoint(x: pt.x / max(geo.size.width, 1),
+                                                                y: pt.y / max(geo.size.height, 1)))
+                                    })
                         }
                     }
                 }

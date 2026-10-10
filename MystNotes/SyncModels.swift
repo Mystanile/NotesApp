@@ -129,6 +129,8 @@ nonisolated struct NotebookIndexEntry: Codable {
     var isFavorite: Bool?
     /// Absent before note lock; nil is unlocked.
     var isLocked: Bool?
+    /// M2, format 3. See `Notebook.graphLayout`.
+    var graphLayout: String?
     /// See `NotebookDTO.contentSignature`.
     var contentSignature: String
 
@@ -142,6 +144,7 @@ nonisolated struct NotebookIndexEntry: Codable {
         folderID = notebook.folderID
         isFavorite = notebook.isFavorite
         isLocked = notebook.isLocked
+        graphLayout = notebook.graphLayout
         contentSignature = notebook.contentSignature
     }
 }
@@ -271,6 +274,8 @@ nonisolated struct NotebookDTO: Codable {
     /// Absent before favourites. Merges with the other settings.
     var isFavorite: Bool? = nil
     var isLocked: Bool? = nil
+    /// M2, format 3: Page Map positions. Merges with the other settings.
+    var graphLayout: String? = nil
     var pages: [PageDTO]
     var links: [LinkDTO]
 

@@ -464,7 +464,12 @@ struct NotebookDetailView: View {
 #endif
         }
         .sheet(isPresented: $showingPageMap) {
-            NotebookGraphView(pages: sortedPages, links: allLinks) { id in
+            NotebookGraphView(pages: sortedPages, links: allLinks,
+                              positions: notebook.graphPositions,
+                              onMove: { id, point in
+                                  notebook.setGraphPosition(point, forPageID: id)
+                                  saveMetadata("Failed to save the Page Map")
+                              }) { id in
                 showingPageMap = false
                 jumpToPage(withID: id)
             }
