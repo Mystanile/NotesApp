@@ -32,29 +32,29 @@ struct NotebookDetailView: View {
         self.initialPageID = initialPageID
     }
 
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.modelContext) var modelContext
+    @Environment(\.scenePhase) var scenePhase
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     /// The canvas for the page on screen. Replaced with a brand-new
     /// `PageCanvasView` every time a page is opened or created - see
     /// installFreshCanvas - so no ink, zoom or undo history can carry over
     /// from one page to the next.
-    @State private var canvasView: PKCanvasView = PageCanvasView()
+    @State var canvasView: PKCanvasView = PageCanvasView()
     // Seeded from the same Settings-configurable defaults PencilKit's own
     // tool used to start from (AppSettings.initialTool()); this is now the
     // single source of truth for canvasView.tool, replacing PKToolPicker.
-    @State private var toolState = DrawingToolState(
+    @State var toolState = DrawingToolState(
         penInkType: AppSettings.inkType(for: AppSettings.defaultToolType),
         penColor: Color(hex: AppSettings.defaultInkColorHex),
         penWidth: AppSettings.defaultInkWidth,
         shapeLineStyle: AppSettings.shapeLineStyle
     )
     /// The toolbar's open options popover; a Pencil squeeze sets it.
-    @State private var openToolOptions: DrawingToolKind?
+    @State var openToolOptions: DrawingToolKind?
 #else
     // Placeholder for macOS native - PencilKit not available
-    @State private var canvasView: Any?
+    @State var canvasView: Any?
 #endif
 
     /// The live pan/zoom of the paged canvas. Not @State: it's a reference
@@ -62,19 +62,19 @@ struct NotebookDetailView: View {
     /// actually read it (`PageViewportLayer`) re-render when it changes -
     /// putting it in this view's state would re-evaluate this whole body
     /// sixty times a second during a pinch.
-    @State private var viewport = CanvasViewport()
+    @State var viewport = CanvasViewport()
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     /// The lasso's selection. Ours, not PencilKit's: `PKLassoTool` never
     /// says which strokes it holds, so a pinch could not be put on it.
     /// See `InkSelectionController`.
-    @State private var inkSelection = InkSelectionController()
+    @State var inkSelection = InkSelectionController()
 #endif
 
-    @State private var currentPageIndex: Int = 0
-    @State private var canUndo = false
-    @State private var canRedo = false
-    @State private var autosaveTask: Task<Void, Never>?
-    private let drawingStore = DrawingStore.live
+    @State var currentPageIndex: Int = 0
+    @State var canUndo = false
+    @State var canRedo = false
+    @State var autosaveTask: Task<Void, Never>?
+    let drawingStore = DrawingStore.live
 
     // Which page's ink the canvas currently holds, and whether the user has
     // changed it since it was loaded. Every save goes to `canvasPageID`,
@@ -85,71 +85,71 @@ struct NotebookDetailView: View {
     // under an open notebook shifted `currentPage` without the canvas
     // following, so the next save would have written one page's ink into
     // another's file.
-    @State private var canvasPageID: UUID?
-    @State private var canvasIsDirty = false
+    @State var canvasPageID: UUID?
+    @State var canvasIsDirty = false
     /// The modifiedAt our own last save stamped, so the "page changed
     /// under us" reload below can tell a pull from our autosave. Reloading
     /// after every autosave would reinstall the canvas mid-stroke.
-    @State private var ownSaveDate: Date?
+    @State var ownSaveDate: Date?
     /// The ink record as the canvas last had it - when it loaded, or when
     /// this device last wrote it. A reload is only for ink that changed
     /// under the canvas (a pull); anything else on the page redraws from
     /// the models by itself.
-    @State private var loadedInkStamp: InkStamp?
+    @State var loadedInkStamp: InkStamp?
     /// The page strip's visibility and height, persisted (`AppSettings`)
     /// so a strip you hid or dragged bigger stays that way - across page
     /// turns, notebooks, windows and launches.
-    @AppStorage(AppSettings.Keys.pageStripVisible) private var showingPageStrip = true
-    @AppStorage(AppSettings.Keys.pageStripHeight) private var pageStripHeight = PageStripMetrics.defaultHeight
+    @AppStorage(AppSettings.Keys.pageStripVisible) var showingPageStrip = true
+    @AppStorage(AppSettings.Keys.pageStripHeight) var pageStripHeight = PageStripMetrics.defaultHeight
     /// The height the current drag started from, and how far it has moved.
     /// The live height is computed from these rather than written straight
     /// to the stored preference - a drag would otherwise write to
     /// `UserDefaults` on every frame.
-    @State private var pageStripDragStart: CGFloat?
-    @State private var pageStripDragTranslation: CGFloat = 0
+    @State var pageStripDragStart: CGFloat?
+    @State var pageStripDragTranslation: CGFloat = 0
 
     /// Hold-to-snap: what the stroke in progress will snap to when the
     /// pencil lifts, previewed over the page in the tool's own ink.
-    @State private var shapePreview: ShapeRecognizer.RecognizedShape?
+    @State var shapePreview: ShapeRecognizer.RecognizedShape?
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
     /// The tool that was active before an Apple Pencil double-tap switched to
     /// the eraser, so a second double-tap can switch straight back to it.
-    @State private var toolBeforeEraser: DrawingToolKind?
+    @State var toolBeforeEraser: DrawingToolKind?
 #endif
     /// Non-nil while a piece of imported artwork on this page is being
     /// moved or resized; holds its live frame in page coordinates.
-    @State private var adjustingImageFrame: CGRect?
+    @State var adjustingImageFrame: CGRect?
     /// Which layer of the page's artwork stack those handles are on. A
     /// page can hold several - a PDF page as its paper, photos over it -
     /// so the handles, rotate, crop and remove all act on this one only.
     /// For a page from before `ImportedDocument` existed it is the page's
     /// own id (see `ArtworkLayer.stack`).
-    @State private var adjustingLayerID: UUID?
+    @State var adjustingLayerID: UUID?
     /// Non-nil while cropping that artwork; the crop rect in page
     /// coordinates, always kept inside `adjustingImageFrame`.
-    @State private var croppingRect: CGRect?
-    @State private var pageToRename: Page?
-    @State private var pageTitleText = ""
+    @State var croppingRect: CGRect?
+    @State var pageToRename: Page?
+    @State var pageTitleText = ""
     /// See `newPageSizeLabel`.
-    @State private var newPageAspect: Double?
+    @State var newPageAspect: Double?
     /// The artwork as it was when the handles opened: one undo step per
     /// session, however many moves, rotations and crops it held.
-    @State private var adjustingSnapshot: ArtworkSnapshot?
+    @State var adjustingSnapshot: ArtworkSnapshot?
     /// Files a removed picture left unused. Trashed only once the removal
     /// can't be undone - when the page's undo stack goes, on a page turn or
     /// leaving the notebook - so undo never brings back a picture with no
     /// file. Killed before then, the file just stays (invariant 1).
-    @State private var pendingTrash: Set<String> = []
-    @State private var showingStickerPicker = false
+    @State var pendingTrash: Set<String> = []
+    @State var showingStickerPicker = false
     /// VisionKit's document camera; the scan arrives as new pages.
-    @State private var showingScanner = false
-    @State private var linkNeedingDestination: Link?
+    @State var showingScanner = false
+    @State var linkNeedingDestination: Link?
 
     /// Whether an import lands on the page you're looking at or creates new
     /// page(s) after it. Set by whichever Import menu item was tapped, read
     /// when the picker comes back.
-    private enum ImportTarget { case newPages, currentPage }
-    @State private var importTarget: ImportTarget = .newPages
+    enum ImportTarget { case newPages, currentPage }
+    @State var importTarget: ImportTarget = .newPages
 
     /// One Files importer for PDFs and images both. There must be exactly
     /// one `.fileImporter` on this view: SwiftUI gives a view a single
@@ -158,58 +158,58 @@ struct NotebookDetailView: View {
     /// (Sept 18-19, 2026) because an image importer was added after it.
     /// The menu item decides which types the picker offers; the file's own
     /// header decides which import path it takes.
-    @State private var showingFileImporter = false
-    @State private var fileImporterTypes: [UTType] = [.pdf]
+    @State var showingFileImporter = false
+    @State var fileImporterTypes: [UTType] = [.pdf]
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    @State private var showingImagePicker = false
-    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State var showingImagePicker = false
+    @State var selectedPhotoItem: PhotosPickerItem?
     #endif
 
-    @State private var isPresenting = false
+    @State var isPresenting = false
     /// The drawing toolbar lives in the navigation bar's principal slot, on
     /// the row with Play / Pages / + / Save (GoodNotes' layout). That slot
     /// is squeezed to nothing in compact width (Slide Over, a narrow split),
     /// so there the bar falls back to floating over the canvas.
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    private var drawingToolbarInNavigationBar: Bool { horizontalSizeClass != .compact }
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    var drawingToolbarInNavigationBar: Bool { horizontalSizeClass != .compact }
     /// Delete Page is undoable: the page is hidden, not deleted, until the
     /// deletion can no longer be undone - a turn to any page other than the
     /// one it landed on, leaving the notebook, or another deletion. Then
     /// `PageDeletion` runs. Killed before that, the page is simply still
     /// there, which is the safe side of invariant 1.
-    @State private var pendingDeletion: (pageID: UUID, landingPageID: UUID?)?
+    @State var pendingDeletion: (pageID: UUID, landingPageID: UUID?)?
     /// The "Page deleted" banner hides after a few seconds; the deletion
     /// stays undoable with the undo button until it commits.
-    @State private var showingDeletionBanner = false
-    @State private var deletionBannerTask: Task<Void, Never>?
+    @State var showingDeletionBanner = false
+    @State var deletionBannerTask: Task<Void, Never>?
     /// The page whose context menu opened the copy sheet; it starts ticked.
-    @State private var pageToCopy: Page?
-    @State private var showingSaveConfirmation = false
-    @State private var saveConfirmationTask: Task<Void, Never>?
-    @State private var pdfExportURL: PDFExport?
-    @State private var exportMessage: String?
+    @State var pageToCopy: Page?
+    @State var showingSaveConfirmation = false
+    @State var saveConfirmationTask: Task<Void, Never>?
+    @State var pdfExportURL: PDFExport?
+    @State var exportMessage: String?
 
     /// Identifiable wrapper so a finished PDF can drive a `.sheet(item:)`.
-    private struct PDFExport: Identifiable {
+    struct PDFExport: Identifiable {
         let id = UUID()
         let url: URL
     }
 
-    @Query private var allLinks: [Link]
-    @Query private var allImportedDocuments: [ImportedDocument]
+    @Query var allLinks: [Link]
+    @Query var allImportedDocuments: [ImportedDocument]
 
     /// Bookmarked or named pages, in page order, with their page numbers.
-    private var outline: [(number: Int, page: Page)] {
+    var outline: [(number: Int, page: Page)] {
         sortedPages.enumerated()
             .filter { $1.isBookmarked == true || !($1.title ?? "").isEmpty }
             .map { (number: $0 + 1, page: $1) }
     }
 
-    private var sortedPages: [Page] {
+    var sortedPages: [Page] {
         (notebook.pages ?? []).filter { $0.id != pendingDeletion?.pageID }.sorted { $0.index < $1.index }
     }
 
-    private var currentPage: Page? {
+    var currentPage: Page? {
         guard sortedPages.indices.contains(currentPageIndex) else { return nil }
         return sortedPages[currentPageIndex]
     }
@@ -217,12 +217,12 @@ struct NotebookDetailView: View {
     /// Which page is on screen *and* how new it is, watched as one value so
     /// a page turn and a remote edit to the page you're on can be told
     /// apart. See the `.onChange` that reads it.
-    private struct PageStamp: Equatable {
+    struct PageStamp: Equatable {
         var id: UUID?
         var date: Date?
     }
 
-    private var currentPageStamp: PageStamp {
+    var currentPageStamp: PageStamp {
         PageStamp(id: currentPage?.id, date: currentPage?.modifiedAt)
     }
 
@@ -635,7 +635,7 @@ struct NotebookDetailView: View {
     }
 
     @ViewBuilder
-    private func canvasSection(for page: Page) -> some View {
+    func canvasSection(for page: Page) -> some View {
         if page.type == "whiteboard" {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
             WhiteboardCanvasView(
@@ -699,7 +699,7 @@ struct NotebookDetailView: View {
     /// `PageViewportLayer`, so all of it stays registered with the ink at
     /// every scale.
     @ViewBuilder
-    private func pagedCanvas(for page: Page) -> some View {
+    func pagedCanvas(for page: Page) -> some View {
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
         let pageSize = PageGeometry.contentSize(for: page)
 
@@ -872,7 +872,7 @@ struct NotebookDetailView: View {
     /// The page strip, with a grabber along its top edge: drag to resize,
     /// drag below the minimum to put it away, and the toolbar's pages
     /// button brings it back. Both the height and the visibility persist.
-    private var pageStrip: some View {
+    var pageStrip: some View {
         VStack(spacing: 0) {
             pageStripGrabber
             pageStripContent
@@ -884,12 +884,12 @@ struct NotebookDetailView: View {
 
     /// What the strip is actually this tall right now: the stored height,
     /// or the in-progress drag.
-    private var liveStripHeight: CGFloat {
+    var liveStripHeight: CGFloat {
         guard let start = pageStripDragStart else { return PageStripMetrics.clamped(pageStripHeight) }
         return PageStripMetrics.clamped(start - pageStripDragTranslation)
     }
 
-    private var pageStripGrabber: some View {
+    var pageStripGrabber: some View {
         // A capsule, like every other resizable drawer on the platform.
         Capsule()
             .fill(Color.secondary.opacity(pageStripDragStart == nil ? 0.35 : 0.7))
@@ -934,7 +934,7 @@ struct NotebookDetailView: View {
             }
     }
 
-    private var pageStripContent: some View {
+    var pageStripContent: some View {
         // Lazy, emphatically: a plain HStack builds every page's thumbnail
         // the moment the notebook opens, and each one decodes that page's
         // ink record and rasterizes its background. A 200-page notebook did
@@ -1058,7 +1058,7 @@ struct NotebookDetailView: View {
     /// Double-tapping the grabber jumps between the size you had and a big
     /// one, the way a double-click on a window edge does - so "let me
     /// actually see these pages" is one gesture, not a drag.
-    private func togglePageStripSize() {
+    func togglePageStripSize() {
         withAnimation(.snappy) {
             pageStripHeight = pageStripHeight < PageStripMetrics.maximumHeight - 1
                 ? PageStripMetrics.maximumHeight
@@ -1068,7 +1068,7 @@ struct NotebookDetailView: View {
 
     // MARK: - Setup
 
-    private func openFirstPage() {
+    func openFirstPage() {
         if let id = initialPageID,
            let idx = sortedPages.firstIndex(where: { $0.id == id }) {
             currentPageIndex = idx
@@ -1080,14 +1080,14 @@ struct NotebookDetailView: View {
 
     // MARK: - Page navigation
 
-    private func jumpToPage(at index: Int) {
+    func jumpToPage(at index: Int) {
         guard index != currentPageIndex, sortedPages.indices.contains(index) else { return }
         saveCurrentPage()
         currentPageIndex = index
         loadCurrentPageDrawing()
     }
 
-    private func jumpToPage(withID id: UUID) {
+    func jumpToPage(withID id: UUID) {
         guard let index = sortedPages.firstIndex(where: { $0.id == id }) else { return }
         jumpToPage(at: index)
     }
@@ -1095,7 +1095,7 @@ struct NotebookDetailView: View {
     /// Puts the page at `targetIndex` and re-sequences the rest, keeping
     /// the open page open. Every page whose index changed is marked
     /// modified, so the new order syncs.
-    private func movePage(withID id: UUID, to targetIndex: Int) {
+    func movePage(withID id: UUID, to targetIndex: Int) {
         var pages = sortedPages
         guard let from = pages.firstIndex(where: { $0.id == id }), from != targetIndex,
               pages.indices.contains(targetIndex) else { return }
@@ -1113,7 +1113,7 @@ struct NotebookDetailView: View {
     /// used again. Only the paper layer comes along, not photos placed on
     /// top, and no ink. The file is shared by name, as pages of one PDF
     /// import already share theirs.
-    private func addPage(like source: Page) {
+    func addPage(like source: Page) {
         saveCurrentPage()
         // Everything after the source moves up one - before the new page
         // exists, so it can't be counted among them.
@@ -1146,12 +1146,12 @@ struct NotebookDetailView: View {
     /// The shape the next New Page takes: a size picked from the menu, or
     /// nil for the shape of the page you're on - so a landscape notebook,
     /// or one continuing a PDF, keeps going in that shape.
-    private var newPageSizeLabel: String {
+    var newPageSizeLabel: String {
         guard let aspect = newPageAspect else { return "Same as This Page" }
         return PageGeometry.sizes.first { abs($0.aspect - aspect) < 0.0001 }?.label ?? "Custom"
     }
 
-    private func addPage(type: String, template: String) {
+    func addPage(type: String, template: String) {
         saveCurrentPage()
 
         let newIndex = sortedPages.count
@@ -1184,7 +1184,7 @@ struct NotebookDetailView: View {
     /// stroke ids (`DrawingStore.copyDetached`). Artwork files are shared
     /// by name, as pages of one PDF import already share theirs. Links are
     /// not copied: they point at pages of this notebook.
-    private func copyPages(_ pages: [Page], to destination: Notebook) async {
+    func copyPages(_ pages: [Page], to destination: Notebook) async {
         saveCurrentPage()
         var index = (destination.pages ?? []).count
         for source in pages {
@@ -1240,7 +1240,7 @@ struct NotebookDetailView: View {
     /// Delete Page: hides the page now and deletes it for real only once
     /// that can't be undone (`pendingDeletion`). Undo is the banner's
     /// button, or the undo button while you're on the page you landed on.
-    private func requestDeletePage(_ page: Page) {
+    func requestDeletePage(_ page: Page) {
         commitPendingDeletion()
         guard sortedPages.count > 1, let index = sortedPages.firstIndex(where: { $0.id == page.id }) else { return }
         saveCurrentPage()
@@ -1271,7 +1271,7 @@ struct NotebookDetailView: View {
         }
     }
 
-    private func undoPendingDeletion() {
+    func undoPendingDeletion() {
         guard let pending = pendingDeletion else { return }
         pendingDeletion = nil
         guard let index = sortedPages.firstIndex(where: { $0.id == pending.pageID }) else { return }
@@ -1282,7 +1282,7 @@ struct NotebookDetailView: View {
 
     /// The pending page is already out of `sortedPages`, so deleting it for
     /// real moves no other page's position and the open page stays open.
-    private func commitPendingDeletion() {
+    func commitPendingDeletion() {
         guard let pending = pendingDeletion else { return }
         pendingDeletion = nil
         guard let page = notebook.pages?.first(where: { $0.id == pending.pageID }) else { return }
@@ -1296,23 +1296,23 @@ struct NotebookDetailView: View {
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     /// The page's artwork stack, bottom first, as values for a renderer.
-    private func artwork(for page: Page) -> [ArtworkLayer] {
+    func artwork(for page: Page) -> [ArtworkLayer] {
         ArtworkLayer.stack(for: page, stacked: documentsByPageID)
     }
 
     /// The page's artwork stack as the documents themselves, for editing.
-    private func documents(on page: Page) -> [ImportedDocument] {
+    func documents(on page: Page) -> [ImportedDocument] {
         ImportedDocument.stack(on: page.id, in: allImportedDocuments)
     }
 
     /// `ImportedDocument` has no inverse relationship from `Page`, so the
     /// mapping is built here once per update rather than scanned once per
     /// page - the page strip asks for every page in the notebook.
-    private var documentsByPageID: [UUID: [ImportedDocument]] {
+    var documentsByPageID: [UUID: [ImportedDocument]] {
         ImportedDocument.stacksByPage(allImportedDocuments)
     }
 
-    private func exportPageToPhotos() {
+    func exportPageToPhotos() {
         guard let page = currentPage else { return }
         // Flush pending ink first so the export matches what's on screen.
         saveCurrentPage()
@@ -1327,14 +1327,14 @@ struct NotebookDetailView: View {
         }
     }
 
-    private func exportPageAsPDF() {
+    func exportPageAsPDF() {
         guard let page = currentPage else { return }
         saveCurrentPage()
         let data = PageRenderer.pdfData(for: [(page: page, artwork: artwork(for: page))])
         presentPDF(data, named: "\(notebook.title) - Page \(currentPageIndex + 1)")
     }
 
-    private func exportNotebookAsPDF() {
+    func exportNotebookAsPDF() {
         saveCurrentPage()
         let entries = sortedPages.map { (page: $0, artwork: artwork(for: $0)) }
         guard !entries.isEmpty else { return }
@@ -1342,7 +1342,7 @@ struct NotebookDetailView: View {
         presentPDF(data, named: notebook.title)
     }
 
-    private func presentPDF(_ data: Data, named name: String) {
+    func presentPDF(_ data: Data, named name: String) {
         do {
             pdfExportURL = PDFExport(url: try PageRenderer.writeTemporaryPDF(data, named: name))
         } catch {
@@ -1355,7 +1355,7 @@ struct NotebookDetailView: View {
     /// the topmost one under the finger, or none - never the PDF that is
     /// the page (`ImportedArtwork.layerToAdjust`).
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func beginAdjustingImage(on page: Page, at point: CGPoint) {
+    func beginAdjustingImage(on page: Page, at point: CGPoint) {
         guard let pressed = ImportedArtwork.layerToAdjust(at: point, in: artwork(for: page),
                                                           pageSize: PageGeometry.contentSize(for: page)) else { return }
         beginAdjustingImage(on: page, layerID: pressed)
@@ -1367,7 +1367,7 @@ struct NotebookDetailView: View {
     /// The ink comes from the record, never the canvas: a canvas can be
     /// blank only because its ink hasn't arrived, and a turned blank saved
     /// now would out-date the real ink in the merge.
-    private func rotatePage(_ page: Page, clockwise: Bool = true) {
+    func rotatePage(_ page: Page, clockwise: Bool = true) {
         jumpToPage(withID: page.id)
         saveCurrentPage(blocking: true)
         let stored = drawingStore.load(pageID: page.id)
@@ -1395,7 +1395,7 @@ struct NotebookDetailView: View {
 
     /// Page strip menu: the crop handles on the PDF that is the page, which
     /// a long-press no longer opens.
-    private func cropPage(_ page: Page) {
+    func cropPage(_ page: Page) {
         guard let paper = artwork(for: page).first, paper.isPaper else { return }
         jumpToPage(withID: page.id)
         beginAdjustingImage(on: page, layerID: paper.id)
@@ -1405,7 +1405,7 @@ struct NotebookDetailView: View {
     /// Opens the handles on one layer. Used right after importing onto an
     /// existing page too, so a photo can be placed straight away rather
     /// than always landing aspect-fit in the middle.
-    private func beginAdjustingImage(on page: Page, layerID: UUID) {
+    func beginAdjustingImage(on page: Page, layerID: UUID) {
         guard adjustingImageFrame == nil,
               let layer = artwork(for: page).first(where: { $0.id == layerID }) else { return }
         // Never adjusted: start from the artwork's actual aspect-fit rect,
@@ -1421,7 +1421,7 @@ struct NotebookDetailView: View {
     /// The document the handles are on. A page from before
     /// `ImportedDocument` existed has only a `backgroundRef`; the first
     /// edit gives it a document so the placement has somewhere to live.
-    private func adjustingDocument(on page: Page) -> ImportedDocument? {
+    func adjustingDocument(on page: Page) -> ImportedDocument? {
         let stack = documents(on: page)
         if let doc = stack.first(where: { $0.id == adjustingLayerID }) { return doc }
         guard adjustingLayerID == page.id, stack.isEmpty,
@@ -1437,7 +1437,7 @@ struct NotebookDetailView: View {
 
     /// Quarter-turn clockwise. The placement frame's aspect is flipped to
     /// match so the artwork doesn't end up stretched by the rotation.
-    private func rotateImage(on page: Page) {
+    func rotateImage(on page: Page) {
         guard let doc = adjustingDocument(on: page) else { return }
         doc.rotationDegrees = ((doc.rotationDegrees ?? 0) + 90).truncatingRemainder(dividingBy: 360)
 
@@ -1466,7 +1466,7 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to rotate image")
     }
 
-    private func toggleCropMode() {
+    func toggleCropMode() {
         if croppingRect != nil {
             croppingRect = nil                 // cancel, leaving the crop untouched
         } else if let frame = adjustingImageFrame {
@@ -1477,7 +1477,7 @@ struct NotebookDetailView: View {
     /// Composes the new crop with whatever crop is already applied: the
     /// on-screen artwork is the *already cropped* image, so the rect the
     /// user drew is relative to that, not to the original file.
-    private func applyCrop(on page: Page) {
+    func applyCrop(on page: Page) {
         defer { croppingRect = nil }
         guard let frame = adjustingImageFrame,
               let crop = croppingRect,
@@ -1509,7 +1509,7 @@ struct NotebookDetailView: View {
 
     /// Removes the artwork the handles are on - only that one; the rest
     /// of the stack stays. Undoable: its file waits in `pendingTrash`.
-    private func removeImage(from page: Page) {
+    func removeImage(from page: Page) {
         defer { endAdjusting() }
         guard let doc = adjustingDocument(on: page) else { return }
         changeArtwork(doc.id, on: page, from: adjustingSnapshot ?? ArtworkSnapshot(doc), to: nil)
@@ -1518,7 +1518,7 @@ struct NotebookDetailView: View {
     /// Moves one piece of artwork from `old` to `new` (nil: not there) and
     /// registers the way back on the page's undo stack; undoing registers
     /// the way forward again, which is redo.
-    private func changeArtwork(_ id: UUID, on page: Page, from old: ArtworkSnapshot?, to new: ArtworkSnapshot?) {
+    func changeArtwork(_ id: UUID, on page: Page, from old: ArtworkSnapshot?, to new: ArtworkSnapshot?) {
         if let orphan = ArtworkEdits.apply(new, id: id, page: page, in: modelContext) { pendingTrash.insert(orphan) }
         if let ref = new?.fileRef { pendingTrash.remove(ref) }
         page.markModified()
@@ -1530,14 +1530,14 @@ struct NotebookDetailView: View {
         refreshUndoRedoState()
     }
 
-    private func commitPendingTrash() {
+    func commitPendingTrash() {
         for ref in pendingTrash where !allImportedDocuments.contains(where: { $0.fileRef == ref }) {
             drawingStore.trashPayload(named: ref)
         }
         pendingTrash = []
     }
 
-    private func endAdjusting() {
+    func endAdjusting() {
         adjustingImageFrame = nil
         adjustingLayerID = nil
         adjustingSnapshot = nil
@@ -1545,7 +1545,7 @@ struct NotebookDetailView: View {
         updateCanvasInteractionEnabled()
     }
 
-    private func finishAdjustingImage(on page: Page) {
+    func finishAdjustingImage(on page: Page) {
         defer { endAdjusting() }
         guard let frame = adjustingImageFrame,
               let doc = adjustingDocument(on: page),
@@ -1570,9 +1570,9 @@ struct NotebookDetailView: View {
     }
     #else
     // Not available on native macOS (no PencilKit canvas to place against).
-    private func beginAdjustingImage(on page: Page, at point: CGPoint) {}
-    private func beginAdjustingImage(on page: Page, layerID: UUID) {}
-    private func finishAdjustingImage(on page: Page) {}
+    func beginAdjustingImage(on page: Page, at point: CGPoint) {}
+    func beginAdjustingImage(on page: Page, layerID: UUID) {}
+    func finishAdjustingImage(on page: Page) {}
     #endif
 
     /// Puts an imported file behind an existing page's ink instead of
@@ -1588,7 +1588,7 @@ struct NotebookDetailView: View {
     /// different - it's a picture placed on a page - so it keeps the
     /// centred fit and opens the placement handles.
     @discardableResult
-    private func applyBackground(
+    func applyBackground(
         _ storedFilename: String,
         sourceType: String,
         pdfPageIndex: Int,
@@ -1635,7 +1635,7 @@ struct NotebookDetailView: View {
     /// proportions and let the artwork fill it. Only untouched imports
     /// qualify - anything that was deliberately moved, resized or cropped
     /// is left exactly as it was placed.
-    private func adoptImportedPageShapeIfNeeded(_ page: Page) {
+    func adoptImportedPageShapeIfNeeded(_ page: Page) {
         let stack = documents(on: page)
         guard page.aspectRatio == nil,
               let ref = page.backgroundRef,
@@ -1658,7 +1658,7 @@ struct NotebookDetailView: View {
 
     /// Writes the import into the library off the main actor and returns
     /// its stored filename.
-    nonisolated private static func writeImport(_ data: Data, extension ext: String) async -> String? {
+    nonisolated static func writeImport(_ data: Data, extension ext: String) async -> String? {
         await Task.detached(priority: .userInitiated) { () -> String? in
             let storedFilename = "\(UUID().uuidString).\(ext)"
             let destination = FileStore.baseDirectory().appendingPathComponent(storedFilename)
@@ -1674,7 +1674,7 @@ struct NotebookDetailView: View {
 
     /// Sets the picker's types before presenting it, so the one importer
     /// on this view can serve both the PDF and the image menu items.
-    private func presentFileImporter(for types: [UTType]) {
+    func presentFileImporter(for types: [UTType]) {
         fileImporterTypes = types
         showingFileImporter = true
     }
@@ -1682,7 +1682,7 @@ struct NotebookDetailView: View {
     /// The PDF import proper. Takes bytes rather than a URL so a PDF that
     /// was pasted or dragged in goes down exactly the same path as one
     /// picked from Files.
-    private func importPDF(data: Data, target: ImportTarget) async {
+    func importPDF(data: Data, target: ImportTarget) async {
         guard let document = PDFDocument(data: data) else {
             exportMessage = "That file isn't a PDF Mystnotes can read."
             return
@@ -1763,7 +1763,7 @@ struct NotebookDetailView: View {
     /// a `UIImage` and re-encoded JPEG at 0.9 on the main actor - lossy for
     /// a PNG screenshot, and a full decode of a 12-megapixel photo on the
     /// thread that has to stay clear for ink (invariant 10).
-    private func importImage(data: Data, target: ImportTarget) async {
+    func importImage(data: Data, target: ImportTarget) async {
         guard let kind = ImportedFileType.of(data) else {
             exportMessage = "That file isn't an image Mystnotes can read."
             return
@@ -1808,7 +1808,7 @@ struct NotebookDetailView: View {
         installFreshCanvas(forPageID: page.id)
     }
 
-    private func importImage(from item: PhotosPickerItem) async {
+    func importImage(from item: PhotosPickerItem) async {
         defer { selectedPhotoItem = nil }
         guard let data = try? await item.loadTransferable(type: Data.self) else { return }
         await importImage(data: data, target: importTarget)
@@ -1817,7 +1817,7 @@ struct NotebookDetailView: View {
     /// A file chosen in the Files/Finder importer. Images and PDFs both
     /// arrive here, and the sniffed type decides which way they go - so
     /// picking a PDF from the image importer still does the right thing.
-    private func importFile(from url: URL) {
+    func importFile(from url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url) else {
@@ -1830,13 +1830,13 @@ struct NotebookDetailView: View {
 
     /// Whether the Import menu's Paste Image item should be live. A
     /// silent check - see `CanvasPasteboard`.
-    private var pasteboardHasImage: Bool { CanvasPasteboard.hasImage }
+    var pasteboardHasImage: Bool { CanvasPasteboard.hasImage }
 
     /// The menu route to the same thing ⌘V does. The keyboard route goes
     /// through the responder chain instead (`CanvasHostView.paste`), which
     /// is the only way to get the system Edit menu's own Paste item to
     /// reach the canvas.
-    private func pasteImageFromClipboard() {
+    func pasteImageFromClipboard() {
         guard let data = CanvasPasteboard.payload() else {
             exportMessage = "There's no image on the clipboard."
             return
@@ -1847,14 +1847,14 @@ struct NotebookDetailView: View {
     /// ⌘V, or a picture dragged onto the page from Finder / Files / another
     /// app. Always lands on the page you're looking at - that's where you
     /// dropped it.
-    private func importDroppedOrPasted(_ data: Data, onto page: Page) {
+    func importDroppedOrPasted(_ data: Data, onto page: Page) {
         guard !isPresenting else { return }
         Task { await importImage(data: data, target: .currentPage) }
     }
 
     #else
     // Dummy implementation for macOS native
-    private func importImage(from item: PhotosPickerItem) async {
+    func importImage(from item: PhotosPickerItem) async {
         // Do nothing
     }
     #endif
@@ -1865,7 +1865,7 @@ struct NotebookDetailView: View {
     /// same Vision pipeline search uses, becomes a text box where the ink
     /// was, and the ink goes - one undo step that brings the ink back and
     /// takes the box away.
-    private func convertSelectionToText(on page: Page) {
+    func convertSelectionToText(on page: Page) {
         guard let selection = inkSelection.selectedStrokes else { return }
         let canvas = canvasView
         Task {
@@ -1892,7 +1892,7 @@ struct NotebookDetailView: View {
 
     /// Adds or removes one text box and registers the opposite on the
     /// page's undo stack (so undo registers redo).
-    private func setTextBlock(_ snapshot: TextBlockSnapshot, present: Bool, on page: Page) {
+    func setTextBlock(_ snapshot: TextBlockSnapshot, present: Bool, on page: Page) {
         if present {
             let block = TypedTextBlock(content: snapshot.content, page: page)
             block.id = snapshot.id
@@ -1913,7 +1913,7 @@ struct NotebookDetailView: View {
         }
     }
 
-    private func addTextBlock() {
+    func addTextBlock() {
         guard let page = currentPage else { return }
         let block = TypedTextBlock(content: "", page: page)
         block.frameX = 60
@@ -1928,7 +1928,7 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to save text block")
     }
 
-    private func addSticker(_ symbolName: String) {
+    func addSticker(_ symbolName: String) {
         guard let page = currentPage else { return }
         let sticker = Sticker(assetRef: symbolName, page: page)
         sticker.frameX = 100
@@ -1943,7 +1943,7 @@ struct NotebookDetailView: View {
         saveMetadata("Failed to save sticker")
     }
 
-    private func addLink() {
+    func addLink() {
         guard let page = currentPage else { return }
         // Placeholder self-referencing destination — immediately prompting
         // the picker below means the user always ends up choosing a real
@@ -1960,7 +1960,7 @@ struct NotebookDetailView: View {
     // MARK: - Drawing tool
 
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
-    private func applyToolState() {
+    func applyToolState() {
         // Named in the log so a stall while switching tools or colours
         // says so - see MainThreadWatchdog.
         MainThreadWatchdog.checkpoint("DetailView.applyToolState")
@@ -1983,7 +1983,7 @@ struct NotebookDetailView: View {
     /// double-tap jump back to whatever tool was in hand. `.onChange(of:
     /// toolState)` pushes the change down to the canvas and the toolbar
     /// highlight follows automatically.
-    private func togglePencilEraser() {
+    func togglePencilEraser() {
         if toolState.activeKind == .eraser {
             toolState.activeKind = toolBeforeEraser ?? .pen
             toolBeforeEraser = nil
@@ -1996,18 +1996,18 @@ struct NotebookDetailView: View {
     /// Apple Pencil Pro squeeze: open the options of the tool in hand. The
     /// lasso has none, so the pen's open then. A second squeeze closes
     /// them again.
-    private func openColorOptions() {
+    func openColorOptions() {
         if openToolOptions != nil { openToolOptions = nil; return }
         let kind = toolState.activeKind
         openToolOptions = kind == .lasso ? .pen : kind
     }
 
     /// Image handles take the touches while an image is being adjusted.
-    private func updateCanvasInteractionEnabled() {
+    func updateCanvasInteractionEnabled() {
         canvasView.isUserInteractionEnabled = adjustingImageFrame == nil
     }
 
-    private func performFill(at point: CGPoint, on page: Page) {
+    func performFill(at point: CGPoint, on page: Page) {
         let drawing = canvasView.drawing
         let size = PageGeometry.contentSize(for: page)
         let color = toolState.fillColor.fixedUIColor
@@ -2024,7 +2024,7 @@ struct NotebookDetailView: View {
     /// Presentation mode is meant to be a clean, non-interactive view, but
     /// the fill tool acts on a tap - left armed, a stray tap on the
     /// presented page would fill a region. Stand it down on the way in.
-    private func enterPresentationMode() {
+    func enterPresentationMode() {
         shapePreview = nil
         adjustingImageFrame = nil
         adjustingLayerID = nil
@@ -2036,246 +2036,4 @@ struct NotebookDetailView: View {
         isPresenting = true
     }
 
-    // MARK: - Drawing persistence
-
-    private func loadCurrentPageDrawing() {
-        MainThreadWatchdog.checkpoint("DetailView.loadCurrentPageDrawing")
-        guard let page = currentPage else {
-            installFreshCanvas(forPageID: nil)
-            return
-        }
-        // A different page means a different sheet: the canvas refits it, so
-        // stand the dependent layers down until it reports back rather than
-        // letting them flash at the outgoing page's zoom.
-        viewport.reset(for: page.id)
-        // The placement handles belong to the page they were opened on.
-        // Leaving a page with them up used to carry that rect onto the next
-        // page - and `ImportedPageBackgroundView` draws its artwork at
-        // `liveFrame` whenever one is set, so the incoming page's picture
-        // would be drawn in the outgoing page's box.
-        if page.id != canvasPageID {
-            adjustingImageFrame = nil
-            adjustingLayerID = nil
-            croppingRect = nil
-        }
-        adoptImportedPageShapeIfNeeded(page)
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        var drawing = PKDrawing()
-        if let saved = drawingStore.load(pageID: page.id) {
-            drawing = fittingWithinPage(saved, on: page)
-        }
-        installFreshCanvas(with: drawing, forPageID: page.id)
-#else
-        installFreshCanvas(forPageID: page.id)
-#endif
-    }
-
-    /// Every page gets its own canvas view, made here the moment the page
-    /// is opened or created.
-    ///
-    /// Pages used to share one `PKCanvasView` with `.drawing` swapped in
-    /// place, and each fix for what leaked across that swap (the undo stack
-    /// restoring another page's ink, the whiteboard's zoom and scroll
-    /// position, its rendered strokes lingering on a freshly added page)
-    /// left the next one waiting. A page that starts from a new view has
-    /// nothing to inherit: its drawing is exactly what's passed in, its
-    /// undo history is empty, and its scroll view has never been anywhere.
-    private func installFreshCanvas(with drawing: PKDrawing = PKDrawing(), forPageID pageID: UUID?) {
-        // The outgoing canvas takes its undo stack with it.
-        commitPendingTrash()
-        if let pending = pendingDeletion, pending.landingPageID != pageID { commitPendingDeletion() }
-        canvasPageID = pageID
-        canvasIsDirty = false
-        ownSaveDate = nil
-        loadedInkStamp = pageID.flatMap { InkStamp(of: $0, in: drawingStore) }
-        autosaveTask?.cancel()
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let fresh = PageCanvasView()
-        fresh.drawing = drawing
-        canvasView = fresh
-        // The tool and the shape/fill interaction gate live on the canvas
-        // instance, so the new one has to be told about them.
-        applyToolState()
-#endif
-        refreshUndoRedoState()
-    }
-
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-    /// Rescues ink saved before pages had a fixed size of their own.
-    ///
-    /// Back then a page's coordinate space was simply however large the
-    /// canvas happened to be, so a note written on a landscape iPad has
-    /// strokes running well past the right edge of the page it now lives
-    /// on - they'd be cut off. Ink can no longer be drawn outside the page,
-    /// so anything that overflows must be from that era: scale it down (never
-    /// up, and never move it) to fit, once, and save it back in page space.
-    private func fittingWithinPage(_ drawing: PKDrawing, on page: Page) -> PKDrawing {
-        // A whiteboard has no page to fit inside - its board is 3000pt
-        // square and ink is *meant* to run well past 780x1040.
-        guard page.type != "whiteboard" else { return drawing }
-        let pageSize = PageGeometry.contentSize(for: page)
-        let bounds = drawing.bounds
-        guard !bounds.isNull, !bounds.isEmpty, bounds.maxX > 0, bounds.maxY > 0 else { return drawing }
-
-        let scale = min(1, min(pageSize.width / bounds.maxX, pageSize.height / bounds.maxY))
-        // A couple of percent of overhang is a stroke drawn against the edge,
-        // not a page from a differently sized canvas.
-        guard scale < 0.98 else { return drawing }
-
-        let fitted = drawing.transformed(using: CGAffineTransform(scaleX: scale, y: scale))
-        try? drawingStore.save(fitted, pageID: page.id)
-        return fitted
-    }
-#endif
-
-    /// Saves the canvas to the page it was loaded for - if the user changed
-    /// it. A canvas nobody drew on is never written: it may be blank only
-    /// because its ink hasn't arrived yet, and writing it would replace
-    /// that ink with nothing.
-    /// `blocking` is for the one case that can't be asynchronous: the app
-    /// is going to the background and may be suspended before a background
-    /// write would land (invariant 1). Everywhere else the write goes off
-    /// the main thread.
-    private func saveCurrentPage(force: Bool = false, blocking: Bool = false) {
-        MainThreadWatchdog.checkpoint("DetailView.saveCurrentPage")
-        guard canvasIsDirty || force,
-              let pageID = canvasPageID,
-              let page = sortedPages.first(where: { $0.id == pageID }) else { return }
-        canvasIsDirty = false
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let drawing = canvasView.drawing
-        if blocking {
-            saveBlocking(drawing, to: page)
-        } else {
-            Task { await save(drawing, to: page) }
-        }
-#else
-        save(to: page)
-#endif
-    }
-
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-    /// Writes `drawing` to `page`'s file. The page and the drawing are
-    /// passed together on purpose: the autosave that fires a second after
-    /// a stroke must save the page that stroke was drawn on, even if a
-    /// different page has been opened since.
-    ///
-    /// The encode-compress-write is off the main thread (`saveDetached`);
-    /// only the SwiftData half runs here, because the model context is
-    /// main-actor. `markModified()` deliberately comes *after* the bytes
-    /// are on disk: it is what re-renders this page's thumbnail and what a
-    /// pull compares against, and neither may see a date newer than the
-    /// ink it stands for.
-    private func save(_ drawing: PKDrawing, to page: Page) async {
-        switch await DrawingStore.saveDetached(drawingStore, drawing, pageID: page.id).value {
-        case .success(let ref):
-            page.drawingFileRef = ref
-            page.markModified()
-            if page.id == canvasPageID {
-                ownSaveDate = page.modifiedAt
-                loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
-            }
-            do { try modelContext.save() } catch { AppLog.note("save", "metadata: \(error)") }
-        case .failure(let error):
-            AppLog.note("save", "drawing: \(error)")
-            // The ink is still in the canvas and still dirty as far as the
-            // next autosave is concerned, so it gets another go.
-            if page.id == canvasPageID { canvasIsDirty = true }
-        }
-    }
-
-    /// The same save, run here and now. Only for backgrounding.
-    private func saveBlocking(_ drawing: PKDrawing, to page: Page) {
-        do {
-            page.drawingFileRef = try drawingStore.save(drawing, pageID: page.id)
-            page.markModified()
-            if page.id == canvasPageID {
-                ownSaveDate = page.modifiedAt
-                loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
-            }
-            try modelContext.save()
-        } catch {
-            AppLog.note("save", "drawing (blocking): \(error)")
-            if page.id == canvasPageID { canvasIsDirty = true }
-        }
-    }
-#else
-    private func save(to page: Page) {
-        page.drawingFileRef = DrawingStore.fileName(for: page.id)
-        page.markModified()
-        if page.id == canvasPageID {
-            ownSaveDate = page.modifiedAt
-            loadedInkStamp = InkStamp(of: page.id, in: drawingStore)
-        }
-        try? modelContext.save()
-    }
-#endif
-
-    private func scheduleAutosave() {
-        refreshUndoRedoState()
-        // Only a user change reaches here (strokes, shapes, elements). The
-        // canvas is now worth saving - and only to the page it was loaded for.
-        canvasIsDirty = true
-        guard let pageToIndex = currentPage, pageToIndex.id == canvasPageID else { return }
-        // Pin down which page's canvas this is for now. By the time the
-        // delay is up the user may be on another page with another canvas,
-        // and this must never write one page's ink into another's file.
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let canvas = canvasView
-#endif
-        autosaveTask?.cancel()
-        autosaveTask = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard !Task.isCancelled else { return }
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-            if canvasPageID == pageToIndex.id { canvasIsDirty = false }
-            await save(canvas.drawing, to: pageToIndex)
-#else
-            save(to: pageToIndex)
-            if canvasPageID == pageToIndex.id { canvasIsDirty = false }
-#endif
-        }
-        // Handwriting recognition is on a much longer timer of its own.
-        // Awaiting it here meant a full Vision pass - render the page at
-        // 2x, composite it, recognize - every single second for as long as
-        // anyone kept writing, every one of them thrown away by the next
-        // stroke.
-        HandwritingIndexer.shared.schedule(pageToIndex, modelContext: modelContext)
-    }
-
-    private func refreshUndoRedoState() {
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-        let newCanUndo = canvasView.undoManager?.canUndo ?? false
-        let newCanRedo = canvasView.undoManager?.canRedo ?? false
-#else
-        let newCanUndo = false
-        let newCanRedo = false
-#endif
-        // Avoid writing @State (and triggering a re-render) when nothing
-        // actually changed — this runs on every single stroke update while
-        // the user is actively drawing.
-        if canUndo != newCanUndo { canUndo = newCanUndo }
-        if canRedo != newCanRedo { canRedo = newCanRedo }
-    }
-
-    private func saveMetadata(_ errorMessage: String) {
-        do {
-            try modelContext.save()
-        } catch {
-            print("\(errorMessage): \(error)")
-        }
-    }
-
-    /// Brief "Saved" confirmation so the toolbar Save button gives visible
-    /// feedback instead of appearing to do nothing (autosave already covers
-    /// the common case, but a manual save should still confirm it happened).
-    private func showSaveConfirmation() {
-        saveConfirmationTask?.cancel()
-        withAnimation { showingSaveConfirmation = true }
-        saveConfirmationTask = Task {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation { showingSaveConfirmation = false }
-        }
-    }
 }
