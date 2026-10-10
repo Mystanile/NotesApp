@@ -113,6 +113,19 @@ nonisolated enum MainThreadWatchdog {
     private static var reportedThisHang = false
     private static var reportedStallThisHang = false
     private static var mainThread: pthread_t?
+    /// A run loop that answers pings but never goes idle never commits a
+    /// frame either: the screen freezes with the main thread "free"
+    /// (field report, Oct 4, 2026: frozen until the Pencil touched the
+    /// page, no stall in the log). Stamped each time it's about to sleep.
+    static let spinThreshold: TimeInterval = 1.5
+    /// A mode held this long while idle means UIKit thinks a touch is
+    /// still down - tracking mode with nothing touching.
+    static let modeThreshold: TimeInterval = 5
+    private static var lastIdle = Date()
+    private static var idleMode = ""
+    private static var idleModeSince = Date()
+    private static var reportedSpin = false
+    private static var reportedMode = false
 
     static func checkpoint(_ label: String) {
         lock.lock(); defer { lock.unlock() }
@@ -127,10 +140,30 @@ nonisolated enum MainThreadWatchdog {
         guard !alreadyStarted else { return }
         mainThread = pthread_self()   // called on the main thread at launch
         installStackCapture()
+        installIdleObserver()
         let thread = Thread {
             while true {
                 Thread.sleep(forTimeInterval: pollInterval)
                 lock.lock()
+                if pingSent == nil {
+                    let busy = Date().timeIntervalSince(lastIdle)
+                    if busy >= spinThreshold, !reportedSpin {
+                        reportedSpin = true
+                        let note = "main run loop answering but not idle for \(Int(busy * 1000)) ms (no frames drawn); last checkpoint '\(lastCheckpoint)'"
+                        lock.unlock()
+                        AppLog.note("spin", note)
+                        if let stack = captureMainThreadStack() { AppLog.note("spin", "main thread stack:\n" + stack) }
+                        continue
+                    }
+                    let held = Date().timeIntervalSince(idleModeSince)
+                    if held >= modeThreshold, !reportedMode, idleMode != "kCFRunLoopDefaultMode" {
+                        reportedMode = true
+                        let note = "main run loop idle in \(idleMode) for \(Int(held)) s; last checkpoint '\(lastCheckpoint)'"
+                        lock.unlock()
+                        AppLog.note("mode", note)
+                        continue
+                    }
+                }
                 if let sent = pingSent {
                     let stalled = Date().timeIntervalSince(sent)
                     if stalled >= threshold, !reportedThisHang {
@@ -182,9 +215,33 @@ nonisolated enum MainThreadWatchdog {
         thread.start()
     }
 
+    private static func installIdleObserver() {
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, Int.max) { _, _ in
+            let mode = CFRunLoopCopyCurrentMode(CFRunLoopGetMain()).map { $0.rawValue as String } ?? "?"
+            let now = Date()
+            lock.lock()
+            let spun = reportedSpin ? now.timeIntervalSince(lastIdle) : nil
+            let heldMode = reportedMode ? idleMode : nil
+            lastIdle = now
+            reportedSpin = false
+            if mode != idleMode { idleMode = mode; idleModeSince = now; reportedMode = false }
+            lock.unlock()
+            if let spun { AppLog.note("spin", "main run loop idle again after \(Int(spun * 1000)) ms") }
+            if let heldMode, heldMode != mode { AppLog.note("mode", "left \(heldMode) for \(mode)") }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+    }
+
     // MARK: Stack capture
 
     private static func installStackCapture() {
+        // A Swift global array is built on first touch, and building it
+        // takes the Objective-C runtime's lock. First touched inside the
+        // handler, while the interrupted main thread held that lock, it
+        // aborted the app (`_os_unfair_lock_recursive_abort`, Oct 4, 2026 -
+        // the test host, mid class enumeration). Built here, before any
+        // signal can arrive.
+        _ = hangStackBuffer.count
         var action = sigaction()
         action.__sigaction_u.__sa_handler = { _ in
             hangStackBuffer.withUnsafeMutableBufferPointer { buffer in

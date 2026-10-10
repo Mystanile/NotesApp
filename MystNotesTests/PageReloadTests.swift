@@ -2,6 +2,7 @@ import XCTest
 import SwiftUI
 import SwiftData
 import PencilKit
+import UIKit.UIGestureRecognizerSubclass
 @testable import Mystnotes
 
 /// Field report, Sept 25, 2026: finishing an action - resizing a picture,
@@ -120,5 +121,76 @@ final class PageReloadTests: XCTestCase {
 
         try await Task.sleep(for: .seconds(2))
         XCTAssertEqual(canvases(in: window).first?.drawing.strokes.count, 1, "the pulled ink isn't on the canvas")
+    }
+
+    /// Field report, Oct 4, 2026: swiping to a page with a picture on it,
+    /// the picture wasn't there.
+    func testSwipingToAPageWithAPicture_showsThePicture() async throws {
+        let container = try Self.sharedContainer()
+        let context = container.mainContext
+        let notebook = Notebook(title: "Swipe")
+        context.insert(notebook)
+        let first = Page(index: 0, notebook: notebook)
+        let second = Page(index: 1, notebook: notebook)
+        context.insert(first); context.insert(second)
+        notebook.pages = [first, second]
+
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 200)).image { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        }
+        let ref = "\(UUID().uuidString).png"
+        let url = FileStore.url(for: ref)
+        try XCTUnwrap(image.pngData()).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let doc = ImportedDocument(sourceType: "image", fileRef: ref, page: second)
+        doc.frameX = 0; doc.frameY = 0; doc.frameWidth = 1; doc.frameHeight = 1
+        context.insert(doc)
+        try context.save()
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1024, height: 768)
+        window.rootViewController = UIHostingController(rootView:
+            NavigationStack { NotebookDetailView(notebook: notebook) }.modelContainer(container))
+        window.makeKeyAndVisible()
+        defer { close(window) }
+        _ = try await canvasesShown(in: window, for: 2)
+
+        let host = try XCTUnwrap(window.firstSubview(of: PagedCanvasHostView.self))
+        let swipe = try XCTUnwrap(host.gestureRecognizers?.compactMap { $0 as? UISwipeGestureRecognizer }
+            .first { $0.direction == .left })
+        XCTAssertEqual(try redPixels(in: window, within: host.convert(host.bounds, to: window)), 0, "the first page has no picture")
+        let before = canvases(in: window).first.map(ObjectIdentifier.init)
+        swipe.state = .ended
+
+        try await Task.sleep(for: .seconds(3))
+        XCTAssertNotEqual(canvases(in: window).first.map(ObjectIdentifier.init), before, "the swipe didn't turn the page")
+        XCTAssertGreaterThan(try redPixels(in: window, within: host.convert(host.bounds, to: window)), 1000, "the picture on the page swiped to isn't drawn")
+    }
+
+    /// Red pixels inside `rect` - the page, not the page strip, whose
+    /// thumbnail of the same page is red too.
+    private func redPixels(in window: UIWindow, within rect: CGRect) throws -> Int {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let shot = UIGraphicsImageRenderer(size: rect.size, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds.offsetBy(dx: -rect.minX, dy: -rect.minY), afterScreenUpdates: true)
+        }
+        let cgImage = try XCTUnwrap(shot.cgImage)
+        let width = cgImage.width, height = cgImage.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let ctx = try XCTUnwrap(CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 200 && bytes[$0 + 1] < 60 && bytes[$0 + 2] < 60 }.count
+    }
+}
+
+private extension UIView {
+    func firstSubview<T: UIView>(of type: T.Type) -> T? {
+        if let match = self as? T { return match }
+        for sub in subviews { if let found = sub.firstSubview(of: type) { return found } }
+        return nil
     }
 }

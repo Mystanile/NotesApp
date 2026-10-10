@@ -20,6 +20,10 @@ struct LibraryView: View {
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
     @State private var showingNewNotebookSheet = false
+    /// A notebook just created opens once its sheet is gone: a push
+    /// during the sheet's dismissal can be dropped.
+    @State private var createdNotebook: Notebook?
+    @State private var notebookToOpen: Notebook?
 
     @State private var itemToRename: LibraryItem?
     @State private var renameText = ""
@@ -273,8 +277,16 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
             Button("Create") { createFolder() }
         }
-        .sheet(isPresented: $showingNewNotebookSheet) {
-            NewNotebookSheet { title, template in createNotebook(title: title, template: template) }
+        .sheet(isPresented: $showingNewNotebookSheet, onDismiss: {
+            notebookToOpen = createdNotebook
+            createdNotebook = nil
+        }) {
+            NewNotebookSheet { title, template, cover in
+                createNotebook(title: title, template: template, coverStyle: cover)
+            }
+        }
+        .navigationDestination(item: $notebookToOpen) { notebook in
+            LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }
         }
         .alert("Rename", isPresented: renameAlertBinding) {
             TextField("Name", text: $renameText)
@@ -325,7 +337,7 @@ struct LibraryView: View {
         }
     }
 
-    private let coverStyleOptions: [(name: String, label: String)] = [
+    fileprivate static let coverStyleOptions: [(name: String, label: String)] = [
         ("default", "Indigo"),
         ("sunset", "Sunset"),
         ("ocean", "Ocean"),
@@ -411,7 +423,7 @@ struct LibraryView: View {
         }
         #endif
         Menu {
-            ForEach(coverStyleOptions, id: \.name) { option in
+            ForEach(Self.coverStyleOptions, id: \.name) { option in
                 Button(option.label) {
                     notebook.coverStyle = option.name
                     notebook.markSettingsModified()
@@ -444,15 +456,16 @@ struct LibraryView: View {
         save()
     }
 
-    private func createNotebook(title: String, template: String) {
+    private func createNotebook(title: String, template: String, coverStyle: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmed.isEmpty ? "Untitled Notebook" : trimmed
-        let notebook = Notebook(title: title, folder: parentFolder)
+        let notebook = Notebook(title: title, coverStyle: coverStyle, folder: parentFolder)
         let firstPage = Page(index: 0, type: "paged", template: template, notebook: notebook)
         notebook.pages = [firstPage]
         modelContext.insert(notebook)
         modelContext.insert(firstPage)
         save()
+        createdNotebook = notebook
     }
 
     private func applyRename() {
@@ -603,11 +616,12 @@ private struct SearchableModifier: ViewModifier {
 /// alert because an alert can hold text fields and buttons only, and the
 /// paper used to be whatever Settings said with no say at creation.
 private struct NewNotebookSheet: View {
-    var onCreate: (String, String) -> Void
+    var onCreate: (_ title: String, _ template: String, _ coverStyle: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var template = AppSettings.defaultTemplate
+    @State private var coverStyle = "default"
 
     var body: some View {
         NavigationStack {
@@ -619,6 +633,29 @@ private struct NewNotebookSheet: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                HStack {
+                    Text("Cover")
+                    Spacer()
+                    ForEach(LibraryView.coverStyleOptions, id: \.name) { option in
+                        Button {
+                            coverStyle = option.name
+                        } label: {
+                            Circle()
+                                .fill(NotebookCoverView.color(for: option.name))
+                                .frame(width: 28, height: 28)
+                                .overlay {
+                                    if coverStyle == option.name {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(option.label)
+                        .accessibilityAddTraits(coverStyle == option.name ? .isSelected : [])
+                    }
+                }
             }
             .navigationTitle("New Notebook")
             .toolbar {
@@ -627,7 +664,7 @@ private struct NewNotebookSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
-                        onCreate(title, template)
+                        onCreate(title, template, coverStyle)
                         dismiss()
                     }
                 }

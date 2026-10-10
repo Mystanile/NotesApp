@@ -178,6 +178,10 @@ struct NotebookDetailView: View {
     /// `PageDeletion` runs. Killed before that, the page is simply still
     /// there, which is the safe side of invariant 1.
     @State private var pendingDeletion: (pageID: UUID, landingPageID: UUID?)?
+    /// The "Page deleted" banner hides after a few seconds; the deletion
+    /// stays undoable with the undo button until it commits.
+    @State private var showingDeletionBanner = false
+    @State private var deletionBannerTask: Task<Void, Never>?
     /// The page whose context menu opened the copy sheet; it starts ticked.
     @State private var pageToCopy: Page?
     @State private var showingSaveConfirmation = false
@@ -277,7 +281,7 @@ struct NotebookDetailView: View {
                             }
                         }
                         .overlay(alignment: .bottom) {
-                            if pendingDeletion != nil && !isPresenting {
+                            if pendingDeletion != nil && showingDeletionBanner && !isPresenting {
                                 HStack(spacing: 14) {
                                     Text("Page deleted")
                                     Button("Undo", action: undoPendingDeletion)
@@ -337,6 +341,9 @@ struct NotebookDetailView: View {
         .statusBarHidden(isPresenting)
         #endif
         .ignoresSafeArea(.all, edges: isPresenting ? .all : [])
+        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .background(ContentPopGate())
+        #endif
         .onAppear {
             openFirstPage()
             applyToolState()
@@ -347,6 +354,8 @@ struct NotebookDetailView: View {
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: toolState) { _, _ in applyToolState() }
+        // Lines up a "[spin]" or "[mode]" freeze in the log with what led to it.
+        .onChange(of: toolState.activeKind) { _, kind in AppLog.note("ui", "tool \(kind)") }
         .onChange(of: toolState.shapeLineStyle) { _, style in AppSettings.shapeLineStyle = style }
         // Switching between a paged page and a whiteboard rebuilds the canvas
         // representable; re-push the tool the user actually has selected
@@ -713,7 +722,13 @@ struct NotebookDetailView: View {
                 onShapePreview: { shapePreview = $0 },
                 shapeLineStyle: toolState.shapeLineStyle,
                 onPasteImage: { data in importDroppedOrPasted(data, onto: page) },
-                inkSelection: inkSelection
+                inkSelection: inkSelection,
+                onSwipePage: adjustingImageFrame == nil && !inkSelection.hasSelection ? { step in
+                    let target = currentPageIndex + step
+                    guard sortedPages.indices.contains(target) else { return false }
+                    jumpToPage(at: target)
+                    return true
+                } : nil
             )
 
             if toolState.activeKind == .lasso && !isPresenting {
@@ -1216,6 +1231,13 @@ struct NotebookDetailView: View {
         let canvas = canvasView
         canvas.undoManager?.registerUndo(withTarget: canvas) { _ in undoPendingDeletion() }
         refreshUndoRedoState()
+        deletionBannerTask?.cancel()
+        withAnimation { showingDeletionBanner = true }
+        deletionBannerTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation { showingDeletionBanner = false }
+        }
     }
 
     private func undoPendingDeletion() {
@@ -1945,11 +1967,13 @@ struct NotebookDetailView: View {
         }
     }
 
-    /// Apple Pencil Pro squeeze: open the colour options of the tool in
-    /// hand. The eraser and lasso have no colour, so the pen's open then.
+    /// Apple Pencil Pro squeeze: open the options of the tool in hand. The
+    /// lasso has none, so the pen's open then. A second squeeze closes
+    /// them again.
     private func openColorOptions() {
+        if openToolOptions != nil { openToolOptions = nil; return }
         let kind = toolState.activeKind
-        openToolOptions = [.pen, .highlighter, .fill].contains(kind) ? kind : .pen
+        openToolOptions = kind == .lasso ? .pen : kind
     }
 
     /// Image handles take the touches while an image is being adjusted.

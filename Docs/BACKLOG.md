@@ -91,6 +91,11 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Pen presets and toolbar choices live in `UserDefaults` per device, not in the sync folder. Syncing them would need a settings file in the folder.
 - [M1] A notebook locked on another device, on a device with no passcode, can't be opened there at all (by design). Settings says so on the lock screen; revisit if it bites.
 
+## Found while fixing squeeze, swipe and the freeze (Oct 4, 2026)
+
+- [M1] The same 7 orphaned `.drawing` files in the sync folder's `files/` are "moved to trash" on every push and never leave: `DrawingStore.moveToTrash` swallows the `moveItem` error with `try?`. Log the error first, then fix whatever it says (probably a coordinated move in the user-picked folder). The files are old-build render caches, so nothing is lost meanwhile.
+- [M1] Page swipe: the old page slides off as a snapshot. A real two-page slide (the new page sliding in beside it) needs the incoming page rendered before the turn.
+
 ## Parked from planning (Sept 12, 2026)
 
 - ~~[M1] Scanned document capture with `VisionKit` + Live Text~~ **Done Sept 25, 2026**, with an invisible text layer so scans are searchable.

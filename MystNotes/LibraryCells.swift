@@ -25,8 +25,10 @@ struct FolderCellView: View {
 struct NotebookCoverView: View {
     let notebook: Notebook
 
-    private var coverColor: Color {
-        switch notebook.coverStyle {
+    private var coverColor: Color { Self.color(for: notebook.coverStyle) }
+
+    static func color(for coverStyle: String) -> Color {
+        switch coverStyle {
         case "sunset": return .orange
         case "ocean": return .blue
         case "forest": return .green

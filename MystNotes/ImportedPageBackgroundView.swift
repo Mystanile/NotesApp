@@ -101,19 +101,21 @@ struct ImportedPageBackgroundView: View {
     /// Every layer is decoded to the page's size, whatever its frame: a
     /// picture never needs more pixels than the page it sits on, and one
     /// size means one cache entry however often it is moved or resized.
-    private func renderSize(for targetSize: CGSize) -> CGSize {
-        let pageSize = (targetSize.width > 0 && targetSize.height > 0)
-            ? targetSize
-            : PageGeometry.contentSize(for: page)
-        return CGSize(width: (pageSize.width * Self.oversampling).rounded(),
-                      height: (pageSize.height * Self.oversampling).rounded())
+    private func renderSize(for pageSize: CGSize) -> CGSize {
+        CGSize(width: (pageSize.width * Self.oversampling).rounded(),
+               height: (pageSize.height * Self.oversampling).rounded())
     }
     #endif
 
+    /// The page's own size, not a `GeometryReader`'s: this is laid out at
+    /// exactly that size (`PageViewportLayer`), and on a page turn the
+    /// reader first reported zero and its layers kept that, so a picture
+    /// rendered and was drawn 0 x 0, so it never showed
+    /// (field report, Oct 4, 2026; `PageReloadTests`).
     var body: some View {
-        GeometryReader { geometry in
+        let pageSize = PageGeometry.contentSize(for: page)
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
-            let renderSize = renderSize(for: geometry.size)
+            let renderSize = renderSize(for: pageSize)
             ZStack(alignment: .topLeading) {
                 // Deliberately no paper here - see the type's comment.
                 Color.clear
@@ -122,17 +124,17 @@ struct ImportedPageBackgroundView: View {
                         pageID: page.id,
                         layer: layer,
                         renderSize: renderSize,
-                        containerSize: geometry.size,
+                        containerSize: pageSize,
                         liveFrame: liveLayerID == layer.id ? liveFrame : nil
                     )
                 }
             }
+            .frame(width: pageSize.width, height: pageSize.height, alignment: .topLeading)
         #else
             // On macOS without UIKit there is no rasterizer; the paper
             // underneath still renders.
             Color.clear
         #endif
-        }
     }
 }
 

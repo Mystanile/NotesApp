@@ -86,8 +86,9 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
               pageSize.width > 0, pageSize.height > 0 else { return }
 
         if bounds.size != lastFittedBounds {
+            let isNewPage = lastFittedBounds == .zero
             lastFittedBounds = bounds.size
-            fitPage()
+            if isNewPage { fitPage() } else { resizeKeepingZoom() }
         } else {
             centerPage()
         }
@@ -95,7 +96,7 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     }
 
     /// Reset to "the whole page is visible", which is where opening a page
-    /// (or rotating the iPad) should always land.
+    /// should always land.
     private func fitPage() {
         guard let canvas else { return }
         isApplyingGeometry = true
@@ -114,6 +115,36 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
         centerPage()
         canvas.setContentOffset(
             CGPoint(x: -canvas.contentInset.left, y: -canvas.contentInset.top),
+            animated: false
+        )
+    }
+
+    /// The view changed size on the same page (the page strip shown,
+    /// hidden or dragged taller, a window resized, the iPad rotated). A
+    /// page at fit is fitted again; a zoomed-in page keeps its zoom and the
+    /// page point at the top-left of the view.
+    private func resizeKeepingZoom() {
+        guard let canvas else { return }
+        let oldFit = canvas.minimumZoomScale
+        guard canvas.zoomScale > oldFit * 1.001 else { fitPage(); return }
+        isApplyingGeometry = true
+        defer { isApplyingGeometry = false }
+
+        let oldZoom = canvas.zoomScale
+        let anchor = CGPoint(x: (canvas.contentOffset.x + canvas.contentInset.left) / oldZoom,
+                             y: (canvas.contentOffset.y + canvas.contentInset.top) / oldZoom)
+        let fit = PageGeometry.fitScale(contentSize: pageSize, in: bounds.size)
+        canvas.minimumZoomScale = fit
+        canvas.maximumZoomScale = fit * PageGeometry.maximumZoomFactor
+        canvas.setZoomScale(min(max(oldZoom, fit), fit * PageGeometry.maximumZoomFactor), animated: false)
+        centerPage()
+        let zoom = canvas.zoomScale
+        let inset = canvas.contentInset
+        let maxX = max(-inset.left, pageSize.width * zoom + inset.right - bounds.width)
+        let maxY = max(-inset.top, pageSize.height * zoom + inset.bottom - bounds.height)
+        canvas.setContentOffset(
+            CGPoint(x: min(max(anchor.x * zoom - inset.left, -inset.left), maxX),
+                    y: min(max(anchor.y * zoom - inset.top, -inset.top), maxY)),
             animated: false
         )
     }
@@ -193,6 +224,107 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     }
 }
 
+/// One-finger left/right swipe to turn the page. Fingers only, and only
+/// while a finger can't draw and the page is at fit (zoomed in, one finger
+/// pans). Not on a Mac, where the pointer is the pen. The outgoing page
+/// slides off as a snapshot over the incoming one, which is laid out
+/// underneath it in the meantime.
+final class PageSwipeInstaller: NSObject, UIGestureRecognizerDelegate {
+    private let left = UISwipeGestureRecognizer()
+    private let right = UISwipeGestureRecognizer()
+    /// +1 next, -1 previous; false when there's no page that way.
+    private var onSwipe: ((Int) -> Bool)?
+    private weak var host: PagedCanvasHostView?
+
+    func install(on host: PagedCanvasHostView, onSwipe: ((Int) -> Bool)?) {
+        self.onSwipe = onSwipe
+        if self.host !== host {
+            remove()
+            for (recognizer, direction) in [(left, UISwipeGestureRecognizer.Direction.left), (right, .right)] {
+                recognizer.direction = direction
+                recognizer.cancelsTouchesInView = false
+                recognizer.delegate = self
+                recognizer.addTarget(self, action: #selector(handle(_:)))
+                host.addGestureRecognizer(recognizer)
+            }
+            self.host = host
+        }
+        let enabled = onSwipe != nil && !CanvasInput.isMac
+        if left.isEnabled != enabled { left.isEnabled = enabled; right.isEnabled = enabled }
+    }
+
+    func remove() {
+        for recognizer in [left, right] {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            recognizer.removeTarget(self, action: nil)
+        }
+        host = nil
+    }
+
+    @objc private func handle(_ recognizer: UISwipeGestureRecognizer) {
+        guard recognizer.state == .ended, let onSwipe else { return }
+        let step = recognizer.direction == .left ? 1 : -1
+        // Taken before the page changes: the paper and pictures are SwiftUI
+        // layers behind the host, so only the window has the whole page.
+        guard let host, let window = host.window else { _ = onSwipe(step); return }
+        let frame = host.convert(host.bounds, to: window)
+        guard let snapshot = window.resizableSnapshotView(from: frame, afterScreenUpdates: false,
+                                                           withCapInsets: .zero),
+              onSwipe(step) else { return }
+        let clip = UIView(frame: frame)
+        clip.clipsToBounds = true
+        clip.isUserInteractionEnabled = false
+        snapshot.frame = clip.bounds
+        clip.addSubview(snapshot)
+        window.addSubview(clip)
+        UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+            snapshot.transform = CGAffineTransform(translationX: -CGFloat(step) * frame.width, y: 0)
+            snapshot.alpha = 0.6
+        } completion: { _ in
+            clip.removeFromSuperview()
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        touch.type == .direct && host?.canvas?.drawingPolicy == .pencilOnly
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let canvas = host?.canvas else { return false }
+        return canvas.zoomScale <= canvas.minimumZoomScale * 1.001
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
+
+/// Turns off iPadOS 26's full-screen back swipe while a notebook is open:
+/// a sideways drag anywhere on the page left the notebook, mid-pan when
+/// zoomed in. The swipe from the left edge still goes back.
+struct ContentPopGate: UIViewRepresentable {
+    func makeUIView(context: Context) -> GateView { GateView() }
+    func updateUIView(_ view: GateView, context: Context) {}
+
+    final class GateView: UIView {
+        private weak var gated: UIGestureRecognizer?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil {
+                let nav = sequence(first: self as UIResponder, next: { $0.next })
+                    .lazy.compactMap { $0 as? UINavigationController }.first
+                gated = nav?.interactiveContentPopGestureRecognizer
+                gated?.isEnabled = false
+            } else {
+                gated?.isEnabled = true
+                gated = nil
+            }
+        }
+    }
+}
+
 struct PencilCanvasView: UIViewRepresentable {
     @Binding var canvasView: PKCanvasView
     /// The page's own coordinate space - what ink, element frames and
@@ -233,6 +365,10 @@ struct PencilCanvasView: UIViewRepresentable {
     /// so its overlay and toolbar can read it; installed on the host here,
     /// where its recognizers share touches with the Pencil.
     var inkSelection: InkSelectionController? = nil
+    /// A one-finger swipe at fit zoom: +1 for the next page, -1 for the
+    /// previous; returns false when there's no such page. Nil turns
+    /// swiping off.
+    var onSwipePage: ((Int) -> Bool)? = nil
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -251,6 +387,7 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.host = host
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installFillTap(on: host, onTap: onFillTap)
+        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -286,6 +423,7 @@ struct PencilCanvasView: UIViewRepresentable {
         configure(canvasView, context: context)
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installFillTap(on: host, onTap: onFillTap)
+        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -305,6 +443,7 @@ struct PencilCanvasView: UIViewRepresentable {
         coordinator.shortcuts.removeAll()
         coordinator.removeShapeHold()
         coordinator.removeFillTap()
+        coordinator.pageSwipe.remove()
         host.viewport = nil
         host.inkSelection = nil
     }
@@ -373,6 +512,7 @@ struct PencilCanvasView: UIViewRepresentable {
         let shortcuts = CanvasShortcutInstaller()
         let shapeHold = ShapeHoldRecognizer()
         let shapeSnap = ShapeSnapController()
+        let pageSwipe = PageSwipeInstaller()
         private weak var longPressRecognizer: UILongPressGestureRecognizer?
         private let fillTap = UITapGestureRecognizer()
         private var onFillTap: ((CGPoint) -> Void)?
