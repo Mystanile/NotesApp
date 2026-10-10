@@ -35,6 +35,8 @@ final class ShareSheetProbeTests: XCTestCase {
     }
 
     func testShareSheetPresentation_bareURL_vsTypedItemProvider() throws {
+        print("[probe] container: \(NSHomeDirectory()) bundle: \(Bundle.main.bundleIdentifier ?? "?")")
+        XCTAssertEqual(Bundle.main.bundleIdentifier?.hasSuffix(".agenttest") ?? false || ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil, true, "device probes run only in the agenttest copy")
         let url = try pdfURL()
         _ = try timePresentation([url], label: "warm-up URL")
         for round in 1...3 {

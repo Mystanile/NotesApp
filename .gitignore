@@ -1,2 +1,4 @@
 .claude/last-test.log
 .claude/diag-*
+.claude/dd-*
+.claude/*.log
