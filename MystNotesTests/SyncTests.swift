@@ -867,6 +867,39 @@ final class SyncTests: XCTestCase {
     /// A payload still downloading rehashes to something other than its
     /// name. That page must not be applied, the notebook must not be
     /// republished from the incomplete side, and the next pull finishes.
+    /// M1: what is still on its way is counted, so the app can say "waiting
+    /// for 1 page" instead of looking finished. A half-downloaded page and a
+    /// notebook whose file hasn't arrived are both reported, then cleared.
+    func testRun_reportsWhatIsStillDownloading_thenNothing() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let a = try ipad.createNotebook(title: "A", pageCount: 2)
+        let b = try ipad.createNotebook(title: "B", pageCount: 1)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: a.id))
+        let ink = Data("slow ink".utf8)
+        harness.clock.advance(); try ipad.edit(page: pages[1], ink: ink)
+        harness.clock.advance(); try ipad.sync()
+
+        let payload = harness.folderFile("files/\(PayloadHash.sha256(of: ink)).drawing")
+        let complete = try Data(contentsOf: payload)
+        try complete.prefix(complete.count / 2).write(to: payload)
+        let bFile = harness.folderFile("notebooks/\(b.id.uuidString).json")
+        let parked = bFile.appendingPathExtension("notyet")
+        try FileManager.default.moveItem(at: bFile, to: parked)
+
+        harness.clock.advance()
+        let waiting = try mac.sync()
+        XCTAssertEqual(waiting, SyncRunner.Outstanding(notebooks: 1, pages: 1))
+        XCTAssertEqual(waiting.message, "Waiting for 1 notebook and 1 page to download")
+
+        try complete.write(to: payload)
+        try FileManager.default.moveItem(at: parked, to: bFile)
+        harness.clock.advance()
+        XCTAssertEqual(try mac.sync(), SyncRunner.Outstanding(notebooks: 0, pages: 0))
+        XCTAssertNil(SyncRunner.Outstanding(notebooks: 0, pages: 0).message)
+        XCTAssertEqual(SyncRunner.Outstanding(notebooks: 0, pages: 3).message, "Waiting for 3 pages to download")
+    }
+
     func testPull_partialPayload_defersThePage_andCompletesLater() throws {
         let ipad = try harness.makeDevice("iPad")
         let mac = try harness.makeDevice("Mac")

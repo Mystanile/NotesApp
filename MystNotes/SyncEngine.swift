@@ -168,7 +168,7 @@ final class SyncEngine: ObservableObject {
     /// twice today (iPad watchdog log). The caller awaits the task from
     /// the main actor and touches state after.
     nonisolated static func runDetached(container: ModelContainer, environment: SyncEnvironment,
-                                        pull: Bool, push: Bool) -> Task<Result<Void, Error>, Never> {
+                                        pull: Bool, push: Bool) -> Task<Result<SyncRunner.Outstanding, Error>, Never> {
         detached(priority: .utility) {
             try SyncRunner(container: container, environment: environment).run(pull: pull, push: push)
         }
@@ -176,10 +176,10 @@ final class SyncEngine: ObservableObject {
 
     /// Runs `body` on a background thread, whatever context this is called
     /// from. Nonisolated, static, and capture-free by construction.
-    nonisolated static func detached(priority: TaskPriority,
-                                     _ body: @escaping @Sendable () throws -> Void) -> Task<Result<Void, Error>, Never> {
+    nonisolated static func detached<T: Sendable>(priority: TaskPriority,
+                                                  _ body: @escaping @Sendable () throws -> T) -> Task<Result<T, Error>, Never> {
         Task.detached(priority: priority) {
-            do { try body(); return .success(()) } catch { return .failure(error) }
+            do { return .success(try body()) } catch { return .failure(error) }
         }
     }
 
@@ -298,8 +298,12 @@ final class SyncEngine: ObservableObject {
             self.currentRunID = nil
             self.isRunning = false
             switch outcome {
-            case .success:
-                self.status = .succeeded(Date())
+            case .success(let outstanding):
+                if let message = outstanding.message {
+                    self.status = .waiting(message)
+                } else {
+                    self.status = .succeeded(Date())
+                }
             case .failure(let error as SyncRunner.Waiting):
                 self.status = .waiting(error.localizedDescription)
                 AppLog.note("sync", "waiting (pull=\(pull) push=\(push)): \(error.localizedDescription)")
@@ -340,7 +344,24 @@ nonisolated struct SyncRunner {
         return decoder
     }
 
-    func run(pull: Bool, push: Bool) throws {
+    /// What a run could not bring in yet: notebooks whose file hasn't
+    /// arrived, and pages whose payloads are still downloading. Not an
+    /// error - the next run picks them up.
+    struct Outstanding: Equatable, Sendable {
+        var notebooks = 0
+        var pages = 0
+
+        /// "Waiting for 1 notebook and 3 pages to download", or nil.
+        var message: String? {
+            func count(_ n: Int, _ noun: String) -> String? { n > 0 ? "\(n) \(noun)\(n == 1 ? "" : "s")" : nil }
+            let parts = [count(notebooks, "notebook"), count(pages, "page")].compactMap { $0 }
+            return parts.isEmpty ? nil : "Waiting for \(parts.joined(separator: " and ")) to download"
+        }
+    }
+
+    @discardableResult
+    func run(pull: Bool, push: Bool) throws -> Outstanding {
+        var outstanding = Outstanding()
         let context = ModelContext(container)
         let started = Date()
         var phases: [String] = []
@@ -369,6 +390,8 @@ nonisolated struct SyncRunner {
             mark("read \(versions.count) version(s)", since: t1)
             let remote = versions.first
             var pending = remote?.pending ?? []
+            var pendingNotebooks = pending
+            var deferredPages: Set<UUID> = []
             if pull || (push && !environment.payloadsAreLocal) {
                 let t2 = Date()
                 defer { mark("pull", since: t2) }
@@ -376,6 +399,8 @@ nonisolated struct SyncRunner {
                 for version in versions {
                     let deferred = try performPull(version, context: context, workingDir: workingDir, hashes: hashes)
                     pending.formUnion(deferred)
+                    pendingNotebooks.formUnion(version.pending)
+                    deferredPages.formUnion(deferred)
                     if !version.isComplete || !deferred.isEmpty { allComplete = false }
                 }
                 if versions.count > 1, allComplete {
@@ -399,7 +424,9 @@ nonisolated struct SyncRunner {
                 try performPush(against: remote, pending: pending, context: context, workingDir: workingDir, hashes: hashes)
                 mark("push", since: t3)
             }
+            outstanding = Outstanding(notebooks: pendingNotebooks.count, pages: deferredPages.count)
         }
+        return outstanding
     }
 
     // MARK: Pull

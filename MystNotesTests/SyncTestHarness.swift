@@ -140,7 +140,8 @@ final class SyncTestDevice {
     // MARK: Acting like the app
 
     /// Equivalent of "Sync Now" in Settings.
-    func sync() throws {
+    @discardableResult
+    func sync() throws -> SyncRunner.Outstanding {
         try SyncRunner(container: container, environment: environment).run(pull: true, push: true)
     }
 
