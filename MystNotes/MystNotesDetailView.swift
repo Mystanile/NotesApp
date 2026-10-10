@@ -129,6 +129,7 @@ struct NotebookDetailView: View {
     /// coordinates, always kept inside `adjustingImageFrame`.
     @State var croppingRect: CGRect?
     @State var pageToRename: Page?
+    @State var pageToTag: Page?
     @State var pageTitleText = ""
     /// See `newPageSizeLabel`.
     @State var newPageAspect: Double?
@@ -515,6 +516,14 @@ struct NotebookDetailView: View {
             .ignoresSafeArea()
         }
         #endif
+        .sheet(item: $pageToTag) { page in
+            PageTagsSheet(tags: page.tags ?? []) { tags in
+                page.setTags(tags)
+                saveMetadata("Failed to save the tags")
+                pageToTag = nil
+            }
+            .presentationDetents([.medium])
+        }
         .alert("Rename Page", isPresented: Binding(
             get: { pageToRename != nil },
             set: { if !$0 { pageToRename = nil } }
@@ -1033,6 +1042,11 @@ struct NotebookDetailView: View {
                             pageTitleText = page.title ?? ""
                         } label: {
                             Label("Rename Page…", systemImage: "pencil")
+                        }
+                        Button {
+                            pageToTag = page
+                        } label: {
+                            Label("Tags…", systemImage: "tag")
                         }
                         if page.type == "paged" {
                             Button {

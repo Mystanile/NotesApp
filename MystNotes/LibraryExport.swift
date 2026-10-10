@@ -16,6 +16,10 @@ enum LibraryExport {
             let name = page.title.map { ": \($0)" } ?? ""
             lines.append("## Page \(offset + 1)\(name)")
             lines.append("")
+            if let tags = page.tags, !tags.isEmpty {
+                lines.append("Tags: " + tags.map { "#\($0)" }.joined(separator: " "))
+                lines.append("")
+            }
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }
             for block in blocks where !block.content.isEmpty {
                 lines.append(markdownLists(block.content))
