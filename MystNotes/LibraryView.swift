@@ -61,6 +61,10 @@ struct LibraryView: View {
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
+    private var pageTags: [PageTags.Tag] {
+        PageTags.counts(in: allNotebooks.flatMap { $0.pages ?? [] })
+    }
+
     private var recentNotebooks: [Notebook] {
         allNotebooks
             .sorted { $0.modifiedAt > $1.modifiedAt }
@@ -182,6 +186,25 @@ struct LibraryView: View {
                 if parentFolder == nil && !recentNotebooks.isEmpty {
                     sectionHeader("Recent")
                     notebookStrip(recentNotebooks)
+                }
+
+                if parentFolder == nil {
+                    let tags = pageTags
+                    if !tags.isEmpty {
+                        sectionHeader("Tags")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                ForEach(tags) { tag in
+                                    NavigationLink(destination: TagPagesView(tag: tag)) {
+                                        Text("#\(tag.name) · \(tag.pages.count)")
+                                            .padding(.horizontal, 12).padding(.vertical, 6)
+                                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if !folders.isEmpty {
