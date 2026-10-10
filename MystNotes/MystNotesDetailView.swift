@@ -643,8 +643,39 @@ struct NotebookDetailView: View {
                 onDrawingChanged: scheduleAutosave,
                 onPencilDoubleTap: togglePencilEraser,
                 onPencilSqueeze: openColorOptions,
-                shapeLineStyle: toolState.shapeLineStyle
+                shapeLineStyle: toolState.shapeLineStyle,
+                viewport: viewport,
+                inkSelection: inkSelection
             )
+            if toolState.activeKind == .lasso && !isPresenting {
+                // Same overlay as a paged page, drawn in board coordinates.
+                let board = CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize)
+                PageViewportLayer(viewport: viewport, pageSize: board) { scale in
+                    InkSelectionOverlay(display: inkSelection.display, scale: scale)
+                }
+                .allowsHitTesting(false)
+                if let corners = inkSelection.display.corners, corners.count == 4 {
+                    PageViewportLayer(viewport: viewport, pageSize: board) { scale in
+                        InkSelectionHandles(corners: corners, scale: scale, controller: inkSelection)
+                    }
+                }
+                if inkSelection.hasSelection {
+                    InkSelectionToolbar(
+                        canPaste: InkSelectionController.pasteboardHasInk,
+                        onCut: { inkSelection.cutSelection() },
+                        onCopy: { inkSelection.copySelection() },
+                        onPaste: { inkSelection.paste() },
+                        onDuplicate: { inkSelection.duplicate() },
+                        onDelete: { inkSelection.delete() },
+                        onRecolor: { inkSelection.recolor($0.fixedUIColor) },
+                        onCopyAsImage: { inkSelection.copySelectionAsImage() },
+                        onConvertToText: { convertSelectionToText(on: page) },
+                        onDone: { inkSelection.clear() }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 8)
+                }
+            }
 #else
             // Placeholder for macOS native
             Text("Whiteboard view not available on native macOS")
@@ -1934,15 +1965,10 @@ struct NotebookDetailView: View {
         // says so - see MainThreadWatchdog.
         MainThreadWatchdog.checkpoint("DetailView.applyToolState")
         canvasView.tool = toolState.pkTool
-        // Our lasso, not PencilKit's: with it active the canvas stops
-        // inking and the Pencil draws a loop instead. Paged pages only -
-        // the whiteboard has its own host with none of our recognizers
-        // on it, so it keeps PencilKit's lasso (select and move, no
-        // resize) for now.
-        let usesOurLasso = currentPage?.type != "whiteboard"
-        inkSelection.canvas = usesOurLasso ? canvasView : nil
+        // Our lasso, not PencilKit's, on every page type.
+        inkSelection.canvas = canvasView
         inkSelection.onDrawingChanged = scheduleAutosave
-        inkSelection.isActive = usesOurLasso && toolState.activeKind == .lasso
+        inkSelection.isActive = toolState.activeKind == .lasso
         // Neither our lasso nor the fill leaves ink: the Pencil draws a
         // loop or taps. Written here, from both, so neither undoes the
         // other when switching straight from one to the other.

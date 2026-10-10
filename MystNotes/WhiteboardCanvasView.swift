@@ -22,6 +22,37 @@ import AppKit
 /// undo/redo. A finger never leaves ink.
 
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
+/// Publishes the board's pan/zoom to the observable viewport.
+final class WhiteboardHostView: CanvasHostView, CanvasViewportHost {
+    var viewport: CanvasViewport? {
+        didSet {
+            guard viewport !== oldValue else { return }
+            if oldValue?.host === self { oldValue?.host = nil }
+            viewport?.host = self
+        }
+    }
+
+    func requestViewportSync() { setNeedsLayout() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        publishViewport(deferred: true)
+    }
+
+    func publishViewport(deferred: Bool = false) {
+        guard let canvas, let viewport else { return }
+        let scale = canvas.zoomScale
+        let offset = canvas.contentOffset
+        let apply = { [weak self] in
+            guard let self, self.viewport === viewport else { return }
+            if viewport.zoomScale != scale { viewport.zoomScale = scale }
+            if viewport.contentOffset != offset { viewport.contentOffset = offset }
+            if !viewport.hasSynced { viewport.hasSynced = true }
+        }
+        if deferred { DispatchQueue.main.async(execute: apply) } else { apply() }
+    }
+}
+
 struct WhiteboardCanvasView: UIViewRepresentable {
     @Binding var canvasView: PKCanvasView
     var onDrawingChanged: () -> Void = {}
@@ -31,13 +62,23 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     var onPencilSqueeze: () -> Void = {}
     /// Solid / dashed / dotted for shapes made by holding a stroke still.
     var shapeLineStyle: ShapeLineStyle = .solid
+    /// The board's pan/zoom, published for the lasso's SwiftUI overlay.
+    /// Same contract as the paged canvas: drawing coordinates are
+    /// (contentOffset + view point) / zoomScale, so the overlay is drawn
+    /// in board coordinates through a `PageViewportLayer` (boardSize
+    /// square) rather than hosted inside the scroll view - one overlay
+    /// path for both page kinds, and the pan/zoom stays PencilKit's.
+    var viewport: CanvasViewport? = nil
+    /// The lasso's selection, shared with the paged canvas.
+    var inkSelection: InkSelectionController? = nil
 
     static let boardSize: CGFloat = 3000
     private static let contentSize = CGSize(width: boardSize, height: boardSize)
 
-    func makeUIView(context: Context) -> CanvasHostView {
-        let host = CanvasHostView()
+    func makeUIView(context: Context) -> WhiteboardHostView {
+        let host = WhiteboardHostView()
         host.backgroundColor = .white
+        host.viewport = viewport
 
         configure(canvasView, context: context)
         // canvasView.tool is owned by the parent's applyToolState().
@@ -47,6 +88,8 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        context.coordinator.host = host
+        attachInkSelection(to: host)
 
         DispatchQueue.main.async {
             // becomeFirstResponder can silently fail before the view is in a
@@ -60,7 +103,9 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         return host
     }
 
-    func updateUIView(_ host: CanvasHostView, context: Context) {
+    func updateUIView(_ host: WhiteboardHostView, context: Context) {
+        context.coordinator.host = host
+        host.viewport = viewport
         context.coordinator.onDrawingChanged = onDrawingChanged
         context.coordinator.shortcuts.onPencilDoubleTap = onPencilDoubleTap
         context.coordinator.shortcuts.onPencilSqueeze = onPencilSqueeze
@@ -75,6 +120,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        attachInkSelection(to: host)
 
         if canvasChanged {
             DispatchQueue.main.async {
@@ -85,9 +131,19 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         }
     }
 
-    static func dismantleUIView(_ host: CanvasHostView, coordinator: Coordinator) {
+    static func dismantleUIView(_ host: WhiteboardHostView, coordinator: Coordinator) {
         coordinator.shortcuts.removeAll()
         coordinator.removeShapeHold()
+        host.viewport = nil
+        host.inkSelection = nil
+    }
+
+    /// Runs on every update, so it only writes what differs.
+    private func attachInkSelection(to host: WhiteboardHostView) {
+        guard let inkSelection else { return }
+        inkSelection.install(on: host)
+        inkSelection.canvas = canvasView
+        if host.inkSelection !== inkSelection { host.inkSelection = inkSelection }
     }
 
     private func configure(_ canvas: PKCanvasView, context: Context) {
@@ -101,7 +157,8 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         canvas.overrideUserInterfaceStyle = .light
 
         // Drive the large board through the canvas's own scroll view.
-        canvas.isScrollEnabled = true
+        // Guarded: the lasso gates the pan itself while ink is selected.
+        if !canvas.isScrollEnabled { canvas.isScrollEnabled = true }
         if canvas.contentSize != Self.contentSize { canvas.contentSize = Self.contentSize }
         canvas.minimumZoomScale = 0.25
         canvas.maximumZoomScale = 4.0
@@ -127,6 +184,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var onDrawingChanged: () -> Void
         weak var canvas: PKCanvasView?
+        weak var host: WhiteboardHostView?
         let shortcuts = CanvasShortcutInstaller()
         // Hold-to-snap works here too; there's just no page-space overlay
         // to preview in, so the haptic is the only cue before the lift.
@@ -164,6 +222,9 @@ struct WhiteboardCanvasView: UIViewRepresentable {
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             true
         }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { host?.publishViewport() }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { host?.publishViewport() }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             if !isApplyingShapeSnap, shapeSnap.pending != nil {
