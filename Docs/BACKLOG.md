@@ -73,7 +73,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 
 - [M1] Select, copy and highlight an imported PDF's text. Left out of M1 task 2 on purpose: it needs its own gesture on a page where the Pencil inks and the lasso selects, so it's a design question first. `PDFPage.selection(from:to:)` gives the text; the page space is already shared with the ink.
 - [M1] Exported ink is still a 2x bitmap on top of the vector PDF. PencilKit has no vector output; a stroke-to-path renderer from the neutral format would give one, and is the M7 web renderer's first half anyway.
-- [M1] `SearchIndex.pdfTextCache` is an unbounded static dictionary read on every keystroke, with no lock. Fine at today's sizes; bound it and move extraction off the main thread when PDFs get big.
+- [M1] `SearchIndex.pdfTextCache` is an unbounded static dictionary read on every keystroke, with no lock. Fine at today's sizes; bound it and move extraction off the main thread when PDFs get big. (Oct 10, 2026: no lock is needed today. `SearchIndex` is main-actor under default isolation, so the cache is only touched on main. Adding a lock is only needed if extraction moves off main.)
 
 ## Found while fixing the artwork handles (Sept 25, 2026)
 
