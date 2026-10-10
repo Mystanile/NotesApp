@@ -845,6 +845,7 @@ struct NotebookDetailView: View {
                     page: page,
                     scale: scale,
                     onNavigateToPage: { id in jumpToPage(withID: id) },
+                    onMention: { dest, blockID in addMention(from: page, to: dest, blockID: blockID) },
                     onSave: scheduleAutosave,
                     onRequestLinkDestinationChange: { link in linkNeedingDestination = link }
                 )

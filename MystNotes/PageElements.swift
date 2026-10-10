@@ -136,7 +136,7 @@ extension PageElements {
                    rotation: $0.rotationDegrees ?? 0)
         }
         let all = links ?? (try? page.modelContext?.fetch(FetchDescriptor<Link>())) ?? []
-        self.links = all.filter { $0.sourcePageID == page.id }.map {
+        self.links = all.filter { $0.sourcePageID == page.id && $0.kind != "mention" }.map {
             Anchor(frame: CGRect(x: $0.anchorX, y: $0.anchorY, width: $0.anchorWidth, height: $0.anchorHeight),
                    destinationPageID: $0.destinationPageID)
         }

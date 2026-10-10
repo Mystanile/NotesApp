@@ -19,6 +19,7 @@ struct PageElementsOverlayView: View {
     @Query private var allLinks: [Link]
 
     var onNavigateToPage: (UUID) -> Void
+    var onMention: (UUID, UUID) -> Void = { _, _ in }
     var onSave: () -> Void
     var onRequestLinkDestinationChange: (Link) -> Void
 
@@ -29,14 +30,14 @@ struct PageElementsOverlayView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(page.textBlocks ?? [], id: \.id) { block in
-                TextBlockView(block: block, scale: scale, onSave: onSave)
+                TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onSave: onSave)
             }
 
             ForEach(page.stickers ?? [], id: \.id) { sticker in
                 StickerElementView(sticker: sticker, scale: scale, onSave: onSave)
             }
 
-            ForEach(links, id: \.id) { link in
+            ForEach(links.filter { $0.kind != "mention" }, id: \.id) { link in
                 LinkAnchorView(
                     link: link,
                     scale: scale,
@@ -61,8 +62,18 @@ struct PageElementsOverlayView: View {
 /// changes the text on the page but never the controls around it.
 private struct TextBlockView: View {
     @Bindable var block: TypedTextBlock
+    var page: Page
     var scale: CGFloat = 1
+    /// (destination page id, this block's id)
+    var onMention: (UUID, UUID) -> Void = { _, _ in }
     var onSave: () -> Void
+
+    private var suggestions: [Page] {
+        guard isFocused, let q = PageMentions.pendingQuery(in: block.content) else { return [] }
+        let pages = (page.notebook?.pages ?? []).filter { $0.id != page.id }.sorted { $0.index < $1.index }
+        let hits = q.isEmpty ? pages : pages.filter { LinkedFromStrip.label(for: $0).localizedCaseInsensitiveContains(q) }
+        return Array(hits.prefix(6))
+    }
 
     private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
 
@@ -105,6 +116,26 @@ private struct TextBlockView: View {
         )
     }
 
+    @ViewBuilder private var mentionList: some View {
+        let hits = suggestions
+        if !hits.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(hits, id: \.id) { dest in
+                    Button(LinkedFromStrip.label(for: dest)) {
+                        block.content = PageMentions.completing(block.content, with: LinkedFromStrip.label(for: dest))
+                        onMention(dest.id, block.id)
+                        onSave()
+                    }
+                    .font(.caption)
+                    .lineLimit(1)
+                }
+            }
+            .padding(8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .alignmentGuide(.bottom) { $0[.top] }
+        }
+    }
+
     var body: some View {
         TextField("Type…", text: $block.content, selection: $selection, axis: .vertical)
             .font(font)
@@ -127,6 +158,9 @@ private struct TextBlockView: View {
             }
             .overlay(alignment: .topLeading) {
                 if isFocused { formattingBar }
+            }
+            .overlay(alignment: .bottomLeading) {
+                mentionList
             }
             // .offset in the parent's topLeading ZStack, NOT .position: this
             // view's height is intrinsic (it grows as you type), while

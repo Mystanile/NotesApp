@@ -12,6 +12,23 @@ import PhotosUI
 extension NotebookDetailView {
     // MARK: - Page elements
 
+    /// `[[page]]` in a text box: an anchorless "mention" edge, tied to its box.
+    func addMention(from page: Page, to destinationID: UUID, blockID: UUID) {
+        let key = blockID.uuidString
+        let existing = (try? modelContext.fetch(FetchDescriptor<Link>())) ?? []
+        guard !existing.contains(where: {
+            $0.kind == "mention" && $0.sourcePageID == page.id && $0.destinationPageID == destinationID && $0.destinationID == key
+        }) else { return }
+        let link = Link(sourcePageID: page.id, destinationPageID: destinationID)
+        link.kind = "mention"
+        link.destinationID = key
+        link.anchorWidth = 0
+        link.anchorHeight = 0
+        modelContext.insert(link)
+        page.markModified()
+        saveMetadata("Couldn't save mention")
+    }
+
     /// Lasso → Convert to Text: the selection's handwriting, read by the
     /// same Vision pipeline search uses, becomes a text box where the ink
     /// was, and the ink goes - one undo step that brings the ink back and
