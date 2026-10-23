@@ -9,7 +9,7 @@ Every item ends with how it was checked:
 - [tests only]: automated tests pass, but nobody used it on a device.
 - [not tested]: no test and no device check.
 
-## Handoff: start here (2026-10-22)
+## Handoff: start here (2026-10-22, evening)
 
 Branch and build:
 
@@ -24,7 +24,8 @@ Next, for the user to choose:
 
 1. The iPad pass: the "Owed on the iPad before M1 exits" list under Status, the M2 features with the Pencil, and the notebook covers in dark mode.
 2. Merge `m2-graph` into `main` after that pass.
-3. The rest of M2: saved searches as smart folders, and a lasso action that turns ink into a node. Ink transclusion waits for the conditions in `Docs/BACKLOG.md` ("Transclusion waits for").
+3. The rest of M2: a lasso action that turns ink into a node. It needs a design first: what a node is beyond a page in the Page Map. Ink transclusion waits for the conditions in `Docs/BACKLOG.md` ("Transclusion waits for").
+4. Shape tool, needs the Pencil: does one undo remove a snapped shape and the freehand stroke together? Does the object eraser take a dashed shape one dash at a time?
 
 Open bugs:
 
