@@ -81,7 +81,7 @@ Anything noticed mid-milestone that isn't in the current task lands here instead
 - [M1] Undo lives on the page's canvas, so a page turn drops it - for ink as it always has, and now for artwork edits, Rotate Page and Delete Page too. A notebook-level undo stack would keep them; it is a bigger change to how the canvas's undo is owned.
 - [M1] Text blocks, stickers and link anchors keep their size when a page rotates while the ink scales with the page (by 1/aspect). Scaling them too is one more multiply each, if it looks wrong in use.
 - ~~[M1] Two background ink saves of one page aren't ordered (`saveDetached` tasks), so an older one can land last.~~ **Done Oct 22, 2026:** every save takes a ticket when it is asked for, and a save older than the last write is skipped (`StrokeIDCache.inOrder`, `testOlderSaveLandingLast_doesNotOverwriteNewerInk`).
-- [M1] `DrawingStore.load` calls `ids.set` outside the save lock. If it decodes an older record just after a save stored a newer id map, the next save mints new ids for strokes that had one (invariant 6). Found in review Oct 22, 2026, older than the save-order fix. Fix: take the map only when no save of that page is in flight, or move the set under `inOrder`. Pre-existing; Rotate Page saves blocking but can't stop an older detached save still in flight. A per-page serial queue in `DrawingStore` would close it.
+- ~~[M1] `DrawingStore.load` stored ids outside the save lock and could put an older record's id map over a newer save's (invariant 6).~~ **Done Oct 22, 2026:** `load` and its legacy migration act only if no save landed since it read the record (`StrokeIDCache.ifNoSave`).
 
 ## Left from the M1 batch (Sept 25, 2026)
 

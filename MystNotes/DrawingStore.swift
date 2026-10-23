@@ -102,15 +102,18 @@ nonisolated struct DrawingStore {
 #if canImport(UIKit)
     /// The page's saved ink, or `nil` if there is none.
     func load(pageID: UUID) -> PKDrawing? {
+        // A save can land between reading the record and storing its ids.
+        // Everything below that writes acts only if none did.
+        let landed = ids.savesLanded(for: pageID)
         let record = fileURL(for: pageID)
         if let data = try? Data(contentsOf: record) {
             let hash = PayloadHash.sha256(of: data)
             if let cached = cachedDrawing(for: pageID, matching: hash) {
-                if let map = try? StrokeCodec.decode(data).ids { ids.set(map, for: pageID) }
+                if let map = try? StrokeCodec.decode(data).ids { ids.ifNoSave(since: landed, for: pageID) { ids.set(map, for: pageID) } }
                 return cached
             }
             if let (drawing, map) = try? StrokeCodec.decode(data) {
-                ids.set(map, for: pageID)
+                ids.ifNoSave(since: landed, for: pageID) { ids.set(map, for: pageID) }
                 try? writeCache(drawing, for: pageID, key: hash)
                 return drawing
             }
@@ -122,9 +125,11 @@ nonisolated struct DrawingStore {
         // No readable record: a page from before the neutral format, or a
         // damaged one. The cache (or legacy file) is all there is.
         guard let drawing = legacyDrawing(for: pageID) else { return nil }
-        var map = StrokeIDMap()
-        _ = try? save(drawing, pageID: pageID, ids: &map)
-        ids.set(map, for: pageID)
+        ids.ifNoSave(since: landed, for: pageID) {
+            var map = StrokeIDMap()
+            _ = try? save(drawing, pageID: pageID, ids: &map)
+            ids.set(map, for: pageID)
+        }
         return drawing
     }
 
@@ -356,5 +361,20 @@ nonisolated final class StrokeIDCache {
         guard ticket > (written[pageID] ?? 0) else { return }
         try write()
         written[pageID] = ticket
+    }
+
+    /// Where the page's saves stand now, for `ifNoSave(since:)`.
+    func savesLanded(for pageID: UUID) -> Int {
+        writeLock.lock(); defer { writeLock.unlock() }
+        return written[pageID] ?? 0
+    }
+
+    /// Runs `update` only if no save of the page landed since `landed`.
+    /// A load that read an older record must not put its ids or its
+    /// migrated record over what a newer save wrote.
+    func ifNoSave(since landed: Int, for pageID: UUID, _ update: () throws -> Void) rethrows {
+        writeLock.lock(); defer { writeLock.unlock() }
+        guard (written[pageID] ?? 0) == landed else { return }
+        try update()
     }
 }

@@ -413,6 +413,21 @@ final class DurabilityTests: XCTestCase {
         assertStrokesEqual(loaded, newer, "the newer ink stays")
     }
 
+    /// A load that read the record before a save landed must not store
+    /// that older record's ids over the save's (invariant 6).
+    func testLoadAfterASaveLanded_doesNotStoreItsOlderIds() throws {
+        let store = DrawingStore.inDirectory(directory)
+        let pageID = UUID()
+        let landed = store.ids.savesLanded(for: pageID)
+        try store.save(makeDrawing(strokes: 3), pageID: pageID)
+
+        var ran = false
+        store.ids.ifNoSave(since: landed, for: pageID) { ran = true }
+        XCTAssertFalse(ran, "a save landed in between, so the load's update is dropped")
+        store.ids.ifNoSave(since: store.ids.savesLanded(for: pageID), for: pageID) { ran = true }
+        XCTAssertTrue(ran, "with no save in between it goes ahead")
+    }
+
     /// Saves can now overlap - an autosave landing while a page turn saves
     /// the same page - so the staging file each write uses has to be its
     /// own. With one shared staging path they rename each other's

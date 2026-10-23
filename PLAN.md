@@ -14,7 +14,7 @@ Every item ends with how it was checked:
 Branch and build:
 
 - Work on `m2-graph`. It has every change from `m1-batch-2026-09-25` plus the M2 work. The last M1 commit `9f9b4b2` came in as the cherry-pick `1978a07`, so git still lists `m1-batch-2026-09-25` as not merged. Neither branch is merged into `main` (last commit `3ab3810`, Sept 25).
-- The last full test run passed: 275 tests, 1 skipped, 0 failures, on Oct 22 (`.claude/last-test.log`), with the save-order fix.
+- The last full test run passed: 276 tests, 1 skipped, 0 failures, on Oct 22 (`.claude/last-test.log`), with the save-order fix.
 - M2 raises the sync format to 3. A device on an older build refuses the folder. Install the same build on the iPad and the Mac before you sync.
 - A full copy of the iPad's data is in `~/Desktop/MystNotes-iPad-backup-2026-10-10/` (289 MB).
 - The iPad runs an M1 build (sync format 2) from `m1-batch-2026-09-25` at `d6c7a0e`. It was built at 12:46 on Oct 10 (reflog and `.claude/real-build.log`) and launched at 12:47 (16:47 UTC in the iPad log). No M2 feature was used on the iPad.
