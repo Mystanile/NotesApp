@@ -49,7 +49,7 @@ Open bugs:
 - [x] Sync says what is still downloading (`eef81a3`). [tests only]
 - [x] Whiteboards use our lasso (`b91461b`). [tests only]
 - [x] `MystNotesDetailView.swift` split into 7 files, with no change in behavior. [tests only]
-- [x] An older background save of a page can no longer overwrite newer ink. Each save takes a ticket when it is asked for (Oct 22). [tests only]
+- [x] An older background save of a page can no longer overwrite newer ink. Each save takes a ticket when it is asked for, and a load cannot put an older record's stroke ids over a newer save's (Oct 22). [tests only]
 
 ### Owed on the iPad before M1 exits
 
