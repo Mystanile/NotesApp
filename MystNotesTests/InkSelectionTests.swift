@@ -373,4 +373,38 @@ final class InkSelectionTests: XCTestCase {
         let ratio = Double(area) / Double(single)
         XCTAssertGreaterThan(ratio, 3.2, "width did not scale with the geometry (ratio \(ratio))")
     }
+
+    /// A rotated selection stays rotated when the next gesture starts. The
+    /// undo check used to compare the turned ink's upright bounds with the
+    /// box and reset the box every time.
+    @MainActor
+    func testController_rotatedBox_survivesTheNextGesture() {
+        let (_, controller) = canvas(with: [line(from: 10, to: 150, y: 50, index: 0), line(from: 10, to: 60, y: 120, index: 1)])
+        controller.select(lasso: rect(CGRect(x: 0, y: 0, width: 200, height: 200)))
+        controller.beginGesture()
+        controller.rotate(by: .pi / 5)
+        controller.endGesture()
+        let turned = controller.display.corners
+
+        controller.beginGesture()
+        controller.endGesture()
+
+        XCTAssertEqual(controller.display.corners, turned, "the box keeps its rotation")
+    }
+
+    /// Undoing a duplicate takes the copy away, and the selection on it
+    /// goes too, instead of an empty box staying on screen.
+    @MainActor
+    func testController_undoingADuplicate_clearsTheSelection() {
+        let (canvas, controller) = canvas(with: [line(from: 10, to: 90, y: 50, index: 0)])
+        controller.select(lasso: rect(CGRect(x: 0, y: 0, width: 100, height: 100)))
+        controller.duplicate()
+        XCTAssertEqual(canvas.drawing.strokes.count, 2)
+        XCTAssertTrue(controller.hasSelection, "the copy is selected")
+
+        canvas.undoManager?.undo()
+
+        XCTAssertEqual(canvas.drawing.strokes.count, 1)
+        XCTAssertFalse(controller.hasSelection)
+    }
 }

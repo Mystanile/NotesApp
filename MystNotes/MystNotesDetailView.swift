@@ -712,7 +712,7 @@ struct NotebookDetailView: View {
                 }
                 if inkSelection.hasSelection {
                     InkSelectionToolbar(
-                        canPaste: InkSelectionController.pasteboardHasInk,
+                        canPaste: inkSelection.canPaste,
                         onCut: { inkSelection.cutSelection() },
                         onCopy: { inkSelection.copySelection() },
                         onPaste: { inkSelection.paste() },
@@ -830,7 +830,7 @@ struct NotebookDetailView: View {
                 if inkSelection.hasSelection {
                     // Chrome, so it stays put in screen space.
                     InkSelectionToolbar(
-                        canPaste: InkSelectionController.pasteboardHasInk,
+                        canPaste: inkSelection.canPaste,
                         onCut: { inkSelection.cutSelection() },
                         onCopy: { inkSelection.copySelection() },
                         onPaste: { inkSelection.paste() },

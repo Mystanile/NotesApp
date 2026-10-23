@@ -107,6 +107,12 @@ final class InkSelectionController: NSObject {
 
     override init() {
         super.init()
+        // An undo or redo can take the selected strokes away (undoing a
+        // paste or duplicate) or move them (undoing a drag): the box must
+        // follow, or it sits on screen with nothing in it.
+        for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(undoManagerChanged(_:)), name: name, object: nil)
+        }
         lasso.controller = self
         fingerPan.addTarget(self, action: #selector(handlePan(_:)))
         fingerPan.maximumNumberOfTouches = 1
@@ -148,6 +154,7 @@ final class InkSelectionController: NSObject {
     func clear() {
         fingerprints = []
         corners = nil
+        inkBoundsAfterChange = nil
         base = nil
         accumulated = .identity
         activeGestures = 0
@@ -163,7 +170,8 @@ final class InkSelectionController: NSObject {
         let indices = InkSelection.strokeIndices(of: drawing, insideLasso: loop)
         guard !indices.isEmpty else { return clear() }
         fingerprints = indices.map { StrokeIDMap.Fingerprint(drawing.strokes[$0]) }
-        corners = InkSelection.corners(of: InkSelection.bounds(of: drawing, indices: indices))
+        inkBoundsAfterChange = InkSelection.bounds(of: drawing, indices: indices)
+        corners = InkSelection.corners(of: inkBoundsAfterChange!)
     }
 
     /// Selects strokes that are already in the drawing - after a duplicate
@@ -171,7 +179,8 @@ final class InkSelectionController: NSObject {
     private func select(indices: [Int], in drawing: PKDrawing) {
         guard !indices.isEmpty else { return clear() }
         fingerprints = indices.map { StrokeIDMap.Fingerprint(drawing.strokes[$0]) }
-        corners = InkSelection.corners(of: InkSelection.bounds(of: drawing, indices: indices))
+        inkBoundsAfterChange = InkSelection.bounds(of: drawing, indices: indices)
+        corners = InkSelection.corners(of: inkBoundsAfterChange!)
     }
 
     /// Where the selected strokes are in the canvas's drawing right now -
@@ -193,6 +202,32 @@ final class InkSelectionController: NSObject {
         return indices
     }
 
+    @objc private func undoManagerChanged(_ note: Notification) {
+        guard let canvas, (note.object as? UndoManager) === canvas.undoManager, hasSelection, activeGestures == 0 else { return }
+        guard let indices = currentIndices(in: canvas.drawing) else { return }  // gone: currentIndices cleared it
+        let bounds = InkSelection.bounds(of: canvas.drawing, indices: indices)
+        if let known = inkBoundsAfterChange, !Self.same(bounds, known) {
+            corners = InkSelection.corners(of: bounds)
+            inkBoundsAfterChange = bounds
+        }
+    }
+
+    /// Where the selected ink was after our own last change to it. Ink
+    /// somewhere else means an undo moved it.
+    private var inkBoundsAfterChange: CGRect?
+
+    private static func same(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= 1 && abs(a.minY - b.minY) <= 1 && abs(a.maxX - b.maxX) <= 1 && abs(a.maxY - b.maxY) <= 1
+    }
+
+    /// Bumped on copy and cut, so a Paste button reading `canPaste`
+    /// re-renders; the pasteboard itself is not observable.
+    private var clipboardVersion = 0
+    var canPaste: Bool {
+        _ = clipboardVersion
+        return Self.pasteboardHasInk
+    }
+
     func contains(pagePoint: CGPoint) -> Bool {
         guard let corners else { return false }
         return InkSelection.polygon(corners, contains: pagePoint)
@@ -212,12 +247,15 @@ final class InkSelectionController: NSObject {
         let drawing = canvas.drawing
         guard let indices = currentIndices(in: drawing), var corners else { return }
         // An undo since the box was drawn has moved the ink but not the
-        // box: start again from where the ink actually is.
+        // box: start again from where the ink actually is. Judged against
+        // where our own last change left the ink, not against the box: a
+        // rotated box's centre and the turned ink's upright bounds never
+        // match, and every gesture after a rotation threw the rotation away.
         let bounds = InkSelection.bounds(of: drawing, indices: indices)
-        let boxBounds = corners.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
-        if abs(bounds.midX - boxBounds.midX) > 1 || abs(bounds.midY - boxBounds.midY) > 1 {
+        if let known = inkBoundsAfterChange, !Self.same(bounds, known) {
             corners = InkSelection.corners(of: bounds)
             self.corners = corners
+            inkBoundsAfterChange = bounds
         }
         base = drawing
         baseCorners = corners
@@ -257,6 +295,7 @@ final class InkSelectionController: NSObject {
         let final = canvas.drawing
         canvas.drawing = base
         canvas.setDrawingUndoably(final)
+        if let indices = currentIndices(in: final) { inkBoundsAfterChange = InkSelection.bounds(of: final, indices: indices) }
         onDrawingChanged()
     }
 
@@ -282,6 +321,7 @@ final class InkSelectionController: NSObject {
         guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
         let strokes = InkSelection.strokes(of: canvas.drawing, indices: indices)
         UIPasteboard.general.setData(InkSelection.pasteboardData(for: strokes), forPasteboardType: InkSelection.pasteboardType)
+        clipboardVersion += 1
     }
 
     /// The selection in another colour; still selected, one undo step.

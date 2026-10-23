@@ -65,6 +65,8 @@ Open bugs:
 
 - [x] Text box fixes (Oct 22): deleting a text box is undoable and undo brings back its formatting and `[[` mentions; its mentions go with it, so "Linked from" and the Page Map stop showing them; new text boxes and stickers land in the middle of the screen and never exactly on another one; cancelling a link's destination picker removes the unfinished link. [tests only] for placement and the snapshot. Not tried: undo and Cancel on a device.
 
+- [x] Lasso fixes (Oct 22): a rotated selection keeps its rotation on the next drag; undoing a paste or duplicate clears the empty selection box, and undoing a move puts the box back on the ink; Paste lights up straight after Copy. [tests only] for rotation and undo.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.
