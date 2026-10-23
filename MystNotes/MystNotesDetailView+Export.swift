@@ -33,7 +33,7 @@ extension NotebookDetailView {
     func exportPageToPhotos() {
         guard let page = currentPage else { return }
         // Flush pending ink first so the export matches what's on screen.
-        saveCurrentPage()
+        saveCurrentPage(blocking: true)
         let image = PageRenderer.image(for: page, artwork: artwork(for: page))
         Task {
             do {
@@ -47,13 +47,13 @@ extension NotebookDetailView {
 
     func exportPageAsPDF() {
         guard let page = currentPage else { return }
-        saveCurrentPage()
+        saveCurrentPage(blocking: true)
         let data = PageRenderer.pdfData(for: [(page: page, artwork: artwork(for: page))])
         presentPDF(data, named: "\(notebook.title) - Page \(currentPageIndex + 1)")
     }
 
     func exportNotebookAsPDF() {
-        saveCurrentPage()
+        saveCurrentPage(blocking: true)
         let entries = sortedPages.map { (page: $0, artwork: artwork(for: $0)) }
         guard !entries.isEmpty else { return }
         let data = PageRenderer.pdfData(for: entries)

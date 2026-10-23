@@ -35,6 +35,9 @@ extension NotebookDetailView {
     /// the open page open. Every page whose index changed is marked
     /// modified, so the new order syncs.
     func movePage(withID id: UUID, to targetIndex: Int) {
+        // A page waiting on Delete's undo still holds its index; renumbering
+        // around it would leave two pages with one index.
+        commitPendingDeletion()
         var pages = sortedPages
         guard let from = pages.firstIndex(where: { $0.id == id }), from != targetIndex,
               pages.indices.contains(targetIndex) else { return }
@@ -53,6 +56,7 @@ extension NotebookDetailView {
     /// top, and no ink. The file is shared by name, as pages of one PDF
     /// import already share theirs.
     func addPage(like source: Page) {
+        commitPendingDeletion()
         saveCurrentPage()
         // Everything after the source moves up one - before the new page
         // exists, so it can't be counted among them.
@@ -91,6 +95,7 @@ extension NotebookDetailView {
     }
 
     func addPage(type: String, template: String) {
+        commitPendingDeletion()
         saveCurrentPage()
 
         let newIndex = sortedPages.count
@@ -124,7 +129,9 @@ extension NotebookDetailView {
     /// by name, as pages of one PDF import already share theirs. Links are
     /// not copied: they point at pages of this notebook.
     func copyPages(_ pages: [Page], to destination: Notebook) async {
-        saveCurrentPage()
+        // The copy reads the ink from disk, so the open page's last strokes
+        // must be written first.
+        saveCurrentPage(blocking: true)
         var index = (destination.pages ?? []).count
         for source in pages {
             let page = Page(index: index, type: source.type, template: source.template, notebook: destination)
@@ -133,6 +140,7 @@ extension NotebookDetailView {
             page.recognizedTextCache = source.recognizedTextCache
             page.title = source.title
             page.isBookmarked = source.isBookmarked
+            page.tags = source.tags
             modelContext.insert(page)
             if destination.pages == nil { destination.pages = [page] } else { destination.pages?.append(page) }
 

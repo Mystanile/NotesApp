@@ -66,4 +66,20 @@ final class LibraryExportTests: XCTestCase {
         XCTAssertEqual(Array(zipped.prefix(4)), [0x50, 0x4B, 0x03, 0x04], "not a zip")
         XCTAssertGreaterThan(zipped.count, 1000)
     }
+
+    /// The file system ignores case: "Ideas" and "ideas" must be two files,
+    /// or the second replaces the first and a notebook is missing from the
+    /// export (invariant 9).
+    func testLibraryArchive_keepsNotebooksWhoseTitlesDifferOnlyInCase() async throws {
+        let (context, _, loose) = try library()
+        let twin = Notebook(title: "ideas")
+        context.insert(twin)
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryExportTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        let (folder, _) = try await LibraryExport.makeArchive(of: [loose, twin], documents: [], in: work)
+
+        let markdown = try XCTUnwrap(FileManager.default.subpaths(atPath: folder.path)).filter { $0.hasSuffix(".md") }
+        XCTAssertEqual(markdown.count, 2, "both notebooks are in the export: \(markdown)")
+    }
 }

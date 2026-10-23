@@ -370,6 +370,7 @@ extension NotebookDetailView {
             return
         }
 
+        commitPendingDeletion()
         let insertAt = insertionIndex
         NotebookImport.makeRoom(for: document.pageCount, at: insertAt, in: sortedPages)
         NotebookImport.appendPDFPages(document, storedAs: storedFilename, to: notebook,
@@ -420,6 +421,7 @@ extension NotebookDetailView {
             return
         }
 
+        commitPendingDeletion()
         let newIndex = insertionIndex
         NotebookImport.makeRoom(for: 1, at: newIndex, in: sortedPages)
         let page = NotebookImport.appendImagePage(storedAs: storedFilename, to: notebook, at: newIndex, in: modelContext)

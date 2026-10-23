@@ -936,7 +936,8 @@ struct NotebookDetailView: View {
     var linkedFromStrip: some View {
         if !isPresenting, let page = currentPage {
             LinkedFromStrip(
-                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks, pages: pagesLinking(to: page.id)),
+                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks,
+                                                 pages: pagesLinking(to: page.id).filter { $0.id != pendingDeletion?.pageID }),
                 currentNotebookID: notebook.id,
                 onSelect: { jumpToPage(withID: $0) })
         }

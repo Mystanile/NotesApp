@@ -25,7 +25,7 @@ Next, for the user to choose:
 1. The iPad pass: the "Owed on the iPad before M1 exits" list under Status, the M2 features with the Pencil, and the notebook covers in dark mode.
 2. Merge `m2-graph` into `main` after that pass.
 3. The rest of M2: a lasso action that turns ink into a node. It needs a design first: what a node is beyond a page in the Page Map. Ink transclusion waits for the conditions in `Docs/BACKLOG.md` ("Transclusion waits for").
-4. Shape tool, needs the Pencil: does one undo remove a snapped shape and the freehand stroke together? Does the object eraser take a dashed shape one dash at a time?
+4. Shape tool on the Pencil: one undo after a snap should leave the page as before the stroke (decided Oct 22). If PencilKit's own stroke undo lands in a separate group, there is one extra undo step with no visible change. The object eraser removes a dashed shape one dash at a time, as decided.
 
 Open bugs:
 
@@ -60,6 +60,8 @@ Open bugs:
 - [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. A zoomed whiteboard keeps its whole board reachable after a tool or colour change (the update reset its scrollable size to 3000 at any zoom), and zoomed out it fills the view. The whiteboard fix has a hosted test. [not tested] on a device, no test covers either.
 
 - [x] Empty library shows New Notebook and Import PDF or Image buttons (Oct 22). [not tested]
+
+- [x] Bug-hunt fixes (Oct 22): exports and Copy Pages wait for the open page's save, so they never take the previous ink; copied pages keep their tags; whole-library export keeps notebooks whose titles differ only in case; import, reorder and new pages first finish a pending Delete Page, so no two pages share an index; "Linked from" hides a page being deleted. [tests only] for the export name clash.
 
 ### Owed on the iPad before M1 exits
 

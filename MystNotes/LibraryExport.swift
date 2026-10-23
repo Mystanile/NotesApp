@@ -63,8 +63,10 @@ enum LibraryExport {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             var name = safe(notebook.title.isEmpty ? "Notebook" : notebook.title)
             var copy = 2
-            while used.contains(folder.appendingPathComponent(name).path) { name = "\(safe(notebook.title)) (\(copy))"; copy += 1 }
-            used.insert(folder.appendingPathComponent(name).path)
+            // Lowercased: the file system ignores case, so "Notes" and "notes"
+            // would be one file and the second would replace the first.
+            while used.contains(folder.appendingPathComponent(name).path.lowercased()) { name = "\(safe(notebook.title)) (\(copy))"; copy += 1 }
+            used.insert(folder.appendingPathComponent(name).path.lowercased())
 
             let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
             if !pages.isEmpty {
