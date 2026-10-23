@@ -56,6 +56,13 @@ enum LibraryExport {
         try? fm.removeItem(at: root)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
 
+        // The Markdown takes handwriting from the OCR cache, which only
+        // search fills: read any page it has not seen yet.
+        for notebook in notebooks {
+            if let context = notebook.modelContext {
+                await HandwritingRecognizer.indexAllIfNeeded(pages: notebook.pages ?? [], modelContext: context)
+            }
+        }
         let stacked = ImportedDocument.stacksByPage(documents)
         var used: Set<String> = []
         for notebook in notebooks {

@@ -192,6 +192,11 @@ nonisolated enum HandwritingRecognizer {
     /// indexed). Returns once all pending pages are processed.
     static func indexAllIfNeeded(pages: [Page], modelContext: ModelContext) async {
         for page in pages {
+            // The pass awaits OCR page by page: the search screen can close
+            // and a sync pull can delete a page between two of them. A
+            // deleted model must not be touched.
+            if Task.isCancelled { return }
+            guard page.modelContext != nil, !page.isDeleted else { continue }
             await refreshOCR(for: page, modelContext: modelContext)
         }
     }

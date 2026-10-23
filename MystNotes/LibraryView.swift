@@ -142,11 +142,16 @@ struct LibraryView: View {
         let name = (notebook.title.isEmpty ? "Notebook" : notebook.title)
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).md")
-        do {
-            try Data(LibraryExport.markdown(for: notebook).utf8).write(to: url, options: .atomic)
-            pdfExportURL = PDFExport(url: url)
-        } catch {
-            exportMessage = "Couldn't create the Markdown file: \(error.localizedDescription)"
+        Task {
+            // Handwriting comes from the OCR cache, which only search fills:
+            // read any page it has not seen yet, or its ink is missing.
+            await HandwritingRecognizer.indexAllIfNeeded(pages: notebook.pages ?? [], modelContext: modelContext)
+            do {
+                try Data(LibraryExport.markdown(for: notebook).utf8).write(to: url, options: .atomic)
+                pdfExportURL = PDFExport(url: url)
+            } catch {
+                exportMessage = "Couldn't create the Markdown file: \(error.localizedDescription)"
+            }
         }
     }
 

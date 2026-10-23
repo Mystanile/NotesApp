@@ -60,6 +60,8 @@ struct SearchResultsView: View {
         }
         .task { await indexThenSearch() }
         .onChange(of: query) { _, _ in computeResults() }
+        // A sync pull or a delete while the list is open.
+        .onChange(of: allPages.count) { _, _ in if !isIndexing { computeResults() } }
     }
 
     @ViewBuilder

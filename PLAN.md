@@ -67,6 +67,8 @@ Open bugs:
 
 - [x] Lasso fixes (Oct 22): a rotated selection keeps its rotation on the next drag; undoing a paste or duplicate clears the empty selection box, and undoing a move puts the box back on the ink; Paste lights up straight after Copy. [tests only] for rotation and undo.
 
+- [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.
