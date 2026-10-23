@@ -36,8 +36,6 @@ Open bugs:
 
 Stale docs:
 
-- `README.md` describes the old CloudKit and iCloud container sync. The app uses folder sync now.
-- `README.md` also says that export is not built and that sync needs CloudKit. Both are false now.
 - In `Docs/BACKLOG.md`, three open items are done: the `MystNotesDetailView` split (`a46c8d1` to `d6c7a0e`), pull status (`eef81a3`) and the whiteboard lasso (`b91461b`).
 - `Docs/BACKLOG.md` and `Docs/CHANGES_2026-10-10.md` ask you to read `[trash] move failed` lines. The trash loop item shows that no move failed, so those lines never appear.
 
