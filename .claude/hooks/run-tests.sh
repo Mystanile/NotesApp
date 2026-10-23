@@ -1,6 +1,6 @@
 #!/bin/bash
 # Boots the iPad simulator, clears a leftover test host, runs a clean test, logs to .claude/last-test.log.
-# Usage: run-tests.sh [-only-testing:MystNotesTests/SomeTests]
+# Usage: run-tests.sh [-only-testing:MystnotesTests/SomeTests]   (the target has a lowercase n; the folder is MystNotesTests/)
 UDID=67C1BFB0-4C9B-4960-96CE-24FDCD32DC7F
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOG="$ROOT/.claude/last-test.log"

@@ -432,7 +432,7 @@ A quality bar, not a feature list.
 
 - `CLAUDE.md` goes at the repo root. It's the working agreement and standing context for Claude Code.
 - `SPEC_DOCUMENT_FORMAT.md` and this file go in `Docs/`. The spec is a contract; change it deliberately and bump the version.
-- One milestone at a time. Start each session by pointing Claude Code at `CLAUDE.md` and naming the milestone and task.
+- One milestone at a time. Start each session at the Handoff section of `PLAN.md`. `CLAUDE.md` is the standing context.
 - Everything outside the current milestone goes in `BACKLOG.md` instead of into the code.
 - M0 is not optional and cannot be reordered. Every other milestone can slip; that one can't.
 

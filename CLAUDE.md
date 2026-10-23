@@ -10,25 +10,9 @@ MystNotes is a handwriting-first note app for iPad and Mac (Mac Catalyst), built
 
 Long-term thesis: notes are a **connected graph you can draw on**, with **stroke-level time travel** and **recall built in**. Not a filing cabinet.
 
-Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASELINE.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (task 8 decided: outcome B, done). **Current milestone: M1** — task order under Milestones below.
+Full context: `Docs/PROJECT_PLAN.md`. Regression floors: `Docs/PERFORMANCE_BASELINE.md`. Format contract: `Docs/SPEC_DOCUMENT_FORMAT.md`. Shape and fill tool diagnosis: `Docs/TOOL_FIXES.md`. Out-of-scope ideas: `Docs/BACKLOG.md`. Spike: `Docs/SPIKE_ICLOUD_CONFLICTS.md` (task 8 decided: outcome B, done). **Current milestone: M1, until its iPad checks pass. M2 started early on `m2-graph` with the user's approval (Oct 10, 2026).**
 
----
-
-## Current state (read this before proposing anything)
-
-**~16,900 lines of Swift in 66 app files, plus ~6,300 lines of tests in 30 files (231 tests, all green). All earlier branches merged into `main` on Sept 25, 2026. The M1 batch of Sept 25 sits unmerged on `m1-batch-2026-09-25` (on top of `m1-artwork-editing`), waiting for a pass on the iPad. Far more is built than a phase list suggests.**
-
-Already working, don't rebuild: custom PencilKit toolbar with 5 ink types and per-tool color/width memory, highlighter, vector and bitmap erasers, our own lasso (move, pinch-resize, rotate, cut/copy/paste/duplicate — `InkSelection`, Sept 19, 2026; the whiteboard still has PencilKit's), shape recognition (hold-to-snap, solid/dashed/dotted), fill/bucket tool, per-page canvas with real zoom, PDF and image import from Photos / Files / ⌘V / drag with crop/rotate/resize (any number per page, stacked — Sept 19, 2026), nested folders, notebook covers, thumbnail strip, four templates (drawn under imported artwork, and in thumbnails and exports), whiteboard page type, multi-window, presentation mode, Vision OCR handwriting search with tap-through results, page and notebook export, onboarding, login, settings, tutorial notebook, and folder-based sync. Added Sept 25, 2026 (`m1-batch-2026-09-25`): the mouse draws on a Mac, stickers resize/rotate, stickers/links/text in exports and thumbnails with working PDF links, lasso recolour/copy-as-image/convert-to-text, Engineering and Cornell paper, page sizes, favourites/bookmarks/page names/outline, Markdown and whole-library export, note lock, document scanning, pen presets, text-box lists, lasso corner handles, toolbar choices, daily backup, trash restore, New Page Like This.
-
-**Oct 10, 2026 (autonomous day, `Docs/CHANGES_2026-10-10.md`):** M1 is done except for the checks on the iPad. M2 has started on `m2-graph` with your approval: links are graph edges (sync format 3), there is a "Linked from" box, lasso "Link This To…", a Page Map with draggable cards (`Notebook.graphLayout`), page tags (`Page.tags`, `PageTags`), `[[` mentions in text boxes (`Link.kind == "mention"`, no tap anchor), and link cleanup when a page is deleted. `MystNotesDetailView.swift` is split into `MystNotesDetailView+*.swift`.
-
-**~~One shipped tool is broken (M1).~~ Both are fixed.** ~~The shape tool~~ — rebuilt Sept 15, 2026 and given a second pass Sept 18 after field use: the hold timer was scheduled in the default run-loop mode, which never fires while a pencil is down (`.common` now, plus an elapsed-time check in `touchesMoved`); a line with a hook on the end came back as an arrow; snapped shapes were drawn at the tool's heaviest possible mark instead of the weight of the stroke they replace; lines didn't snap to the axes; there were no dashed or dotted shapes. All fixed, 29 tests. Still owed on the iPad: that the host's recognizer receives the Pencil touch during a PencilKit stroke. ~~The fill tool~~ fixed Sept 25, 2026 after logging on the iPad showed the coordinates were right all along: its strokes were too thin for PencilKit to draw (`TOOL_FIXES.md` Part 2). Full diagnosis and acceptance criteria in `Docs/TOOL_FIXES.md` — part 4 is the lasso rebuild (Sept 19), part 3 covers the imported-image bugs fixed Sept 18 (a photo import wiped the page template; artwork vanished on page turns; no Files/paste/drag import on a Mac).
-
-**Three things blocked shipping. All three are closed (M0, done Sept 25, 2026).**
-
-1. ~~**`SyncEngine` can silently destroy a page.**~~ **Fixed (M0 tasks 4–5, Sept 12, 2026).** Merge is now per page on `Page.modifiedAt`; `rebuild()` is gone; pages update in place; a same-page conflict keeps the loser's ink in `trash/`; page deletions travel as `.page` tombstones and an edit newer than the deletion wins. `SyncTests` pins all of it, including the §1.2 scenario in both orders.
-2. ~~**`library.json` holds the entire library in one file**~~ **Closed (M0 tasks 6–15, Sept 12, 2026).** Split into `index.json` + `notebooks/<uuid>.json` with partial push/pull, index history, `tombstones.json`, content-addressed payloads, trash-not-delete, debounced push, folder watching, non-blocking downloads, one storage root — and iCloud conflict versions read and merged (task 8; the spike found outcome B on real hardware).
-3. ~~**There are no tests.**~~ **Fixed (M0 tasks 1–3).** `MystNotesTests/` — sync harness, durability, codec, fidelity, watcher, debouncer, diagnostics, shape, artwork and performance suites, 125 tests green. Run on the iPad simulator: boot it first (see gotchas), then `xcodebuild test -scheme MystNotes -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)'`.
+**Live status, what was checked on the iPad, and the session handoff are in `PLAN.md`. Before you propose anything, read its Handoff section.**
 
 ---
 
@@ -58,7 +42,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 **Canvas and drawing:** `PencilCanvasView`, `CanvasGestures` (host view, scribble-erase, shortcuts, paste/drop, `CanvasPasteboard`), `DrawingToolbarView`, `FillTool` (190), `ShapeRecognizer` (+ `ShapeLineStyle`), `ShapeHoldRecognizer` (hold-to-snap + `ShapeSnapController` + `ShapePreviewView`), `WhiteboardCanvasView`, `PageViewportLayer`, `PageGeometry` (100)
 
-**Pages and content:** `MystNotesDetailView` (~1500 — the big one), `PageElementsOverlayView` (237), `PageBackgroundView` (+ `PageTemplate`, the one ruling renderer), `PageThumbnailView` (+ `PageThumbnailRenderer`), `PageRenderer`, `ImportedArtwork`, `ImportedPageBackgroundView` (+ `ArtworkRenderer`), `ImportedFileType` (header sniffing), `BitmapStore` (+ `PageBitmaps`), `ImageCropOverlay`, `ImageAdjustOverlay`, `ImageAdjustToolbar`, `StickerPickerView`, `LinkDestinationPickerView`
+**Pages and content:** `MystNotesDetailView` (1,156, plus 7 `MystNotesDetailView+*.swift` files split out Oct 10, 2026), `PageElementsOverlayView` (237), `PageBackgroundView` (+ `PageTemplate`, the one ruling renderer), `PageThumbnailView` (+ `PageThumbnailRenderer`), `PageRenderer`, `ImportedArtwork`, `ImportedPageBackgroundView` (+ `ArtworkRenderer`), `ImportedFileType` (header sniffing), `BitmapStore` (+ `PageBitmaps`), `ImageCropOverlay`, `ImageAdjustOverlay`, `ImageAdjustToolbar`, `StickerPickerView`, `LinkDestinationPickerView`
 
 **Library:** `LibraryView` (516), `LibraryCells`, `FolderPickerView`, `TutorialNotebookFactory` (303)
 
@@ -74,7 +58,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 
 ### Data model (`MystNotesModels.swift`)
 
-`Folder` → `Notebook` → `Page` → (`TypedTextBlock`, `Sticker`, `ImportedDocument`), plus `Link` (`sourcePageID`, `destinationPageID`, anchor rect). All relationships cascade-delete; all properties optional or defaulted.
+`Folder` → `Notebook` → `Page` → (`TypedTextBlock`, `Sticker`, `ImportedDocument`), plus `Link` (`sourcePageID`, `destinationPageID`, anchor rect, and since M2 the optional `kind`, `destinationKind`, `destinationID`, `strokeIDs`). All relationships cascade-delete; all properties optional or defaulted.
 
 `Page` carries `drawingFileRef`, `backgroundRef`, `aspectRatio`, `recognizedTextCache`, `ocrUpdatedAt`, and `modifiedAt: Date?` (M0 task 4, done). Set `modifiedAt` only through `Page.markModified(at:)` — it also lifts the notebook's date, never lowers it. `nil` means the page predates the field and loses to any dated page. OCR fields never call it.
 
@@ -112,6 +96,20 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 **Uncertainty.** If a framework behavior is unverified — PencilKit internals, `NSFileCoordinator` semantics, iCloud Drive conflict handling, PDFKit annotation layers — say so and propose a spike. Don't guess and present the guess as fact.
 
 **Tests.** Anything touching sync or persistence ships with tests in the same change. Durability tests are never skipped, never marked flaky, never disabled to get a build green.
+
+---
+
+## Workflow
+
+1. At the start of every session, read `PLAN.md`: the Handoff section first, then Status.
+2. State the plan for the next task and wait for a go before you write code.
+3. Give each independent task to the `builder` subagent. Run builders in parallel only when their files do not overlap.
+4. Run one test run at a time. Every run uses the same simulator and the same `.claude/last-test.log`.
+5. After each task, run the `tester` subagent. A task is not done until its tests pass.
+6. Before you commit a change to sync, persistence, canvas or rendering code, run the `invariant-reviewer` subagent.
+7. Update `PLAN.md` as you go. Mark a task done and tag how it was checked: iPad, Mac, tests only, or not tested.
+8. At the end of a session, rewrite the Handoff section. A fresh session must be able to continue from it alone.
+9. At the end of a milestone, give a short summary: what is done, what was checked on the iPad, and what was not.
 
 ---
 
@@ -173,36 +171,15 @@ Detail and exit criteria in `Docs/PROJECT_PLAN.md`.
 | # | Milestone | Purpose |
 |---|---|---|
 | **M0** | Correctness | ✅ Done Sept 25, 2026. Tests, sync rewrite, storage cleanup, ink format. |
-| **M1** | Parity Floor (current) | Real PDF annotation, shape tool rebuild, fill tool, lasso-to-text, per-page templates, favorites, note lock |
-| **M2** | The Graph | Nodes, links, backlinks, graph canvas, ink transclusion |
+| **M1** | Parity Floor (current: only the iPad checks are left) | Real PDF annotation, shape tool rebuild, fill tool, lasso-to-text, per-page templates, favorites, note lock |
+| **M2** | The Graph (started on `m2-graph`) | Nodes, links, backlinks, graph canvas, ink transclusion |
 | **M3** | Time & Voice | Stroke timeline, replay, audio, transcription, stroke-bound playback |
 | **M4** | Recall | Semantic search, cloze on ink, spaced repetition, math |
 | **M5** | Switch Costs & Reach | Importers, iPhone, Mac polish, App Intents, Pencil Pro |
 | **M6** | Ship | Membership, accessibility, privacy manifest, TestFlight, App Store |
 | **M7** | Cross-Platform | Web renderer, share links, sync service spike |
 
-### M0 — done (Sept 25, 2026)
-
-All 22 tasks done, exit criteria met, and the user confirmed it on the iPad on Sept 25, 2026. The full task list and its findings are in `Docs/PROJECT_PLAN.md` §4 and in git history. Branches merged `custom-drawing-toolbar` → `m0-correctness` → `m1-images-and-shapes` → `main` the same day. M0 items still open in `BACKLOG.md` moved to M1.
-
-### M1 task order (current milestone)
-
-Already done early: shape tool rebuild (Sept 15/18), images on a page with stacking and Mac import (Sept 18/19), text block typography (Sept 15), our own lasso with move/resize/rotate/cut/copy/paste (Sept 19), copy pages to another notebook (Sept 19).
-
-1. ~~**Fill tool**~~ — done Sept 25, 2026, confirmed on the iPad (`TOOL_FIXES.md` Part 2): one erasable stroke per fill, the pen's colour, pan/zoom while selected, no gap at the outline.
-2. ~~**Real PDF annotation**~~ — done Sept 25, 2026 on `m1-pdf-vectors`: PDF pages sharp at every zoom (vector tiles over the bitmap), export keeps the PDF's real text. Owed: a look on the iPad zoomed to 5x. Text selection is in the backlog.
-3. ~~Lasso~~ — recolour, copy as image, convert to text done Sept 25 (`LassoActionsTests`); cross-page move is cut, turn the page, paste. Corner handles for a Mac.
-4. ~~Templates~~ — Engineering and Cornell paper, page sizes for new pages, change a page's paper, New Page Like This for an imported template.
-5. ~~Favourites, bookmarks, page outline~~ — plus page names (searchable). Syncs.
-6. ~~Stickers~~ — resize/rotate (syncs); stickers and link anchors in exports, real PDF links.
-7. ~~Pen on Mac~~ — `.pencilOnly` meant nothing drew on a Mac; verified with a test-bundle copy on this Mac.
-8. ~~Export additions~~ — Markdown, whole-library zip. "Layered PDF" is still undefined; the export is vector PDF under a raster ink layer.
-9. ~~Note lock; off-device backup~~ — Face ID/passcode gate; daily backup in the sync layout to a chosen folder, restorable.
-10. Also done: document scanning (searchable), pen presets, bullets/checklists in text boxes, toolbar choices, trash restore.
-
-**Owed on the iPad before M1 exits** — none of it can be checked in the simulator: the `[adjust]` log from one image resize (the resize-preview bug didn't reproduce; `BACKLOG.md`), sticker pinch/rotate, lasso corner handles and toolbar, Convert to Text on real handwriting, Rotate Page, Delete Page undo, note lock with Face ID, scanning, and a backup to a real Dropbox/Drive folder.
-
-**M1 exit:** a GoodNotes user can do a full day of classes without hitting a wall.
+Status, the Handoff, and the list "Owed on the iPad before M1 exits" are in `PLAN.md`. The old M1 task order and the M1 exit test are at the end of `PLAN.md`, under "Earlier state".
 
 ---
 
