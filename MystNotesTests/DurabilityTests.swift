@@ -395,6 +395,24 @@ final class DurabilityTests: XCTestCase {
         }
     }
 
+    /// Two saves of one page can finish in either order. The one asked for
+    /// last must win, even when it runs first (BACKLOG, "two background ink
+    /// saves of one page aren't ordered").
+    func testOlderSaveLandingLast_doesNotOverwriteNewerInk() throws {
+        let store = DrawingStore.inDirectory(directory)
+        let pageID = UUID()
+        let older = makeDrawing(strokes: 3, xOffset: 0, seed: 1)
+        let newer = makeDrawing(strokes: 5, xOffset: 300, seed: 500)
+        let olderTicket = store.ids.ticket(for: pageID)
+        let newerTicket = store.ids.ticket(for: pageID)
+
+        XCTAssertEqual(try store.save(newer, pageID: pageID, ticket: newerTicket), DrawingStore.fileName(for: pageID))
+        XCTAssertEqual(try store.save(older, pageID: pageID, ticket: olderTicket), DrawingStore.fileName(for: pageID))
+
+        let loaded = try XCTUnwrap(DrawingStore.inDirectory(directory, ids: StrokeIDCache()).load(pageID: pageID))
+        assertStrokesEqual(loaded, newer, "the newer ink stays")
+    }
+
     /// Saves can now overlap - an autosave landing while a page turn saves
     /// the same page - so the staging file each write uses has to be its
     /// own. With one shared staging path they rename each other's

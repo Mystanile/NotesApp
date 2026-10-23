@@ -146,8 +146,11 @@ nonisolated struct DrawingStore {
     /// there.
     nonisolated static func saveDetached(_ store: DrawingStore, _ drawing: PKDrawing,
                                          pageID: UUID) -> Task<Result<String, Error>, Never> {
-        Task.detached(priority: .userInitiated) {
-            Result { try store.save(drawing, pageID: pageID) }
+        // The ticket is taken here, at the call, not when the task runs:
+        // detached tasks start in any order.
+        let ticket = store.ids.ticket(for: pageID)
+        return Task.detached(priority: .userInitiated) {
+            Result { try store.save(drawing, pageID: pageID, ticket: ticket) }
         }
     }
 
@@ -167,10 +170,21 @@ nonisolated struct DrawingStore {
     /// name to keep in `Page.drawingFileRef`.
     @discardableResult
     func save(_ drawing: PKDrawing, pageID: UUID) throws -> String {
-        var map = ids.map(for: pageID)
-        let name = try save(drawing, pageID: pageID, ids: &map)
-        ids.set(map, for: pageID)
-        return name
+        try save(drawing, pageID: pageID, ticket: ids.ticket(for: pageID))
+    }
+
+    /// A save that loses to any save of the same page asked for after it,
+    /// whichever runs first. Two background saves of one page used to land
+    /// in whatever order their threads finished, so an older autosave
+    /// could overwrite newer ink. A skipped save still reports the record's
+    /// name: the newer save already put the newer ink there.
+    func save(_ drawing: PKDrawing, pageID: UUID, ticket: Int) throws -> String {
+        try ids.inOrder(ticket, for: pageID) {
+            var map = ids.map(for: pageID)
+            _ = try save(drawing, pageID: pageID, ids: &map)
+            ids.set(map, for: pageID)
+        }
+        return Self.fileName(for: pageID)
     }
 
     private func save(_ drawing: PKDrawing, pageID: UUID, ids map: inout StrokeIDMap) throws -> String {
@@ -315,5 +329,32 @@ nonisolated final class StrokeIDCache {
     func forget(_ pageID: UUID) {
         lock.lock(); defer { lock.unlock() }
         maps[pageID] = nil
+    }
+
+    // Save order: `issued` under `lock`, `written` under `writeLock`.
+    private var issued: [UUID: Int] = [:]
+    private var written: [UUID: Int] = [:]
+    // ponytail: one write lock for every page, so saves of two pages wait
+    // on each other (tens of ms each). Per-page locks if that ever shows
+    // up in the stall log.
+    private let writeLock = NSLock()
+
+    /// Numbers a save of `pageID` when it is asked for.
+    func ticket(for pageID: UUID) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let next = (issued[pageID] ?? 0) + 1
+        issued[pageID] = next
+        return next
+    }
+
+    /// Runs `write` unless a save of the same page with a later ticket
+    /// already landed. Holding the lock for the whole write also keeps two
+    /// saves from reading the same id map and dropping each other's ids
+    /// (invariant 6).
+    func inOrder(_ ticket: Int, for pageID: UUID, _ write: () throws -> Void) rethrows {
+        writeLock.lock(); defer { writeLock.unlock() }
+        guard ticket > (written[pageID] ?? 0) else { return }
+        try write()
+        written[pageID] = ticket
     }
 }

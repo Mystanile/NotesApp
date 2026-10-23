@@ -14,7 +14,7 @@ Every item ends with how it was checked:
 Branch and build:
 
 - Work on `m2-graph`. It has every change from `m1-batch-2026-09-25` plus the M2 work. The last M1 commit `9f9b4b2` came in as the cherry-pick `1978a07`, so git still lists `m1-batch-2026-09-25` as not merged. Neither branch is merged into `main` (last commit `3ab3810`, Sept 25).
-- The last full test run passed: 274 tests, 1 skipped, 0 failures, on Oct 10 at 12:22 (`.claude/last-test.log`). That run is on `440e207`. Nobody ran the suite after that.
+- The last full test run passed: 275 tests, 1 skipped, 0 failures, on Oct 22 (`.claude/last-test.log`), with the save-order fix.
 - M2 raises the sync format to 3. A device on an older build refuses the folder. Install the same build on the iPad and the Mac before you sync.
 - A full copy of the iPad's data is in `~/Desktop/MystNotes-iPad-backup-2026-10-10/` (289 MB).
 - The iPad runs an M1 build (sync format 2) from `m1-batch-2026-09-25` at `d6c7a0e`. It was built at 12:46 on Oct 10 (reflog and `.claude/real-build.log`) and launched at 12:47 (16:47 UTC in the iPad log). No M2 feature was used on the iPad.
@@ -31,7 +31,6 @@ Open bugs:
 - Launch hang of 6 to 8 s on the iPad, last reported around Sept 25. It waited on the first sync run. None of the 7 launches logged from Oct 7 to Oct 10 hung. If it comes back, read its `[hang] main thread stack:` line. [iPad]
 - Two stalls of about 1 s under `saveCurrentPage` (Sept 19). The cause is not known. The Oct 7 ones were the share sheet. [iPad]
 - Trash loop: it stopped on the newer build, but the cause is not proven. 278 MB sits in the sync folder's trash. [iPad]
-- Two background ink saves of one page are not ordered, so an older save can land last. The fix in the backlog is a serial queue for each page. [not tested]
 - A notebook whose `notebooks/<id>.json` never arrives stays pending forever. It has no way out yet. [tests only]
 - `PageViewportLayer` hides the page until the viewport syncs, with no timeout. It is a candidate cause if images still vanish on a page turn. [not tested]
 
@@ -57,6 +56,7 @@ Stale docs:
 - [x] Sync says what is still downloading (`eef81a3`). [tests only]
 - [x] Whiteboards use our lasso (`b91461b`). [tests only]
 - [x] `MystNotesDetailView.swift` split into 7 files, with no change in behavior. [tests only]
+- [x] An older background save of a page can no longer overwrite newer ink. Each save takes a ticket when it is asked for (Oct 22). [tests only]
 
 ### Owed on the iPad before M1 exits
 
