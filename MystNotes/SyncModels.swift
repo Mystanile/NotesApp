@@ -103,7 +103,10 @@ extension LibraryIndex {
     static func signature(folders: [FolderDTO], notebooks: [NotebookIndexEntry], tombstones: [Tombstone]) -> String {
         var parts: [String] = []
         for folder in folders.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            parts.append("F:\(folder.id):\(folder.name):\(folder.parentID?.uuidString ?? "-")")
+            // The query only when there is one, so plain folders keep the
+            // signature they always had and nothing resyncs for it.
+            parts.append("F:\(folder.id):\(folder.name):\(folder.parentID?.uuidString ?? "-")"
+                         + (folder.smartQuery.map { ":Q:\($0)" } ?? ""))
         }
         for notebook in notebooks.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             parts.append("N:\(notebook.id):\(SnapshotDates.stamp(notebook.settingsModifiedAt)):\(notebook.contentSignature)")
@@ -256,6 +259,8 @@ nonisolated struct FolderDTO: Codable {
     var id: UUID
     var name: String
     var parentID: UUID?
+    /// A smart folder's saved search. Absent in folders written before it.
+    var smartQuery: String? = nil
 }
 
 /// One notebook, complete: what `notebooks/<id>.json` holds.

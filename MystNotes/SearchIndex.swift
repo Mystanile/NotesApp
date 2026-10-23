@@ -42,6 +42,8 @@ enum SearchIndex {
         if let recognized = page.recognizedTextCache, !recognized.isEmpty {
             parts.append(recognized)
         }
+        // Tags too, so a smart folder can be "every page tagged exam".
+        parts.append(contentsOf: page.tags ?? [])
         if let blocks = page.textBlocks, !blocks.isEmpty {
             parts.append(contentsOf: blocks.compactMap { $0.content.isEmpty ? nil : $0.content })
         }

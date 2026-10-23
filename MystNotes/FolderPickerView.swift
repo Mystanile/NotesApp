@@ -36,7 +36,7 @@ struct FolderPickerView: View {
     }
 
     private var rootFolders: [Folder] {
-        allFolders.filter { $0.parentFolder == nil }
+        allFolders.filter { $0.parentFolder == nil && $0.smartQuery == nil }
     }
 
     // NOTE: this function calls itself recursively (to render nested
@@ -66,7 +66,7 @@ struct FolderPickerView: View {
     }
 
     private func children(of folder: Folder) -> [Folder] {
-        allFolders.filter { $0.parentFolder?.id == folder.id }.sorted { $0.name < $1.name }
+        allFolders.filter { $0.parentFolder?.id == folder.id && $0.smartQuery == nil }.sorted { $0.name < $1.name }
     }
 
     private func isExcluded(_ folder: Folder) -> Bool {

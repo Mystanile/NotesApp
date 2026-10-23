@@ -57,6 +57,8 @@ Open bugs:
 
 - [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. [not tested] on a device, no test covers either.
 
+- [x] Empty library shows New Notebook and Import PDF or Image buttons (Oct 22). [not tested]
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.
@@ -87,7 +89,7 @@ All of these are [not tested]. None of them can be checked in the simulator.
 - [x] Links between notebooks (`855237e`). [tests only]
 - [x] Notebook covers with a spine, a title label and page edges (`c60306c`). [tests only], light mode only
 - [x] A photo button on the drawing toolbar (`8e5c0bc`). [not tested], no test of its own
-- [ ] Saved searches as smart folders.
+- [x] Smart folders: + menu, New Smart Folder. A folder with a saved search shows every matching page (typed text, handwriting, PDF text, now tags). The search syncs. Edit Search in the folder's menu (Oct 22). [tests only] for sync.
 - [ ] A lasso action that turns ink into a node.
 - [ ] Ink transclusion. It is not started on purpose.
 

@@ -7,7 +7,7 @@ struct FolderCellView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "folder.fill")
+            Image(systemName: folder.smartQuery == nil ? "folder.fill" : "folder.fill.badge.gearshape")
                 .font(.system(size: 44))
                 .foregroundStyle(.blue)
             Text(folder.name.isEmpty ? "Untitled Folder" : folder.name)

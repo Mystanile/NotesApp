@@ -24,7 +24,12 @@ struct ContentView: View {
                 NavigationStack {
                     LibraryView(parentFolder: nil)
                         .navigationDestination(for: Folder.self) { folder in
-                            LibraryView(parentFolder: folder)
+                            if let query = folder.smartQuery {
+                                SearchResultsView(query: query)
+                                    .navigationTitle(folder.name)
+                            } else {
+                                LibraryView(parentFolder: folder)
+                            }
                         }
                         .navigationDestination(for: Notebook.self) { notebook in
                             LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }

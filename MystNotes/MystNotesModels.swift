@@ -7,6 +7,9 @@ import SwiftData
 final class Folder {
     var id: UUID = UUID()
     var name: String = ""
+    /// Set for a smart folder: a saved search whose results are the
+    /// folder's contents. It holds no notebooks of its own.
+    var smartQuery: String?
 
     var parentFolder: Folder?
 

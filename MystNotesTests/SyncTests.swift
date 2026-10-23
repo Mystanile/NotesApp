@@ -487,6 +487,28 @@ final class SyncTests: XCTestCase {
 
     // MARK: The index is rebuildable from the folder (M0 task 19)
 
+    /// A smart folder is a folder with a saved search. The search travels
+    /// with it, and an edit to it on one device reaches the other.
+    func testSmartFolder_searchSyncs() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let exams = try ipad.createFolder(name: "Exams")
+        exams.smartQuery = "exam"
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let onMac = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Folder>()).first { $0.id == exams.id })
+        XCTAssertEqual(onMac.smartQuery, "exam")
+
+        onMac.smartQuery = "midterm"
+        try mac.context.save()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        let onIPad = try ModelContext(ipad.container).fetch(FetchDescriptor<Folder>()).first { $0.id == exams.id }
+        XCTAssertEqual(onIPad?.smartQuery, "midterm")
+    }
+
     /// Invariant 4. Build a library with folders, notebooks, pages, ink, a
     /// text block and a link; sync it; wipe the index; rebuild. Everything
     /// the index said before, it says again.

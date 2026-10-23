@@ -1129,7 +1129,7 @@ nonisolated struct SyncRunner {
         let docsByPage = Dictionary(grouping: allDocs, by: { $0.page?.id })
 
         let folderDTOs = folders.map {
-            FolderDTO(id: $0.id, name: $0.name, parentID: $0.parentFolder?.id)
+            FolderDTO(id: $0.id, name: $0.name, parentID: $0.parentFolder?.id, smartQuery: $0.smartQuery)
         }
 
         let notebookDTOs = notebooks.map { notebook -> NotebookDTO in
@@ -1254,9 +1254,11 @@ nonisolated struct SyncRunner {
         for dto in remote.folders where plan.tombstones[dto.id] == nil {
             if let folder = folderByID[dto.id] {
                 folder.name = dto.name
+                folder.smartQuery = dto.smartQuery
             } else {
                 let folder = Folder(name: dto.name)
                 folder.id = dto.id
+                folder.smartQuery = dto.smartQuery
                 context.insert(folder)
                 folderByID[dto.id] = folder
             }

@@ -20,6 +20,11 @@ struct LibraryView: View {
 
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
+    /// The New Smart Folder / Edit Search alert. `smartFolderToEdit` is nil
+    /// for a new one.
+    @State private var showingSmartFolderAlert = false
+    @State private var smartFolderToEdit: Folder?
+    @State private var smartFolderSearch = ""
     @State private var showingNewNotebookSheet = false
     /// A notebook just created opens once its sheet is gone: a push
     /// during the sheet's dismissal can be dropped.
@@ -236,11 +241,16 @@ struct LibraryView: View {
                 }
 
                 if folders.isEmpty && notebooks.isEmpty {
-                    ContentUnavailableView(
-                        "Nothing here yet",
-                        systemImage: "tray",
-                        description: Text("Create a folder or a notebook to get started.")
-                    )
+                    ContentUnavailableView {
+                        Label("Nothing here yet", systemImage: "tray")
+                    } description: {
+                        Text("Start a notebook, or bring in a PDF or a picture. You can also drop files here.")
+                    } actions: {
+                        Button("New Notebook") { showingNewNotebookSheet = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("Import PDF or Image") { showingImporter = true }
+                            .buttonStyle(.bordered)
+                    }
                     .padding(.top, 60)
                 }
             }
@@ -261,6 +271,14 @@ struct LibraryView: View {
                         showingNewNotebookSheet = true
                     } label: {
                         Label("New Notebook", systemImage: "book.badge.plus")
+                    }
+                    Button {
+                        smartFolderToEdit = nil
+                        newFolderName = ""
+                        smartFolderSearch = ""
+                        showingSmartFolderAlert = true
+                    } label: {
+                        Label("New Smart Folder", systemImage: "folder.badge.gearshape")
                     }
                     Button {
                         showingImporter = true
@@ -287,6 +305,14 @@ struct LibraryView: View {
                         Label("New Notebook", systemImage: "book.badge.plus")
                     }
                     Button {
+                        smartFolderToEdit = nil
+                        newFolderName = ""
+                        smartFolderSearch = ""
+                        showingSmartFolderAlert = true
+                    } label: {
+                        Label("New Smart Folder", systemImage: "folder.badge.gearshape")
+                    }
+                    Button {
                         showingImporter = true
                     } label: {
                         Label("Import PDF or Image", systemImage: "square.and.arrow.down")
@@ -311,6 +337,16 @@ struct LibraryView: View {
             TextField("Folder name", text: $newFolderName)
             Button("Cancel", role: .cancel) {}
             Button("Create") { createFolder() }
+        }
+        .alert(smartFolderToEdit == nil ? "New Smart Folder" : "Edit Search", isPresented: $showingSmartFolderAlert) {
+            if smartFolderToEdit == nil {
+                TextField("Folder name", text: $newFolderName)
+            }
+            TextField("Search for", text: $smartFolderSearch)
+            Button("Cancel", role: .cancel) {}
+            Button(smartFolderToEdit == nil ? "Create" : "Save") { saveSmartFolder() }
+        } message: {
+            Text("Shows every page that matches, in every notebook: typed text, handwriting, PDF text and tags.")
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.pdf, .image],
                       allowsMultipleSelection: true) { result in
@@ -375,6 +411,15 @@ struct LibraryView: View {
             renameText = folder.name
         } label: {
             Label("Rename", systemImage: "pencil")
+        }
+        if folder.smartQuery != nil {
+            Button {
+                smartFolderToEdit = folder
+                smartFolderSearch = folder.smartQuery ?? ""
+                showingSmartFolderAlert = true
+            } label: {
+                Label("Edit Search", systemImage: "magnifyingglass")
+            }
         }
         Button {
             itemToMove = .folder(folder)
@@ -499,6 +544,20 @@ struct LibraryView: View {
     }
 
     // MARK: - Actions
+
+    private func saveSmartFolder() {
+        let search = smartFolderSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !search.isEmpty else { return }
+        if let folder = smartFolderToEdit {
+            folder.smartQuery = search
+        } else {
+            let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let folder = Folder(name: name.isEmpty ? search : name, parentFolder: parentFolder)
+            folder.smartQuery = search
+            modelContext.insert(folder)
+        }
+        save()
+    }
 
     private func createFolder() {
         let trimmed = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
