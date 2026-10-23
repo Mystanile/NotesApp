@@ -34,11 +34,6 @@ Open bugs:
 - A notebook whose `notebooks/<id>.json` never arrives stays pending forever. It has no way out yet. [tests only]
 - `PageViewportLayer` hides the page until the viewport syncs, with no timeout. It is a candidate cause if images still vanish on a page turn. [not tested]
 
-Stale docs:
-
-- In `Docs/BACKLOG.md`, three open items are done: the `MystNotesDetailView` split (`a46c8d1` to `d6c7a0e`), pull status (`eef81a3`) and the whiteboard lasso (`b91461b`).
-- `Docs/BACKLOG.md` and `Docs/CHANGES_2026-10-10.md` ask you to read `[trash] move failed` lines. The trash loop item shows that no move failed, so those lines never appear.
-
 ## Status
 
 ### M1, Parity Floor: done except the iPad checks
