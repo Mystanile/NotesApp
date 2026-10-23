@@ -228,10 +228,11 @@ class PDFLayerView: UIView {
         isUserInteractionEnabled = false
         // A new size redraws the tiles rather than stretching old ones.
         contentMode = .redraw
-        // From a quarter of the page's size up to 16x: the canvas zooms to
-        // 5x fit, and fit is itself ~1.5x on an iPad.
-        tiles.levelsOfDetail = 7
-        tiles.levelsOfDetailBias = 4
+        // From a quarter of the page's size up to 32x: the canvas zooms to
+        // 5x fit, fit reaches ~1.7x on a 13" iPad, and the screen is 2x -
+        // about 17x, past the 16x this used to stop at.
+        tiles.levelsOfDetail = 8
+        tiles.levelsOfDetailBias = 5
         tiles.tileSize = CGSize(width: 512, height: 512)
     }
 

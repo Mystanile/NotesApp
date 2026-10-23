@@ -199,14 +199,18 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     /// Hands the current pan/zoom to the observable viewport the SwiftUI
     /// layers read.
     func publishViewport(deferred: Bool = false) {
-        guard let canvas, let viewport else { return }
-        let scale = canvas.zoomScale
-        let offset = canvas.contentOffset
+        guard canvas != nil, let viewport else { return }
         let identity = pageIdentity
         let apply = { [weak self] in
             // A host that's been dismantled (or re-pointed) since this was
             // queued has nothing valid to say about the page on screen.
-            guard let self, self.viewport === viewport else { return }
+            guard let self, self.viewport === viewport, let canvas = self.canvas else { return }
+            // Read when it lands, not when it was queued: a deferred publish
+            // from a layout pass mid-pinch used to overwrite a newer one with
+            // the old zoom, and the overlays sat off the ink until the next
+            // scroll.
+            let scale = canvas.zoomScale
+            let offset = canvas.contentOffset
             if viewport.zoomScale != scale { viewport.zoomScale = scale }
             if viewport.contentOffset != offset { viewport.contentOffset = offset }
             let isExpectedPage = viewport.expectedPage == nil || viewport.expectedPage == identity

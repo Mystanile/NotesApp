@@ -40,11 +40,12 @@ final class WhiteboardHostView: CanvasHostView, CanvasViewportHost {
     }
 
     func publishViewport(deferred: Bool = false) {
-        guard let canvas, let viewport else { return }
-        let scale = canvas.zoomScale
-        let offset = canvas.contentOffset
+        guard canvas != nil, let viewport else { return }
         let apply = { [weak self] in
-            guard let self, self.viewport === viewport else { return }
+            // Read when it lands, not when it was queued (see the paged host).
+            guard let self, self.viewport === viewport, let canvas = self.canvas else { return }
+            let scale = canvas.zoomScale
+            let offset = canvas.contentOffset
             if viewport.zoomScale != scale { viewport.zoomScale = scale }
             if viewport.contentOffset != offset { viewport.contentOffset = offset }
             if !viewport.hasSynced { viewport.hasSynced = true }
