@@ -85,6 +85,12 @@ nonisolated enum ShapeRecognizer {
         /// out at the tool's heaviest possible weight.
         var force: CGFloat
         var style: ShapeLineStyle = .solid
+        /// Also copied from the source stroke: pencil and crayon shade by
+        /// tilt and opacity, so a shape rebuilt upright at full opacity
+        /// came out flatter than the stroke beside it.
+        var opacity: CGFloat = 1
+        var azimuth: CGFloat = 0
+        var altitude: CGFloat = .pi / 2
     }
 
     // MARK: - Tuning
@@ -127,14 +133,20 @@ nonisolated enum ShapeRecognizer {
 
     /// Recognize `rawPoints` (pencil locations, any density) as a shape, or
     /// `nil` when nothing fits well enough to be worth replacing real ink.
-    static func recognize(_ rawPoints: [CGPoint]) -> RecognizedShape? {
+    ///
+    /// `zoom` is the canvas's zoom scale. The points are in drawing space,
+    /// but the size floors are meant on screen, where the hand is: without
+    /// it a circle that fills the screen at 4x never snapped, and a 6 pt
+    /// scribble at 0.25x did.
+    static func recognize(_ rawPoints: [CGPoint], zoom: CGFloat = 1) -> RecognizedShape? {
+        let zoom = min(max(zoom, 0.1), 10)
         let cleaned = dedupe(rawPoints)
         guard cleaned.count >= 3 else { return nil }
         let length = pathLength(cleaned)
-        guard length >= minimumPathLength else { return nil }
+        guard length >= minimumPathLength / zoom else { return nil }
 
         let points = resample(cleaned, count: sampleCount)
-        if let loop = closedLoop(points, length: length) {
+        if let loop = closedLoop(points, length: length, gapMinimum: closedGapMinimum / zoom) {
             return recognizeClosed(loop)
         }
         return recognizeOpen(points, length: length)
@@ -149,10 +161,10 @@ nonisolated enum ShapeRecognizer {
     /// where the doubled-back tail would read as a 180° corner and swallow
     /// the real one next to it. Undershoot closes at the endpoints as long
     /// as the gap is small against the path length.
-    private static func closedLoop(_ points: [CGPoint], length: CGFloat) -> [CGPoint]? {
+    private static func closedLoop(_ points: [CGPoint], length: CGFloat, gapMinimum: CGFloat) -> [CGPoint]? {
         let n = points.count
         let quarter = n / 4
-        let threshold = max(length * closedGapFraction, closedGapMinimum)
+        let threshold = max(length * closedGapFraction, gapMinimum)
         var best: (i: Int, j: Int, d: CGFloat)?
         for i in 0..<quarter {
             for j in stride(from: n - 1, through: n - quarter, by: -1) where j - i >= n / 2 {
@@ -189,13 +201,18 @@ nonisolated enum ShapeRecognizer {
         guard let source, !source.path.isEmpty else {
             return InkSpec(ink: fallbackInk, size: fallbackWidth, force: 1, style: style)
         }
-        let sizes = source.path.map { $0.size.width }.sorted()
-        let forces = source.path.map(\.force).sorted()
+        func median(_ value: (PKStrokePoint) -> CGFloat) -> CGFloat {
+            let sorted = source.path.map(value).sorted()
+            return sorted[sorted.count / 2]
+        }
         return InkSpec(
             ink: source.ink,
-            size: max(sizes[sizes.count / 2], 0.5),
-            force: forces[forces.count / 2],
-            style: style
+            size: max(median { $0.size.width }, 0.5),
+            force: median(\.force),
+            style: style,
+            opacity: median(\.opacity),
+            azimuth: median(\.azimuth),
+            altitude: median(\.altitude)
         )
     }
 
@@ -339,10 +356,10 @@ nonisolated enum ShapeRecognizer {
                 location: point,
                 timeOffset: timeOffset,
                 size: CGSize(width: spec.size, height: spec.size),
-                opacity: 1,
+                opacity: spec.opacity,
                 force: spec.force,
-                azimuth: 0,
-                altitude: .pi / 2
+                azimuth: spec.azimuth,
+                altitude: spec.altitude
             ))
         }
         let path = PKStrokePath(controlPoints: strokePoints, creationDate: Date())

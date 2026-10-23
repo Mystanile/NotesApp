@@ -201,7 +201,7 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
         guard CACurrentMediaTime() - anchorTime >= holdDuration else { return }
         // A still pencil that hasn't drawn anything yet is a dot, not a
         // shape being held.
-        guard ShapeRecognizer.pathLength(points) >= ShapeRecognizer.minimumPathLength else { return }
+        guard ShapeRecognizer.pathLength(points) >= ShapeRecognizer.minimumPathLength / max(zoomScale, 0.1) else { return }
         if onHold(points) {
             didHold = true
             stopTimer()
@@ -219,6 +219,10 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
     /// finger pans, and a pan held still must not snap anything.
     private func isDrawingTouch(_ touch: UITouch) -> Bool {
         guard let canvas else { return touch.type == .pencil }
+        // An eraser or lasso stroke held still is not a shape. Without
+        // this the hold fired anyway and the next committed stroke - some
+        // unrelated ink - was swapped for the shape.
+        guard canvas.tool is PKInkingTool else { return false }
         switch canvas.drawingPolicy {
         case .pencilOnly: return touch.type == .pencil
         default: return touch.type == .pencil || touch.type == .direct
@@ -229,6 +233,8 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
     /// zoomed units, so dividing by the zoom scale lands in the drawing's
     /// own space - the same conversion `CanvasViewport.pagePoint` makes for
     /// the SwiftUI overlays.
+    var zoomScale: CGFloat { canvas?.zoomScale ?? 1 }
+
     private func drawingLocation(of touch: UITouch) -> CGPoint {
         guard let canvas else { return touch.location(in: view) }
         let location = touch.location(in: canvas)
@@ -259,8 +265,14 @@ final class ShapeSnapController {
 
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
     private var liftedAt: CFTimeInterval?
+    private weak var recognizer: ShapeHoldRecognizer?
+    /// How many strokes the drawing had when the hold fired. The held
+    /// stroke is the next one; any other change (an undo, a paste, a
+    /// scribble-erase) must not be swapped for the shape.
+    private var strokeCountAtHold: Int?
 
     func attach(to recognizer: ShapeHoldRecognizer) {
+        self.recognizer = recognizer
         recognizer.onHold = { [weak self] points in self?.hold(points) ?? false }
         recognizer.onHoldBroken = { [weak self] in self?.clear() }
         recognizer.onBegin = { [weak self] in self?.clear() }
@@ -270,8 +282,9 @@ final class ShapeSnapController {
     /// Returns whether the hold was taken - false means nothing was
     /// recognized, and the recognizer will offer again as the stroke grows.
     private func hold(_ points: [CGPoint]) -> Bool {
-        guard let shape = ShapeRecognizer.recognize(points) else { return false }
+        guard let shape = ShapeRecognizer.recognize(points, zoom: recognizer?.zoomScale ?? 1) else { return false }
         pending = shape
+        strokeCountAtHold = recognizer?.canvas?.drawing.strokes.count
         liftedAt = nil
         // The haptic is what tells the hand the hold registered, before it
         // lifts.
@@ -301,6 +314,12 @@ final class ShapeSnapController {
         guard let shape = pending,
               liftedAt.map({ CACurrentMediaTime() - $0 < Self.commitWindow }) ?? true,
               !canvasView.drawing.strokes.isEmpty else { return false }
+        if let before = strokeCountAtHold, canvasView.drawing.strokes.count != before + 1 {
+            // Not the held stroke landing. Keep waiting for it while the
+            // pencil is down; after the lift it is not coming.
+            if liftedAt != nil { clear() }
+            return false
+        }
         clear()
 
         var strokes = canvasView.drawing.strokes
@@ -320,6 +339,7 @@ final class ShapeSnapController {
 
     func clear() {
         liftedAt = nil
+        strokeCountAtHold = nil
         if pending != nil {
             pending = nil
             onPreview(nil)

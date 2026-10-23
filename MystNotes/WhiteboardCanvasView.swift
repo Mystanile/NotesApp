@@ -62,6 +62,8 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     var onPencilSqueeze: () -> Void = {}
     /// Solid / dashed / dotted for shapes made by holding a stroke still.
     var shapeLineStyle: ShapeLineStyle = .solid
+    /// Shows what a held stroke will snap to, as on a paged page.
+    var onShapePreview: (ShapeRecognizer.RecognizedShape?) -> Void = { _ in }
     /// The board's pan/zoom, published for the lasso's SwiftUI overlay.
     /// Same contract as the paged canvas: drawing coordinates are
     /// (contentOffset + view point) / zoomScale, so the overlay is drawn
@@ -88,6 +90,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        context.coordinator.shapeSnap.onPreview = onShapePreview
         context.coordinator.host = host
         attachInkSelection(to: host)
 
@@ -120,6 +123,7 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.lineStyle = shapeLineStyle
+        context.coordinator.shapeSnap.onPreview = onShapePreview
         attachInkSelection(to: host)
 
         if canvasChanged {

@@ -53,6 +53,8 @@ Open bugs:
 
 - [x] Import from the library: "Import PDF or Image" in the + menu makes a notebook named after the file, several files at once. Dropping a PDF or image on the library does the same. "Open in Mystnotes" from Files or another app's share sheet. Notebook Import > From Files takes several files (Oct 22). [tests only] for the notebook from a file. Not tried: the picker, the drop and Open In on a device.
 
+- [x] Shape tool fixes (Oct 22): the eraser and lasso no longer snap; a snap only replaces the held stroke, never one added by an undo or paste; size limits follow the zoom; snapped pencil strokes keep their tilt and opacity; whiteboards show the snap preview. [tests only] for the recognizer. Not tried with the Pencil.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.

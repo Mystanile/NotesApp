@@ -208,6 +208,17 @@ final class ShapeRecognizerTests: XCTestCase {
         XCTAssertEqual(shape?.kind, .arrow)
     }
 
+    /// A head a tenth of the shaft bends the path only about 5% off its
+    /// chord, inside the line test's tolerance. It still has to be an
+    /// arrow, with its point at the tip and not at a barb.
+    func testArrow_withASmallHead() {
+        let tail = CGPoint(x: 50, y: 200), tip = CGPoint(x: 350, y: 200)
+        let path = [tail, tip, CGPoint(x: 324, y: 185), tip, CGPoint(x: 324, y: 215)]
+        let shape = ShapeRecognizer.recognize(handDrawn(path, closed: false))
+        XCTAssertEqual(shape?.kind, .arrow)
+        XCTAssertEqual(shape?.outline[1].x ?? 0, tip.x, accuracy: 8)
+    }
+
     // MARK: - Bail-outs
 
     func testBentLine_isLeftAlone() {
@@ -435,5 +446,30 @@ final class ShapeRecognizerTests: XCTestCase {
             XCTAssertEqual(hypot(p.x - 200, p.y - 200), 100, accuracy: 2)
         }
         XCTAssertEqual(stroke.path.first?.size.width, 10)
+    }
+
+    /// The size floors are on screen: a circle 3 points across in the
+    /// drawing is a speck at 1x and fills a fingertip at 4x.
+    func testSmallCircle_snapsOnlyWhenZoomedIn() {
+        let speck = ellipsePoints(center: CGPoint(x: 50, y: 50), rx: 3, ry: 3, jitter: 0)
+        XCTAssertNil(ShapeRecognizer.recognize(speck), "too small to be a shape at 1x")
+        XCTAssertNotNil(ShapeRecognizer.recognize(speck, zoom: 4), "the same circle at 4x is 24 points on screen")
+    }
+
+    /// Pencil and crayon shade by tilt and opacity, so the snapped shape
+    /// keeps the stroke's own.
+    func testSpec_keepsTheStrokesTiltAndOpacity() {
+        let points = (0..<5).map { index in
+            PKStrokePoint(location: CGPoint(x: CGFloat(index) * 10, y: 0), timeOffset: Double(index) * 0.01,
+                          size: CGSize(width: 4, height: 4), opacity: 0.6, force: 0.5,
+                          azimuth: 1.2, altitude: 0.7)
+        }
+        let source = PKStroke(ink: PKInk(.pencil, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+        let spec = ShapeRecognizer.spec(matching: source, tool: nil)
+        let shape = ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 200, y: 200), rx: 80, ry: 80, jitter: 0))!
+        let point = ShapeRecognizer.strokes(for: shape, spec: spec)[0].path[0]
+        XCTAssertEqual(point.opacity, 0.6, accuracy: 0.01)
+        XCTAssertEqual(point.azimuth, 1.2, accuracy: 0.01)
+        XCTAssertEqual(point.altitude, 0.7, accuracy: 0.01)
     }
 }

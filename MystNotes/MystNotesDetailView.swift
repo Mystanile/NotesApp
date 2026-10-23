@@ -686,9 +686,18 @@ struct NotebookDetailView: View {
                 onPencilDoubleTap: togglePencilEraser,
                 onPencilSqueeze: openColorOptions,
                 shapeLineStyle: toolState.shapeLineStyle,
+                onShapePreview: { shapePreview = $0 },
                 viewport: viewport,
                 inkSelection: inkSelection
             )
+            if let shapePreview {
+                PageViewportLayer(viewport: viewport,
+                                  pageSize: CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize)) { _ in
+                    ShapePreviewView(shape: shapePreview, tool: toolState.pkTool as? PKInkingTool,
+                                     lineStyle: toolState.shapeLineStyle)
+                }
+                .allowsHitTesting(false)
+            }
             if toolState.activeKind == .lasso && !isPresenting {
                 // Same overlay as a paged page, drawn in board coordinates.
                 let board = CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize)
