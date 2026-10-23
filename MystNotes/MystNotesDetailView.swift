@@ -485,7 +485,7 @@ struct NotebookDetailView: View {
         .navigationDestination(item: $otherNotebookTarget) { target in
             NotebookDetailView(notebook: target.notebook, initialPageID: target.pageID)
         }
-        .sheet(item: $linkNeedingDestination) { link in
+        .sheet(item: $linkNeedingDestination, onDismiss: removeUnfinishedLinks) { link in
             LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID,
                                       notebooks: allNotebooks, currentNotebookID: notebook.id) { destinationID in
                 link.destinationPageID = destinationID
@@ -864,7 +864,8 @@ struct NotebookDetailView: View {
                     onNavigateToPage: { id in jumpToPage(withID: id) },
                     onMention: { dest, blockID in addMention(from: page, to: dest, blockID: blockID) },
                     onSave: scheduleAutosave,
-                    onRequestLinkDestinationChange: { link in linkNeedingDestination = link }
+                    onRequestLinkDestinationChange: { link in linkNeedingDestination = link },
+                    onDeleteTextBlock: { block in deleteTextBlock(block, on: page) }
                 )
             }
 

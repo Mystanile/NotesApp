@@ -67,11 +67,18 @@ extension NotebookDetailView {
             (block.frameX, block.frameY) = (snapshot.frame.minX, snapshot.frame.minY)
             (block.frameWidth, block.frameHeight) = (snapshot.frame.width, snapshot.frame.height)
             block.fontSize = snapshot.fontSize
+            block.textColorHex = snapshot.textColorHex
+            block.fontDesign = snapshot.fontDesign
+            (block.isBold, block.isItalic) = (snapshot.isBold, snapshot.isItalic)
             modelContext.insert(block)
             page.textBlocks = (page.textBlocks ?? []) + [block]
+            for destination in snapshot.mentions { addMention(from: page, to: destination, blockID: snapshot.id) }
         } else if let block = page.textBlocks?.first(where: { $0.id == snapshot.id }) {
             page.textBlocks?.removeAll { $0.id == snapshot.id }
             modelContext.delete(block)
+            // Its mentions go with it; "Linked from" and the Page Map kept
+            // showing them after the text was gone.
+            mentionLinks(of: snapshot.id, on: page).forEach(modelContext.delete)
         }
         page.markModified()
         saveMetadata("Failed to save text block")
@@ -81,11 +88,49 @@ extension NotebookDetailView {
         }
     }
 
+    /// The text box's own delete button. Undoable, like every other edit:
+    /// before, a deleted box and its typing were gone for good.
+    func deleteTextBlock(_ block: TypedTextBlock, on page: Page) {
+        let mentions = mentionLinks(of: block.id, on: page).map(\.destinationPageID)
+        setTextBlock(TextBlockSnapshot(of: block, mentions: mentions), present: false, on: page)
+    }
+
+    func mentionLinks(of blockID: UUID, on page: Page) -> [Link] {
+        let key = blockID.uuidString
+        return ((try? modelContext.fetch(FetchDescriptor<Link>())) ?? []).filter {
+            $0.kind == "mention" && $0.sourcePageID == page.id && $0.destinationID == key
+        }
+    }
+
+    /// Where a new text box or sticker goes: the middle of what is on
+    /// screen, kept on the page, and stepped down past any element already
+    /// there. A fixed corner put it off screen when zoomed in, and a second
+    /// one exactly on top of the first.
+    func newElementOrigin(size: CGSize, on page: Page) -> CGPoint {
+        let center = viewport.pagePoint(from: CGPoint(x: canvasView.bounds.midX, y: canvasView.bounds.midY))
+        let taken = (page.textBlocks ?? []).map { CGPoint(x: $0.frameX, y: $0.frameY) }
+            + (page.stickers ?? []).map { CGPoint(x: $0.frameX, y: $0.frameY) }
+        return Self.elementOrigin(centeredOn: center, size: size, pageSize: PageGeometry.contentSize(for: page), taken: taken)
+    }
+
+    static func elementOrigin(centeredOn center: CGPoint, size: CGSize, pageSize: CGSize, taken: [CGPoint]) -> CGPoint {
+        var origin = CGPoint(x: min(max(center.x - size.width / 2, 0), max(pageSize.width - size.width, 0)),
+                             y: min(max(center.y - size.height / 2, 0), max(pageSize.height - size.height, 0)))
+        // Bounded: on a page full of elements it stops rather than walking
+        // off the page.
+        for _ in 0..<20 where taken.contains(where: { abs($0.x - origin.x) < 4 && abs($0.y - origin.y) < 4 }) {
+            origin.x += 24
+            origin.y += 24
+        }
+        return origin
+    }
+
     func addTextBlock() {
         guard let page = currentPage else { return }
         let block = TypedTextBlock(content: "", page: page)
-        block.frameX = 60
-        block.frameY = 60
+        let origin = newElementOrigin(size: CGSize(width: block.frameWidth, height: block.frameHeight), on: page)
+        block.frameX = origin.x
+        block.frameY = origin.y
         modelContext.insert(block)
         if page.textBlocks == nil {
             page.textBlocks = [block]
@@ -99,8 +144,9 @@ extension NotebookDetailView {
     func addSticker(_ symbolName: String) {
         guard let page = currentPage else { return }
         let sticker = Sticker(assetRef: symbolName, page: page)
-        sticker.frameX = 100
-        sticker.frameY = 100
+        let origin = newElementOrigin(size: CGSize(width: sticker.frameWidth, height: sticker.frameHeight), on: page)
+        sticker.frameX = origin.x
+        sticker.frameY = origin.y
         modelContext.insert(sticker)
         if page.stickers == nil {
             page.stickers = [sticker]
@@ -125,6 +171,19 @@ extension NotebookDetailView {
         guard let minX = corners.map(\.x).min(), let maxX = corners.map(\.x).max(),
               let minY = corners.map(\.y).min(), let maxY = corners.map(\.y).max() else { return nil }
         return CGRect(x: minX, y: minY, width: max(44, maxX - minX), height: max(44, maxY - minY))
+    }
+
+    /// A new link starts pointing at its own page until a destination is
+    /// picked. Cancelling the picker used to leave it there: an anchor that
+    /// went nowhere, and a self-edge in the Page Map that synced.
+    func removeUnfinishedLinks() {
+        let unfinished = allLinks.filter {
+            $0.sourcePageID == $0.destinationPageID && $0.kind != "mention" && $0.destinationID == nil
+        }
+        guard !unfinished.isEmpty else { return }
+        unfinished.forEach(modelContext.delete)
+        currentPage?.markModified()
+        saveMetadata("Failed to remove an unfinished link")
     }
 
     func addLink(anchoredTo anchor: CGRect? = nil) {

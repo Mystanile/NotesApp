@@ -150,5 +150,21 @@ struct TextBlockSnapshot {
     var content: String
     var frame: CGRect = .zero
     var fontSize: Double = 17
+    var textColorHex: String = "#000000"
+    var fontDesign: String = "default"
+    var isBold = false
+    var isItalic = false
+    /// The pages its `[[` mentions point at, so undoing a delete brings
+    /// them back with the text.
+    var mentions: [UUID] = []
+}
+
+extension TextBlockSnapshot {
+    init(of block: TypedTextBlock, mentions: [UUID]) {
+        self.init(id: block.id, content: block.content,
+                  frame: CGRect(x: block.frameX, y: block.frameY, width: block.frameWidth, height: block.frameHeight),
+                  fontSize: block.fontSize, textColorHex: block.textColorHex, fontDesign: block.fontDesign,
+                  isBold: block.isBold, isItalic: block.isItalic, mentions: mentions)
+    }
 }
 #endif

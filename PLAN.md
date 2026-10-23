@@ -63,6 +63,8 @@ Open bugs:
 
 - [x] Bug-hunt fixes (Oct 22): exports and Copy Pages wait for the open page's save, so they never take the previous ink; copied pages keep their tags; whole-library export keeps notebooks whose titles differ only in case; import, reorder and new pages first finish a pending Delete Page, so no two pages share an index; "Linked from" hides a page being deleted. [tests only] for the export name clash.
 
+- [x] Text box fixes (Oct 22): deleting a text box is undoable and undo brings back its formatting and `[[` mentions; its mentions go with it, so "Linked from" and the Page Map stop showing them; new text boxes and stickers land in the middle of the screen and never exactly on another one; cancelling a link's destination picker removes the unfinished link. [tests only] for placement and the snapshot. Not tried: undo and Cancel on a device.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.

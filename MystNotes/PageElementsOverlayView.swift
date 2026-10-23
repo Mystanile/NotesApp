@@ -22,6 +22,8 @@ struct PageElementsOverlayView: View {
     var onMention: (UUID, UUID) -> Void = { _, _ in }
     var onSave: () -> Void
     var onRequestLinkDestinationChange: (Link) -> Void
+    /// Undoable delete of a text box; without it the box deletes itself.
+    var onDeleteTextBlock: ((TypedTextBlock) -> Void)? = nil
 
     private var links: [Link] {
         allLinks.filter { $0.sourcePageID == page.id }
@@ -30,7 +32,8 @@ struct PageElementsOverlayView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(page.textBlocks ?? [], id: \.id) { block in
-                TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onSave: onSave)
+                TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onSave: onSave,
+                              onDelete: onDeleteTextBlock)
             }
 
             ForEach(page.stickers ?? [], id: \.id) { sticker in
@@ -67,6 +70,7 @@ private struct TextBlockView: View {
     /// (destination page id, this block's id)
     var onMention: (UUID, UUID) -> Void = { _, _ in }
     var onSave: () -> Void
+    var onDelete: ((TypedTextBlock) -> Void)? = nil
 
     private var suggestions: [Page] {
         guard isFocused, let q = PageMentions.pendingQuery(in: block.content) else { return [] }
@@ -339,8 +343,12 @@ private struct TextBlockView: View {
 
     private func deleteBlock() {
         isFocused = false
-        modelContext.delete(block)
-        onSave()
+        if let onDelete {
+            onDelete(block)
+        } else {
+            modelContext.delete(block)
+            onSave()
+        }
     }
 
     // NOTE: DragGesture.translation is CUMULATIVE from the start of the
