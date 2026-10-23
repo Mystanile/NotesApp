@@ -56,7 +56,7 @@ Open bugs:
 
 - [x] Shape tool fixes (Oct 22): the eraser and lasso no longer snap; a snap only replaces the held stroke, never one added by an undo or paste; size limits follow the zoom; snapped pencil strokes keep their tilt and opacity; whiteboards show the snap preview; tilted ellipses snap as themselves. [tests only] for the recognizer. Not tried with the Pencil.
 
-- [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. [not tested] on a device, no test covers either.
+- [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. A zoomed whiteboard keeps its whole board reachable after a tool or colour change (the update reset its scrollable size to 3000 at any zoom), and zoomed out it fills the view. The whiteboard fix has a hosted test. [not tested] on a device, no test covers either.
 
 - [x] Empty library shows New Notebook and Import PDF or Image buttons (Oct 22). [not tested]
 

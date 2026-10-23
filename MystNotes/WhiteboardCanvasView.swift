@@ -36,6 +36,12 @@ final class WhiteboardHostView: CanvasHostView, CanvasViewportHost {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Zoomed all the way out the board fills the view, rather than
+        // shrinking into the top-left corner with empty space beside it.
+        if let canvas, bounds.width > 0, bounds.height > 0 {
+            let fill = max(bounds.width, bounds.height) / WhiteboardCanvasView.boardSize
+            if canvas.minimumZoomScale != fill { canvas.minimumZoomScale = fill }
+        }
         publishViewport(deferred: true)
     }
 
@@ -164,8 +170,11 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         // Drive the large board through the canvas's own scroll view.
         // Guarded: the lasso gates the pan itself while ink is selected.
         if !canvas.isScrollEnabled { canvas.isScrollEnabled = true }
-        if canvas.contentSize != Self.contentSize { canvas.contentSize = Self.contentSize }
-        canvas.minimumZoomScale = 0.25
+        // Zoom multiplies the content size, so the board's size is only set
+        // at zoom 1 (a fresh canvas). This runs on every SwiftUI update; at
+        // 2x it used to put back 3000 over the 6000 the zoom had made, and
+        // half the board could no longer be reached.
+        if canvas.zoomScale == 1, canvas.contentSize != Self.contentSize { canvas.contentSize = Self.contentSize }
         canvas.maximumZoomScale = 4.0
         canvas.bouncesZoom = true
         canvas.alwaysBounceVertical = false
