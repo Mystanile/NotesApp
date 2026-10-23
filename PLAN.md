@@ -69,6 +69,8 @@ Open bugs:
 
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
 
+- [x] Editing a text box: a drag in the text selects it instead of moving the box; a move handle at the top right moves it (Oct 22). [not tested] on a device.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.

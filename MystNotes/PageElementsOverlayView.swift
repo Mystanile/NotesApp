@@ -160,6 +160,9 @@ private struct TextBlockView: View {
             .overlay(alignment: .bottomTrailing) {
                 if isFocused { resizeHandle }
             }
+            .overlay(alignment: .topTrailing) {
+                if isFocused { moveHandle }
+            }
             .overlay(alignment: .topLeading) {
                 if isFocused { formattingBar }
             }
@@ -173,7 +176,10 @@ private struct TextBlockView: View {
             // the drift changed with every line of text. frameX/frameY are
             // top-left coordinates, which is exactly what offset applies here.
             .offset(x: block.frameX, y: block.frameY)
-            .gesture(dragGesture)
+            // While editing, a drag in the text selects it or moves the
+            // caret, as in GoodNotes and Notability; the box moves by its
+            // handle instead. It used to slide the whole box.
+            .gesture(dragGesture, isEnabled: !isFocused)
             .onChange(of: block.content) { old, new in
                 // Return at the end of a list item starts the next one; on
                 // an empty item it ends the list (`TextList`).
@@ -292,6 +298,36 @@ private struct TextBlockView: View {
     }
 
     private static let barHeight: CGFloat = 34
+
+    /// Moves the box while it is being edited, when a drag in the text
+    /// selects instead.
+    private var moveHandle: some View {
+        Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: Self.handleSize, height: Self.handleSize)
+            .background(Circle().fill(Color.accentColor))
+            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+            .scaleEffect(1 / zoom)
+            .offset(x: Self.handleSize / (2 * zoom), y: -Self.handleSize / (2 * zoom))
+            .contentShape(Rectangle())
+            // Screen space, like the resize handle: the handle moves with
+            // the box, so its own coordinates would chase the finger.
+            .gesture(
+                DragGesture(coordinateSpace: .global)
+                    .onChanged { value in
+                        if dragOrigin == nil { dragOrigin = (x: block.frameX, y: block.frameY) }
+                        let origin = dragOrigin ?? (x: block.frameX, y: block.frameY)
+                        block.frameX = origin.x + Double(value.translation.width / zoom)
+                        block.frameY = origin.y + Double(value.translation.height / zoom)
+                    }
+                    .onEnded { _ in
+                        dragOrigin = nil
+                        onSave()
+                    }
+            )
+            .accessibilityLabel("Move text box")
+    }
 
     private var resizeHandle: some View {
         Circle()
