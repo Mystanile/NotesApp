@@ -407,4 +407,20 @@ final class InkSelectionTests: XCTestCase {
         XCTAssertEqual(canvas.drawing.strokes.count, 1)
         XCTAssertFalse(controller.hasSelection)
     }
+
+    /// A paste that would land off screen comes to the middle of what is on
+    /// screen; one that is visible keeps the usual nudge.
+    @MainActor
+    func testPaste_offScreen_comesToTheMiddleOfTheView() {
+        let stroke = line(from: 10, to: 90, y: 50, index: 0)
+        let visible = CGRect(x: 1000, y: 1000, width: 400, height: 300)
+        let offset = InkSelectionController.onScreen([stroke], offsetBy: CGPoint(x: 24, y: 24), visible: visible)
+        let landed = stroke.renderBounds.offsetBy(dx: offset.x, dy: offset.y)
+        XCTAssertEqual(landed.midX, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(landed.midY, visible.midY, accuracy: 0.5)
+
+        let nearby = InkSelectionController.onScreen([stroke], offsetBy: CGPoint(x: 24, y: 24),
+                                                     visible: CGRect(x: 0, y: 0, width: 400, height: 300))
+        XCTAssertEqual(nearby, CGPoint(x: 24, y: 24))
+    }
 }

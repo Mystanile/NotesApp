@@ -27,6 +27,10 @@ Next, for the user to choose:
 3. The rest of M2: a lasso action that turns ink into a node. It needs a design first: what a node is beyond a page in the Page Map. Ink transclusion waits for the conditions in `Docs/BACKLOG.md` ("Transclusion waits for").
 4. Shape tool on the Pencil: one undo after a snap should leave the page as before the stroke (decided Oct 22). If PencilKit's own stroke undo lands in a separate group, there is one extra undo step with no visible change. The object eraser removes a dashed shape one dash at a time, as decided.
 
+Still open from the Oct 22 bug hunt (small, not fixed):
+- Convert to Text: if you move the selection while it is recognising, the text box lands where the ink was before the move.
+- If PencilKit's stroke undo lands in its own undo group, one extra undo after a snap changes nothing.
+
 Open bugs:
 
 - Launch hang of 6 to 8 s on the iPad, last reported around Sept 25. It waited on the first sync run. None of the 7 launches logged from Oct 7 to Oct 10 hung. If it comes back, read its `[hang] main thread stack:` line. [iPad]
@@ -65,7 +69,7 @@ Open bugs:
 
 - [x] Text box fixes (Oct 22): deleting a text box is undoable and undo brings back its formatting and `[[` mentions; its mentions go with it, so "Linked from" and the Page Map stop showing them; new text boxes and stickers land in the middle of the screen and never exactly on another one; cancelling a link's destination picker removes the unfinished link. [tests only] for placement and the snapshot. Not tried: undo and Cancel on a device.
 
-- [x] Lasso fixes (Oct 22): a rotated selection keeps its rotation on the next drag; undoing a paste or duplicate clears the empty selection box, and undoing a move puts the box back on the ink; Paste lights up straight after Copy. [tests only] for rotation and undo.
+- [x] Lasso fixes (Oct 22): a rotated selection keeps its rotation on the next drag; undoing a paste or duplicate clears the empty selection box, and undoing a move puts the box back on the ink; Paste lights up straight after Copy; repeated pastes step apart, and a paste that would land off screen comes to the middle of it. [tests only] for rotation, undo and paste placement.
 
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
 

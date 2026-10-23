@@ -322,6 +322,7 @@ final class InkSelectionController: NSObject {
         let strokes = InkSelection.strokes(of: canvas.drawing, indices: indices)
         UIPasteboard.general.setData(InkSelection.pasteboardData(for: strokes), forPasteboardType: InkSelection.pasteboardType)
         clipboardVersion += 1
+        pasteCount = 0
     }
 
     /// The selection in another colour; still selected, one undo step.
@@ -377,7 +378,31 @@ final class InkSelectionController: NSObject {
         guard canvas != nil,
               let data = UIPasteboard.general.data(forPasteboardType: InkSelection.pasteboardType),
               let strokes = InkSelection.strokes(fromPasteboardData: data), !strokes.isEmpty else { return }
-        insert(InkSelection.reidentified(strokes), offsetBy: Self.copyOffset)
+        // Each paste of the same copy steps further, so they never stack
+        // exactly; one that would land off screen goes to its middle.
+        pasteCount += 1
+        let step = CGPoint(x: Self.copyOffset.x * CGFloat(pasteCount), y: Self.copyOffset.y * CGFloat(pasteCount))
+        insert(InkSelection.reidentified(strokes), offsetBy: Self.onScreen(strokes, offsetBy: step, visible: visiblePageRect))
+    }
+
+    /// Pastes since the last copy.
+    private var pasteCount = 0
+
+    /// The part of the page on screen, in page coordinates.
+    private var visiblePageRect: CGRect? {
+        guard let canvas, canvas.bounds.width > 0 else { return nil }
+        let zoom = max(canvas.zoomScale, 0.0001)
+        return CGRect(x: canvas.contentOffset.x / zoom, y: canvas.contentOffset.y / zoom,
+                      width: canvas.bounds.width / zoom, height: canvas.bounds.height / zoom)
+    }
+
+    /// `offset`, unless the strokes moved by it would be off screen: then
+    /// the offset that centres them in `visible`.
+    static func onScreen(_ strokes: [PKStroke], offsetBy offset: CGPoint, visible: CGRect?) -> CGPoint {
+        let bounds = strokes.reduce(CGRect.null) { $0.union($1.renderBounds) }
+        guard let visible, !bounds.isNull,
+              !visible.intersects(bounds.offsetBy(dx: offset.x, dy: offset.y)) else { return offset }
+        return CGPoint(x: visible.midX - bounds.midX, y: visible.midY - bounds.midY)
     }
 
     private static let copyOffset = CGPoint(x: 24, y: 24)
