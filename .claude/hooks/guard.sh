@@ -11,9 +11,20 @@ if [[ "$TOOL" == "Edit" || "$TOOL" == "Write" ]]; then
 elif [[ "$TOOL" == "Bash" ]]; then
   CMD=$(jq -r '.tool_input.command' <<<"$IN")
   if grep -q "git commit" <<<"$CMD"; then
-    LOG="$(jq -r '.cwd' <<<"$IN")/.claude/last-test.log"
+    ROOT="${CLAUDE_PROJECT_DIR:-$(jq -r '.cwd' <<<"$IN")}"
+    LOG="$ROOT/.claude/last-test.log"
     if ! grep -q "TEST SUCCEEDED" "$LOG" 2>/dev/null; then
       echo "Blocked: the last test run in .claude/last-test.log did not succeed. Run .claude/hooks/run-tests.sh first." >&2; exit 2
+    fi
+    # Changed Swift needs a full run made after the last edit.
+    SWIFT=$(cd "$ROOT" && git diff HEAD --name-only -- '*.swift')
+    if [[ -n "$SWIFT" ]]; then
+      if grep -q "^ARGS: .*only-testing" "$LOG"; then
+        echo "Blocked: the last test run was narrowed with -only-testing. Run the full suite before committing Swift changes." >&2; exit 2
+      fi
+      if [[ -n $(cd "$ROOT" && find $SWIFT -newer "$LOG" 2>/dev/null) ]]; then
+        echo "Blocked: Swift files changed after the last test run. Run .claude/hooks/run-tests.sh again." >&2; exit 2
+      fi
     fi
   fi
 fi

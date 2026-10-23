@@ -6,5 +6,6 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOG="$ROOT/.claude/last-test.log"
 xcrun simctl boot $UDID 2>/dev/null; xcrun simctl bootstatus $UDID -b >/dev/null
 xcrun simctl terminate $UDID com.mozynas.Mystnotes 2>/dev/null
-cd "$ROOT" && xcodebuild clean test -scheme MystNotes -destination "id=$UDID" "$@" > "$LOG" 2>&1
+echo "ARGS: $*" > "$LOG"
+cd "$ROOT" && xcodebuild clean test -scheme MystNotes -destination "id=$UDID" "$@" >> "$LOG" 2>&1
 grep -E "error:|failed \(|TEST SUCCEEDED|TEST FAILED|Executed [0-9]+ tests" "$LOG" | tail -30
