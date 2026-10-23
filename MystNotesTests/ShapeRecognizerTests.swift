@@ -472,4 +472,22 @@ final class ShapeRecognizerTests: XCTestCase {
         XCTAssertEqual(point.azimuth, 1.2, accuracy: 0.01)
         XCTAssertEqual(point.altitude, 0.7, accuracy: 0.01)
     }
+
+    /// An ellipse drawn at 40 degrees snaps to that ellipse, not to a
+    /// polygon and not to an upright one.
+    func testTiltedEllipse_keepsItsTilt() {
+        let center = CGPoint(x: 300, y: 300), tilt: CGFloat = 40 * .pi / 180
+        let upright = ellipsePoints(center: center, rx: 140, ry: 55)
+        let tilted = upright.map { p -> CGPoint in
+            let dx = p.x - center.x, dy = p.y - center.y
+            return CGPoint(x: center.x + dx * cos(tilt) - dy * sin(tilt), y: center.y + dx * sin(tilt) + dy * cos(tilt))
+        }
+        let shape = ShapeRecognizer.recognize(tilted)
+        XCTAssertEqual(shape?.kind, .ellipse)
+        for p in shape?.outline ?? [] {
+            let dx = p.x - center.x, dy = p.y - center.y
+            let u = dx * cos(tilt) + dy * sin(tilt), v = -dx * sin(tilt) + dy * cos(tilt)
+            XCTAssertEqual((u * u) / (140 * 140) + (v * v) / (55 * 55), 1, accuracy: 0.15)
+        }
+    }
 }

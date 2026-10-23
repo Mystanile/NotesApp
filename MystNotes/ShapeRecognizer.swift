@@ -498,14 +498,35 @@ nonisolated enum ShapeRecognizer {
     }
 
     private static func recognizeEllipse(_ points: [CGPoint]) -> RecognizedShape? {
-        let bounds = boundingBox(points)
+        // The axes come from how the points spread (their principal axes),
+        // not from an upright box: a tilted ellipse used to fail the
+        // residual gate or come out as a polygon. Within the axis tolerance
+        // of upright it snaps upright, as lines do.
+        let n = CGFloat(points.count)
+        let mean = CGPoint(x: points.reduce(0) { $0 + $1.x } / n, y: points.reduce(0) { $0 + $1.y } / n)
+        var sxx: CGFloat = 0, syy: CGFloat = 0, sxy: CGFloat = 0
+        for p in points {
+            let dx = p.x - mean.x, dy = p.y - mean.y
+            sxx += dx * dx; syy += dy * dy; sxy += dx * dy
+        }
+        var tilt = 0.5 * atan2(2 * sxy, sxx - syy)
+        let nearestAxis = (tilt / (.pi / 2)).rounded() * (.pi / 2)
+        if abs(tilt - nearestAxis) < axisSnapTolerance { tilt = nearestAxis }
+        let c = cos(tilt), s = sin(tilt)
+        // Into the ellipse's own frame, and back out.
+        let local = points.map { p in
+            CGPoint(x: (p.x - mean.x) * c + (p.y - mean.y) * s, y: -(p.x - mean.x) * s + (p.y - mean.y) * c)
+        }
+        let world = { (q: CGPoint) in CGPoint(x: mean.x + q.x * c - q.y * s, y: mean.y + q.x * s + q.y * c) }
+
+        let bounds = boundingBox(local)
         let rx = bounds.width / 2, ry = bounds.height / 2
         guard rx > 2, ry > 2 else { return nil }
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
-        let residual = points.reduce(CGFloat(0)) { sum, p in
+        let residual = local.reduce(CGFloat(0)) { sum, p in
             let nx = (p.x - center.x) / rx, ny = (p.y - center.y) / ry
             return sum + abs(nx * nx + ny * ny - 1)
-        } / CGFloat(points.count)
+        } / CGFloat(local.count)
         guard residual < ellipseResidual else { return nil }
 
         let isCircle = abs(rx - ry) / max(rx, ry) < circleTolerance
@@ -514,11 +535,11 @@ nonisolated enum ShapeRecognizer {
         let radiusY = isCircle ? r : ry
         // Start the outline where the pencil started, so the snapped shape
         // doesn't visibly rotate away from the freehand one.
-        let startAngle = atan2((points[0].y - center.y) / radiusY, (points[0].x - center.x) / radiusX)
+        let startAngle = atan2((local[0].y - center.y) / radiusY, (local[0].x - center.x) / radiusX)
         let samples = 72
         let outline = (0...samples).map { i -> CGPoint in
             let angle = startAngle + (CGFloat(i) / CGFloat(samples)) * 2 * .pi
-            return CGPoint(x: center.x + radiusX * cos(angle), y: center.y + radiusY * sin(angle))
+            return world(CGPoint(x: center.x + radiusX * cos(angle), y: center.y + radiusY * sin(angle)))
         }
         return RecognizedShape(kind: isCircle ? .circle : .ellipse, outline: outline,
                                cornerIndices: [], isClosed: true)

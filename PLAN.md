@@ -54,7 +54,7 @@ Open bugs:
 - [x] Imported PDF and image pages go in after the page you are on, not at the end (Oct 22). [tests only]
 - [x] Import from the library: "Import PDF or Image" in the + menu makes a notebook named after the file, several files at once. Dropping a PDF or image on the library does the same. "Open in Mystnotes" from Files or another app's share sheet. Notebook Import > From Files takes several files (Oct 22). [tests only] for the notebook from a file. Not tried: the picker, the drop and Open In on a device.
 
-- [x] Shape tool fixes (Oct 22): the eraser and lasso no longer snap; a snap only replaces the held stroke, never one added by an undo or paste; size limits follow the zoom; snapped pencil strokes keep their tilt and opacity; whiteboards show the snap preview. [tests only] for the recognizer. Not tried with the Pencil.
+- [x] Shape tool fixes (Oct 22): the eraser and lasso no longer snap; a snap only replaces the held stroke, never one added by an undo or paste; size limits follow the zoom; snapped pencil strokes keep their tilt and opacity; whiteboards show the snap preview; tilted ellipses snap as themselves. [tests only] for the recognizer. Not tried with the Pencil.
 
 - [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. [not tested] on a device, no test covers either.
 
