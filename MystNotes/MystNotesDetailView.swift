@@ -495,9 +495,10 @@ struct NotebookDetailView: View {
         // The only `.fileImporter` on this view - see `showingFileImporter`.
         // Images and PDFs both: the type is decided by the file's own
         // header, so a PDF picked from the image item still imports as a PDF.
-        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: fileImporterTypes) { result in
-            if case .success(let url) = result {
-                importFile(from: url)
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: fileImporterTypes,
+                      allowsMultipleSelection: importTarget == .newPages) { result in
+            if case .success(let urls) = result {
+                importFiles(from: urls)
             }
         }
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)

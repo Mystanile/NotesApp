@@ -364,42 +364,8 @@ extension NotebookDetailView {
             return
         }
 
-        var newIndex = sortedPages.count
-        for pdfPageIndex in 0..<document.pageCount {
-            let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
-            page.backgroundRef = storedFilename
-            modelContext.insert(page)
-
-            let importedDoc = ImportedDocument(
-                sourceType: "pdf",
-                fileRef: storedFilename,
-                pdfPageIndex: pdfPageIndex,
-                page: page
-            )
-            // Each imported page takes that PDF page's own proportions and
-            // is filled edge to edge, so an engineering-paper template
-            // arrives as a real portrait sheet rather than a letterboxed
-            // picture on a differently-shaped page. Page shapes are
-            // per-page, so a PDF that mixes portrait and landscape imports
-            // correctly too.
-            if let aspect = ImportedArtwork.aspectRatio(fileRef: storedFilename, pdfPageIndex: pdfPageIndex) {
-                page.aspectRatio = aspect
-                importedDoc.frameX = 0
-                importedDoc.frameY = 0
-                importedDoc.frameWidth = 1
-                importedDoc.frameHeight = 1
-            }
-            modelContext.insert(importedDoc)
-
-            if notebook.pages == nil {
-                notebook.pages = [page]
-            } else {
-                notebook.pages?.append(page)
-            }
-            newIndex += 1
-        }
-
-        notebook.modifiedAt = Date()
+        NotebookImport.appendPDFPages(document, storedAs: storedFilename, to: notebook,
+                                      startingAt: sortedPages.count, in: modelContext)
         saveMetadata("Failed to save imported PDF pages")
 
         // A PDF that reports zero pages would otherwise leave
@@ -447,19 +413,7 @@ extension NotebookDetailView {
         }
 
         let newIndex = sortedPages.count
-        let page = Page(index: newIndex, type: "paged", template: "blank", notebook: notebook)
-        page.backgroundRef = storedFilename
-        modelContext.insert(page)
-
-        let importedDoc = ImportedDocument(sourceType: "image", fileRef: storedFilename, pdfPageIndex: 0, page: page)
-        modelContext.insert(importedDoc)
-
-        if notebook.pages == nil {
-            notebook.pages = [page]
-        } else {
-            notebook.pages?.append(page)
-        }
-        notebook.modifiedAt = Date()
+        let page = NotebookImport.appendImagePage(storedAs: storedFilename, to: notebook, at: newIndex, in: modelContext)
         saveMetadata("Failed to save imported image page")
 
         currentPageIndex = newIndex
@@ -476,15 +430,18 @@ extension NotebookDetailView {
     /// A file chosen in the Files/Finder importer. Images and PDFs both
     /// arrive here, and the sniffed type decides which way they go - so
     /// picking a PDF from the image importer still does the right thing.
-    func importFile(from url: URL) {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
-            exportMessage = "Couldn't read \(url.lastPathComponent)."
-            return
-        }
+    /// One file or several, added in the order they were picked.
+    func importFiles(from urls: [URL]) {
         let target = importTarget
-        Task { await importImage(data: data, target: target) }
+        Task {
+            for url in urls {
+                guard let data = await NotebookImport.readFile(at: url) else {
+                    exportMessage = "Couldn't read \(url.lastPathComponent)."
+                    continue
+                }
+                await importImage(data: data, target: target)
+            }
+        }
     }
 
     /// Whether the Import menu's Paste Image item should be live. A

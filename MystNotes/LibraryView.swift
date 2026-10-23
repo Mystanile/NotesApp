@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 /// Browsable library at a given folder level (nil = top level / "My Library").
 /// Recursive: navigating into a subfolder pushes another LibraryView.
@@ -35,6 +36,7 @@ struct LibraryView: View {
     @State private var showingSettings = false
     @State private var pdfExportURL: PDFExport?
     @State private var exportMessage: String?
+    @State private var showingImporter = false
 
     /// Identifiable wrapper so a finished PDF can drive a `.sheet(item:)`.
     private struct PDFExport: Identifiable {
@@ -260,6 +262,11 @@ struct LibraryView: View {
                     } label: {
                         Label("New Notebook", systemImage: "book.badge.plus")
                     }
+                    Button {
+                        showingImporter = true
+                    } label: {
+                        Label("Import PDF or Image", systemImage: "square.and.arrow.down")
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -278,6 +285,11 @@ struct LibraryView: View {
                         showingNewNotebookSheet = true
                     } label: {
                         Label("New Notebook", systemImage: "book.badge.plus")
+                    }
+                    Button {
+                        showingImporter = true
+                    } label: {
+                        Label("Import PDF or Image", systemImage: "square.and.arrow.down")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -299,6 +311,23 @@ struct LibraryView: View {
             TextField("Folder name", text: $newFolderName)
             Button("Cancel", role: .cancel) {}
             Button("Create") { createFolder() }
+        }
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.pdf, .image],
+                      allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            Task { await importFiles(urls) }
+        }
+        // A PDF or picture dragged onto the library (Split View, Stage
+        // Manager, a Mac) becomes a notebook in this folder.
+        .onDrop(of: [.pdf, .image], isTargeted: nil) { providers in
+            importDropped(providers)
+            return true
+        }
+        // "Open in Mystnotes" from Files or another app's share sheet.
+        // Only the top level handles it, so one file makes one notebook.
+        .onOpenURL { url in
+            guard parentFolder == nil else { return }
+            Task { await importFiles([url]) }
         }
         .sheet(isPresented: $showingNewNotebookSheet, onDismiss: {
             notebookToOpen = createdNotebook
@@ -477,6 +506,41 @@ struct LibraryView: View {
         let folder = Folder(name: trimmed, parentFolder: parentFolder)
         modelContext.insert(folder)
         save()
+    }
+
+    /// Each file becomes its own notebook in this folder. A single file
+    /// opens straight away, like a new notebook does.
+    private func importFiles(_ urls: [URL]) async {
+        var made: [Notebook] = []
+        for url in urls {
+            guard let data = await NotebookImport.readFile(at: url),
+                  let notebook = await importData(data, fileName: url.lastPathComponent) else { continue }
+            made.append(notebook)
+        }
+        if made.count == 1 { notebookToOpen = made[0] }
+    }
+
+    private func importDropped(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            guard let type = provider.registeredTypeIdentifiers.first(where: {
+                guard let type = UTType($0) else { return false }
+                return type.conforms(to: .pdf) || type.conforms(to: .image)
+            }) else { continue }
+            let name = provider.suggestedName ?? "Imported"
+            _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+                guard let data else { return }
+                Task { @MainActor in _ = await importData(data, fileName: name) }
+            }
+        }
+    }
+
+    private func importData(_ data: Data, fileName: String) async -> Notebook? {
+        guard let notebook = await NotebookImport.makeNotebook(from: data, fileName: fileName,
+                                                                in: parentFolder, context: modelContext) else {
+            exportMessage = "Couldn't import \(fileName). Mystnotes imports PDFs and images."
+            return nil
+        }
+        return notebook
     }
 
     private func createNotebook(title: String, template: String, coverStyle: String) {

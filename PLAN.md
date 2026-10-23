@@ -51,6 +51,8 @@ Open bugs:
 - [x] `MystNotesDetailView.swift` split into 7 files, with no change in behavior. [tests only]
 - [x] An older background save of a page can no longer overwrite newer ink. Each save takes a ticket when it is asked for, and a load cannot put an older record's stroke ids over a newer save's (Oct 22). [tests only]
 
+- [x] Import from the library: "Import PDF or Image" in the + menu makes a notebook named after the file, several files at once. Dropping a PDF or image on the library does the same. "Open in Mystnotes" from Files or another app's share sheet. Notebook Import > From Files takes several files (Oct 22). [tests only] for the notebook from a file. Not tried: the picker, the drop and Open In on a device.
+
 ### Owed on the iPad before M1 exits
 
 All of these are [not tested]. None of them can be checked in the simulator.
