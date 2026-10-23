@@ -90,6 +90,17 @@ enum NotebookImport {
         }.value
     }
 
+    /// Moves every page at `index` or after down by `count`, so `count`
+    /// new pages can go in at `index`. Each moved page is marked modified,
+    /// as a reorder does, so its new place syncs.
+    static func makeRoom(for count: Int, at index: Int, in sortedPages: [Page]) {
+        guard count > 0 else { return }
+        for page in sortedPages where page.index >= index {
+            page.index += count
+            page.markModified()
+        }
+    }
+
     private static func append(_ page: Page, to notebook: Notebook) {
         if notebook.pages == nil {
             notebook.pages = [page]

@@ -31,7 +31,10 @@ import CryptoKit
 /// build is refused, not guessed at.
 /// 3 (Oct 10, 2026): `LinkDTO` gains the M2 graph fields. A format-2 build
 /// would drop them when it writes a page back, so it must refuse instead.
-let librarySnapshotFormatVersion = 3
+/// 4 (Oct 22, 2026): `FolderDTO.smartQuery`. A format-3 build would push
+/// its folders back without it and turn every smart folder into an empty
+/// plain one, on every device.
+let librarySnapshotFormatVersion = 4
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
 /// `.iso8601` strategy) made two edits inside one second compare equal

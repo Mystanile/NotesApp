@@ -1439,10 +1439,11 @@ final class SyncTests: XCTestCase {
         XCTAssertNil(dto.strokeIDs)
     }
 
-    /// Format 3 carries the M2 link fields. A format-2 build would decode a
-    /// page and drop them on its next write, so it must refuse the folder.
-    func testFormatVersion_isThree_forTheM2LinkFields() {
-        XCTAssertEqual(librarySnapshotFormatVersion, 3)
+    /// Format 3 carries the M2 link fields and format 4 the smart folder
+    /// search. A build that predates a field would drop it on its next
+    /// write, so it must refuse the folder.
+    func testFormatVersion_isFour_forSmartFolders() {
+        XCTAssertEqual(librarySnapshotFormatVersion, 4)
     }
 
     /// M2 link integrity: deleting a page deletes the links that point at

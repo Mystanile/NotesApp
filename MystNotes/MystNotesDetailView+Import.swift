@@ -338,6 +338,12 @@ extension NotebookDetailView {
         showingFileImporter = true
     }
 
+    /// New pages from an import go right after the page you are on, as in
+    /// GoodNotes, not at the end of the notebook.
+    var insertionIndex: Int {
+        sortedPages.isEmpty ? 0 : min(currentPageIndex + 1, sortedPages.count)
+    }
+
     /// The PDF import proper. Takes bytes rather than a URL so a PDF that
     /// was pasted or dragged in goes down exactly the same path as one
     /// picked from Files.
@@ -364,15 +370,17 @@ extension NotebookDetailView {
             return
         }
 
+        let insertAt = insertionIndex
+        NotebookImport.makeRoom(for: document.pageCount, at: insertAt, in: sortedPages)
         NotebookImport.appendPDFPages(document, storedAs: storedFilename, to: notebook,
-                                      startingAt: sortedPages.count, in: modelContext)
+                                      startingAt: insertAt, in: modelContext)
         saveMetadata("Failed to save imported PDF pages")
 
         // A PDF that reports zero pages would otherwise leave
         // currentPageIndex one past the end, where currentPage is nil and
         // the view sits on "Loading..." forever.
         guard document.pageCount > 0 else { return }
-        currentPageIndex = max(sortedPages.count - document.pageCount, 0)
+        currentPageIndex = insertAt
         viewport.reset(for: currentPage?.id)
         installFreshCanvas(forPageID: currentPage?.id)
     }
@@ -412,7 +420,8 @@ extension NotebookDetailView {
             return
         }
 
-        let newIndex = sortedPages.count
+        let newIndex = insertionIndex
+        NotebookImport.makeRoom(for: 1, at: newIndex, in: sortedPages)
         let page = NotebookImport.appendImagePage(storedAs: storedFilename, to: notebook, at: newIndex, in: modelContext)
         saveMetadata("Failed to save imported image page")
 
