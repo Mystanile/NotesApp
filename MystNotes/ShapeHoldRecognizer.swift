@@ -324,6 +324,11 @@ final class ShapeSnapController {
 
         var strokes = canvasView.drawing.strokes
         let source = strokes.removeLast()
+        // One undo takes the shape away and does not bring the freehand
+        // stroke back (user decision, Oct 22, 2026). PencilKit's own undo
+        // for the stroke restores this same drawing, whether it lands in
+        // the same undo group or the next one.
+        let beforeStroke = PKDrawing(strokes: strokes)
         // Weight, pressure and ink all come from the stroke being replaced,
         // so the shape is the same mark the hand just made. `tool` is only
         // the fallback for a source stroke with no points.
@@ -333,7 +338,7 @@ final class ShapeSnapController {
             style: lineStyle
         )
         strokes.append(contentsOf: ShapeRecognizer.strokes(for: shape, spec: spec))
-        canvasView.setDrawingUndoably(PKDrawing(strokes: strokes))
+        canvasView.setDrawingUndoably(PKDrawing(strokes: strokes), undoTo: beforeStroke)
         return true
     }
 

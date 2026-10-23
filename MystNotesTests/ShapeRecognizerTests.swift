@@ -490,4 +490,34 @@ final class ShapeRecognizerTests: XCTestCase {
             XCTAssertEqual((u * u) / (140 * 140) + (v * v) / (55 * 55), 1, accuracy: 0.15)
         }
     }
+
+    /// One undo after a snap takes the shape away and does not bring the
+    /// freehand stroke back (decided Oct 22, 2026). PencilKit's own undo for
+    /// the stroke is stood in for here by a snapshot restore, in the same
+    /// undo group as the snap and in a separate one.
+    @MainActor
+    func testUndoAfterASnap_removesTheShape_andNotTheFreehandStrokeBack() {
+        for grouped in [true, false] {
+            let canvas = PageCanvasView()
+            let earlier = ShapeRecognizer.stroke(for: ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 100, y: 100), rx: 40, ry: 40, jitter: 0))!,
+                                                 tool: PKInkingTool(.pen, color: .black, width: 3))
+            canvas.drawing = PKDrawing(strokes: [earlier])
+            let shape = ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 300, y: 300), rx: 60, ry: 60))!
+            let snapped = ShapeRecognizer.stroke(for: shape, tool: PKInkingTool(.pen, color: .black, width: 3))
+            let freehand = PKStroke(ink: snapped.ink, path: snapped.path, transform: .identity, mask: nil)
+            let undo = canvas.undoManager!
+            undo.groupsByEvent = false
+
+            undo.beginUndoGrouping()
+            canvas.setDrawingUndoably(PKDrawing(strokes: [earlier, freehand]))   // PencilKit adds the stroke
+            if !grouped { undo.endUndoGrouping(); undo.beginUndoGrouping() }
+            canvas.setDrawingUndoably(PKDrawing(strokes: [earlier, snapped]), undoTo: PKDrawing(strokes: [earlier]))
+            undo.endUndoGrouping()
+
+            undo.undo()
+            XCTAssertEqual(canvas.drawing.strokes.count, 1, "grouped \(grouped): one undo leaves only the earlier stroke")
+            undo.redo()
+            XCTAssertEqual(canvas.drawing.strokes.count, 2, "grouped \(grouped): redo brings the shape back")
+        }
+    }
 }

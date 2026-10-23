@@ -153,8 +153,10 @@ extension PKCanvasView {
     /// permanent, with the undo button staying greyed out afterwards. The
     /// registered undo restores the previous drawing through this same
     /// method, so undoing re-registers the inverse and redo works too.
-    func setDrawingUndoably(_ newDrawing: PKDrawing) {
-        let previous = drawing
+    /// `undoTo` is what an undo restores, when that is not the drawing
+    /// being replaced: a shape snap undoes to before the freehand stroke.
+    func setDrawingUndoably(_ newDrawing: PKDrawing, undoTo: PKDrawing? = nil) {
+        let previous = undoTo ?? drawing
         drawing = newDrawing
         undoManager?.registerUndo(withTarget: self) { target in
             target.setDrawingUndoably(previous)
