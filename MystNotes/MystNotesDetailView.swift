@@ -563,6 +563,16 @@ struct NotebookDetailView: View {
         #endif
     }
 
+    /// Where the selection toolbar goes: top centre, or bottom centre when
+    /// the selection's top (plus the handles' hit area) is in the band the
+    /// toolbar would cover - the page can't pan while ink is selected, so
+    /// otherwise those handles are unreachable. One place for both canvases.
+    /// A view of its own, so only it reads the viewport (as
+    /// `PageViewportLayer` does), not the whole detail view.
+    static func placeInkToolbar<V: View>(_ bar: V, corners: [CGPoint]?, viewport: CanvasViewport) -> some View {
+        InkToolbarPlacement(bar: bar, corners: corners, viewport: viewport)
+    }
+
     /// The screen without its modifiers; `body` adds those.
     var mainContent: some View {
         ZStack(alignment: .topTrailing) {
@@ -578,7 +588,11 @@ struct NotebookDetailView: View {
                             // completely covered by it. Drawing is disabled
                             // during adjust anyway, so there's nothing to
                             // lose by standing it down.
-                            if !drawingToolbarInNavigationBar && !isPresenting && adjustingImageFrame == nil {
+                            // Also hidden while ink is selected: in compact width
+                            // it sits exactly over the selection toolbar.
+                            // Done brings it back.
+                            if !drawingToolbarInNavigationBar && !isPresenting && adjustingImageFrame == nil
+                                && !inkSelection.hasSelection {
                                 // GeometryReader gives the bar the canvas
                                 // area to clamp its dragging within, which
                                 // is also what keeps it from sliding down
@@ -711,7 +725,7 @@ struct NotebookDetailView: View {
                     }
                 }
                 if inkSelection.hasSelection {
-                    InkSelectionToolbar(
+                    Self.placeInkToolbar(InkSelectionToolbar(
                         canPaste: inkSelection.canPaste,
                         onCut: { inkSelection.cutSelection() },
                         onCopy: { inkSelection.copySelection() },
@@ -722,9 +736,7 @@ struct NotebookDetailView: View {
                         onCopyAsImage: { inkSelection.copySelectionAsImage() },
                         onConvertToText: { convertSelectionToText(on: page) },
                         onDone: { inkSelection.clear() }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 8)
+                    ), corners: inkSelection.display.corners, viewport: viewport)
                 }
             }
 #else
@@ -829,7 +841,7 @@ struct NotebookDetailView: View {
 
                 if inkSelection.hasSelection {
                     // Chrome, so it stays put in screen space.
-                    InkSelectionToolbar(
+                    Self.placeInkToolbar(InkSelectionToolbar(
                         canPaste: inkSelection.canPaste,
                         onCut: { inkSelection.cutSelection() },
                         onCopy: { inkSelection.copySelection() },
@@ -841,9 +853,7 @@ struct NotebookDetailView: View {
                         onConvertToText: { convertSelectionToText(on: page) },
                         onLinkTo: { linkSelection() },
                         onDone: { inkSelection.clear() }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 8)
+                    ), corners: inkSelection.display.corners, viewport: viewport)
                 }
             }
 
@@ -1165,4 +1175,19 @@ struct NotebookDetailView: View {
 
 
 
+}
+
+private struct InkToolbarPlacement<Bar: View>: View {
+    var bar: Bar
+    var corners: [CGPoint]?
+    var viewport: CanvasViewport
+
+    var body: some View {
+        // 8 pt gap + 46 pt toolbar + 19 pt handle hit radius.
+        let top = (corners?.map(\.y).min() ?? .infinity) * viewport.zoomScale - viewport.contentOffset.y
+        let atBottom = top < 73
+        bar
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: atBottom ? .bottom : .top)
+            .padding(atBottom ? .bottom : .top, 8)
+    }
 }

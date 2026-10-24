@@ -106,6 +106,27 @@ struct InkSelectionToolbar: View {
     private let colors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            full
+            compact
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+    }
+
+    private var colourButtons: some View {
+        ForEach(colors, id: \.self) { color in
+            Button { onRecolor(color) } label: {
+                Label { Text(color.description.capitalized) } icon: {
+                    Image(systemName: "circle.fill").foregroundStyle(color)
+                }
+            }
+        }
+    }
+
+    private var full: some View {
         HStack(spacing: 4) {
             iconButton("scissors", help: "Cut", action: onCut)
             iconButton("doc.on.doc", help: "Copy", action: onCopy)
@@ -114,15 +135,7 @@ struct InkSelectionToolbar: View {
                 .opacity(canPaste ? 1 : 0.4)
             iconButton("plus.square.on.square", help: "Duplicate", action: onDuplicate)
             Divider().frame(height: 24)
-            Menu {
-                ForEach(colors, id: \.self) { color in
-                    Button { onRecolor(color) } label: {
-                        Label { Text(color.description.capitalized) } icon: {
-                            Image(systemName: "circle.fill").foregroundStyle(color)
-                        }
-                    }
-                }
-            } label: {
+            Menu { colourButtons } label: {
                 Image(systemName: "paintpalette").font(.system(size: 17)).frame(width: 36, height: 34)
             }
             .help("Colour")
@@ -143,10 +156,39 @@ struct InkSelectionToolbar: View {
                     .foregroundStyle(Color.accentColor)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+    }
+
+    /// For windows under ~460 pt: the rarely used actions go in a menu.
+    private var compact: some View {
+        HStack(spacing: 4) {
+            iconButton("scissors", help: "Cut", action: onCut)
+            iconButton("doc.on.doc", help: "Copy", action: onCopy)
+            iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
+            Menu {
+                Button { onPaste() } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+                    .disabled(!canPaste)
+                Button { onDuplicate() } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                Menu { colourButtons } label: { Label("Colour", systemImage: "paintpalette") }
+                Button { onCopyAsImage() } label: { Label("Copy as Image", systemImage: "photo") }
+                Button { onConvertToText() } label: { Label("Convert to Text", systemImage: "character.textbox") }
+                if let onLinkTo {
+                    Button { onLinkTo() } label: { Label("Link This To…", systemImage: "link") }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 17)).frame(width: 36, height: 34)
+            }
+            .help("More")
+            .accessibilityLabel("More")
+            Divider().frame(height: 24)
+            Button(action: onDone) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .help("Done")
+            .accessibilityLabel("Done")
+        }
     }
 
     private func iconButton(
