@@ -99,7 +99,25 @@ final class CanvasViewport {
         hasSynced = false
         expectedPage = page
         host?.requestViewportSync()
+        // A way out: if the canvas never reports this page's fit, the paper,
+        // images and text would stay hidden until something else moved the
+        // scroll view. Ask once more, then show them anyway.
+        resets += 1
+        let generation = resets
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealAfter / 2) { [weak self] in
+            guard let self, self.resets == generation, !self.hasSynced else { return }
+            self.host?.requestViewportSync()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealAfter / 2) { [weak self] in
+                guard let self, self.resets == generation, !self.hasSynced else { return }
+                AppLog.note("viewport", "no fit reported for the page within \(Self.revealAfter) s; showing its layers anyway")
+                self.hasSynced = true
+            }
+        }
     }
+
+    /// How long the layers wait for the canvas before showing anyway.
+    static let revealAfter: TimeInterval = 2
+    @ObservationIgnored private var resets = 0
 }
 
 /// Whatever owns the canvas's scroll view and can lay the page out again.
