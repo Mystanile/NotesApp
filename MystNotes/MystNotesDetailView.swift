@@ -329,116 +329,25 @@ struct NotebookDetailView: View {
                 // drawing is disabled during adjust and the image toolbar
                 // owns the moment.
                 if drawingToolbarInNavigationBar, let page = currentPage, adjustingImageFrame == nil {
-                    DrawingToolbarView(
-                        style: .inline,
-                        toolState: $toolState,
-                        openPopover: $openToolOptions,
-                        canUndo: canUndo,
-                        canRedo: canRedo,
-                        isFillToolAvailable: page.type != "whiteboard",
-                        isTextBoxAvailable: page.type != "whiteboard",
-                        containerSize: .zero,
-                        onUndo: { canvasView.undoManager?.undo() },
-                        onRedo: { canvasView.undoManager?.redo() },
-                        onAddTextBox: addTextBlock,
-                        onAddSticker: { showingStickerPicker = true },
-                        onAddLink: { addLink() },
-                        onAddImage: { importTarget = .currentPage; showingImagePicker = true }
-                    )
+                    drawingToolbar(page: page, style: .inline, containerSize: .zero)
                 }
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Menu {
-                    if outline.isEmpty {
-                        Text("Bookmark or name a page from the page strip's menu to list it here.")
-                    }
-                    ForEach(outline, id: \.page.id) { entry in
-                        Button {
-                            jumpToPage(withID: entry.page.id)
-                        } label: {
-                            Label("\(entry.number). \(entry.page.title ?? "Page \(entry.number)")",
-                                  systemImage: entry.page.isBookmarked == true ? "bookmark.fill" : "text.alignleft")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "list.bullet.indent")
-                }
-                .help("Outline")
-
                 Button { showingPageMap = true } label: {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                 }
+                .accessibilityLabel("Page Map")
                 .help("Page Map")
-
-                Button {
-                    enterPresentationMode()
-                } label: {
-                    Image(systemName: "play.rectangle")
-                }
 
                 Button {
                     withAnimation(.snappy) { showingPageStrip.toggle() }
                 } label: {
-                    Image(systemName: showingPageStrip ? "rectangle.grid.1x2.fill" : "rectangle.grid.1x2")
+                    Image(systemName: "sidebar.left")
+                        .symbolVariant(showingPageStrip ? .fill : .none)
                 }
+                .accessibilityLabel("Pages")
                 .help(showingPageStrip ? "Hide the page strip" : "Show the page strip")
-
-                Menu {
-                    Section {
-                        ForEach(PageTemplate.options, id: \.id) { option in
-                            Button(option.label) { addPage(type: "paged", template: option.id) }
-                        }
-                    }
-                    Menu("Size: \(newPageSizeLabel)") {
-                        Button("Same as This Page") { newPageAspect = nil }
-                        ForEach(PageGeometry.sizes, id: \.label) { size in
-                            Button(size.label) { newPageAspect = size.aspect }
-                        }
-                    }
-                    Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
-                } label: {
-                    Label("New Page", systemImage: "plus")
-                }
-
-                // One importer for PDFs and images both: the file's own
-                // header decides the path (see importFile). Stickers,
-                // links and text boxes are on the drawing toolbar.
-                Menu {
-                    // Backgrounds only render on paged pages, so "onto
-                    // this page" doesn't apply to a whiteboard.
-                    if currentPage?.type != "whiteboard" {
-                        Section("Onto This Page") {
-                            Button("From Files") {
-                                importTarget = .currentPage
-                                presentFileImporter(for: [.pdf, .image])
-                            }
-                            Button("From Photos") {
-                                importTarget = .currentPage
-                                showingImagePicker = true
-                            }
-                            Button("Paste Image") { pasteImageFromClipboard() }
-                                .disabled(!pasteboardHasImage)
-                        }
-                    }
-                    Section("As New Pages") {
-                        Button("From Files") {
-                            importTarget = .newPages
-                            presentFileImporter(for: [.pdf, .image])
-                        }
-                        Button("From Photos") {
-                            importTarget = .newPages
-                            showingImagePicker = true
-                        }
-                        #if canImport(UIKit)
-                        if DocumentScannerView.isAvailable {
-                            Button("Scan Document") { showingScanner = true }
-                        }
-                        #endif
-                    }
-                } label: {
-                    Label("Import", systemImage: "square.and.arrow.down")
-                }
 
                 Menu {
                     Button("Save Now") {
@@ -453,8 +362,51 @@ struct NotebookDetailView: View {
                         Button("Export All Pages as PDF") { exportNotebookAsPDF() }
                     }
                 } label: {
-                    Text("Save")
+                    Image(systemName: "square.and.arrow.up")
                 }
+                .accessibilityLabel("Share")
+
+                Menu {
+                    Menu {
+                        if outline.isEmpty {
+                            Text("Bookmark or name a page from the page strip's menu to list it here.")
+                        }
+                        ForEach(outline, id: \.page.id) { entry in
+                            Button {
+                                jumpToPage(withID: entry.page.id)
+                            } label: {
+                                Label("\(entry.number). \(entry.page.title ?? "Page \(entry.number)")",
+                                      systemImage: entry.page.isBookmarked == true ? "bookmark.fill" : "text.alignleft")
+                            }
+                        }
+                    } label: {
+                        Label("Outline", systemImage: "list.bullet.indent")
+                    }
+                    Button {
+                        enterPresentationMode()
+                    } label: {
+                        Label("Present", systemImage: "play.rectangle")
+                    }
+                    Menu {
+                        Section {
+                            ForEach(PageTemplate.options, id: \.id) { option in
+                                Button(option.label) { addPage(type: "paged", template: option.id) }
+                            }
+                        }
+                        Menu("Size: \(newPageSizeLabel)") {
+                            Button("Same as This Page") { newPageAspect = nil }
+                            ForEach(PageGeometry.sizes, id: \.label) { size in
+                                Button(size.label) { newPageAspect = size.aspect }
+                            }
+                        }
+                        Button("Whiteboard") { addPage(type: "whiteboard", template: "blank") }
+                    } label: {
+                        Label("New Page", systemImage: "plus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("More")
             }
 #else
             // Simplified menu for macOS native placeholder
@@ -518,7 +470,7 @@ struct NotebookDetailView: View {
                 Task {
                     let data = await ScanToPDF.pdf(from: images)
                     guard !data.isEmpty else { return }
-                    await importPDF(data: data, target: .newPages)
+                    await importPDF(data: data, target: importTarget)
                 }
             }, onCancel: { showingScanner = false })
             .ignoresSafeArea()
@@ -598,22 +550,7 @@ struct NotebookDetailView: View {
                                 // is also what keeps it from sliding down
                                 // underneath the page-thumbnail strip.
                                 GeometryReader { geo in
-                                    DrawingToolbarView(
-                                        style: .floating,
-                                        toolState: $toolState,
-                                        openPopover: $openToolOptions,
-                                        canUndo: canUndo,
-                                        canRedo: canRedo,
-                                        isFillToolAvailable: page.type != "whiteboard",
-                                        isTextBoxAvailable: page.type != "whiteboard",
-                                        containerSize: geo.size,
-                                        onUndo: { canvasView.undoManager?.undo() },
-                                        onRedo: { canvasView.undoManager?.redo() },
-                                        onAddTextBox: addTextBlock,
-                                        onAddSticker: { showingStickerPicker = true },
-                                        onAddLink: { addLink() },
-                        onAddImage: { importTarget = .currentPage; showingImagePicker = true }
-                                    )
+                                    drawingToolbar(page: page, style: .floating, containerSize: geo.size)
                                     .frame(maxWidth: .infinity, alignment: .center)
                                 }
                                 .padding(.top, 8)

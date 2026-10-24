@@ -160,6 +160,13 @@ struct DrawingToolbarView: View {
     var onAddLink: () -> Void
     /// One tap to Photos, onto the open page.
     var onAddImage: () -> Void = {}
+    /// The rest of the Insert menu. nil leaves the row out.
+    var onImportFile: (() -> Void)?
+    var onPasteImage: (() -> Void)?
+    var canPasteImage = false
+    var onNewPagesFromFiles: (() -> Void)?
+    var onNewPagesFromPhotos: (() -> Void)?
+    var onNewPagesScan: (() -> Void)?
 
     // Lets the whole bar be dragged out of the way instead of sitting fixed
     // over the canvas. Session-only (resets to the default top-center spot
@@ -198,29 +205,74 @@ struct DrawingToolbarView: View {
 
     private var controls: some View {
         HStack(spacing: 4) {
-            iconButton("arrow.uturn.backward", disabled: !canUndo, action: onUndo)
-            iconButton("arrow.uturn.forward", disabled: !canRedo, action: onRedo)
+            iconButton("arrow.uturn.backward", label: "Undo", disabled: !canUndo, action: onUndo)
+            iconButton("arrow.uturn.forward", label: "Redo", disabled: !canRedo, action: onRedo)
 
             Divider().frame(height: 24)
 
-            toolButton(.pen, systemImage: "pencil.tip")
-            if shows(.highlighter) { toolButton(.highlighter, systemImage: "highlighter") }
-            toolButton(.eraser, systemImage: "eraser")
-            if shows(.lasso) { toolButton(.lasso, systemImage: "lasso") }
-            if shows(.fill) { toolButton(.fill, systemImage: "paintbrush.fill", disabled: !isFillToolAvailable) }
+            toolButton(.pen, systemImage: "pencil.tip", label: "Pen", dot: toolState.penColor)
+            if shows(.highlighter) { toolButton(.highlighter, systemImage: "highlighter", label: "Highlighter", dot: toolState.highlighterColor) }
+            toolButton(.eraser, systemImage: "eraser", label: "Eraser")
+            if shows(.lasso) { toolButton(.lasso, systemImage: "lasso", label: "Lasso") }
+            if shows(.fill) { toolButton(.fill, systemImage: "paintbrush.fill", label: "Fill", disabled: !isFillToolAvailable) }
 
-            if shows(.textBox) || shows(.sticker) || shows(.link) {
+            if hasInsertMenu {
                 Divider().frame(height: 24)
+                insertMenu
             }
-
-            // Shapes have no button: draw one and hold the pencil still at
-            // the end, and it snaps (see ShapeHoldRecognizer).
-            // Stickers and links share the text box's rule: paged pages only.
-            if shows(.textBox) { iconButton("character.textbox", disabled: !isTextBoxAvailable, action: onAddTextBox) }
-            if shows(.sticker) { iconButton("face.smiling", disabled: !isTextBoxAvailable, action: onAddSticker) }
-            if shows(.image) { iconButton("photo.badge.plus", disabled: !isTextBoxAvailable, action: onAddImage) }
-            if shows(.link) { iconButton("link", disabled: !isTextBoxAvailable, action: onAddLink) }
         }
+    }
+
+    /// Imports and scanning live only in this menu, so it stays while
+    /// they exist, even with all four page items hidden in Settings.
+    private var hasInsertMenu: Bool {
+        shows(.textBox) || shows(.sticker) || shows(.image) || shows(.link)
+            || onImportFile != nil || onNewPagesFromFiles != nil
+    }
+
+    /// One Insert button in place of four icons. Shapes have no button:
+    /// draw one and hold the pencil still at the end, and it snaps (see
+    /// ShapeHoldRecognizer). Stickers, links, photos and text boxes share
+    /// the paged-pages-only rule.
+    private var insertMenu: some View {
+        Menu {
+            Section {
+                if shows(.textBox) { Button { onAddTextBox() } label: { Label("Text Box", systemImage: "character.textbox") }.disabled(!isTextBoxAvailable) }
+                if shows(.image) { Button { onAddImage() } label: { Label("Photo", systemImage: "photo") }.disabled(!isTextBoxAvailable) }
+                if shows(.sticker) { Button { onAddSticker() } label: { Label("Sticker", systemImage: "face.smiling") }.disabled(!isTextBoxAvailable) }
+                if shows(.link) { Button { onAddLink() } label: { Label("Link to a Page", systemImage: "link") }.disabled(!isTextBoxAvailable) }
+                // Not tied to the Photo item: the old Import menu always offered it.
+                if let onPasteImage {
+                    Button { onPasteImage() } label: { Label("Paste Image", systemImage: "doc.on.clipboard") }
+                        .disabled(!isTextBoxAvailable || !canPasteImage)
+                }
+            }
+            if onImportFile != nil {
+                Divider()
+                if let onImportFile { Button { onImportFile() } label: { Label("PDF or Image File", systemImage: "doc") }.disabled(!isTextBoxAvailable) }
+            }
+            if onNewPagesFromFiles != nil || onNewPagesFromPhotos != nil || onNewPagesScan != nil {
+                Section("New Pages") {
+                    if let f = onNewPagesFromFiles { Button("From Files", action: f) }
+                    if let f = onNewPagesFromPhotos { Button("From Photos", action: f) }
+                    if let f = onNewPagesScan { Button("Scan Document", action: f) }
+                }
+            }
+        } label: {
+            if style == .inline {
+                Label("Insert", systemImage: "plus")
+                    .labelStyle(.titleAndIcon)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Color.accentColor, in: Capsule())
+                    .foregroundStyle(.white)
+            } else {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22))
+                    .frame(width: 34, height: 34)
+            }
+        }
+        .accessibilityLabel("Insert")
     }
 
     private var dragHandle: some View {
@@ -264,7 +316,7 @@ struct DrawingToolbarView: View {
     }
 
     @ViewBuilder
-    private func toolButton(_ kind: DrawingToolKind, systemImage: String, disabled: Bool = false) -> some View {
+    private func toolButton(_ kind: DrawingToolKind, systemImage: String, label: String, dot: Color? = nil, disabled: Bool = false) -> some View {
         Button {
             if toolState.activeKind == kind {
                 openPopover = kind
@@ -273,7 +325,16 @@ struct DrawingToolbarView: View {
             }
         } label: {
             toolIcon(systemImage, isOn: toolState.activeKind == kind)
+                .overlay(alignment: .bottomTrailing) {
+                    // The colour the tool will draw in, from the same state
+                    // that builds its PKInkingTool.
+                    if let dot {
+                        Circle().fill(dot).frame(width: 9, height: 9)
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.4), lineWidth: 0.5))
+                    }
+                }
         }
+        .accessibilityLabel(label)
         .disabled(disabled)
         .opacity(disabled ? 0.35 : 1)
         .popover(isPresented: Binding(
@@ -287,10 +348,11 @@ struct DrawingToolbarView: View {
     }
 
     @ViewBuilder
-    private func iconButton(_ systemImage: String, isOn: Bool = false, disabled: Bool, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ systemImage: String, label: String, isOn: Bool = false, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             toolIcon(systemImage, isOn: isOn)
         }
+        .accessibilityLabel(label)
         .disabled(disabled)
         .opacity(disabled ? 0.35 : 1)
     }

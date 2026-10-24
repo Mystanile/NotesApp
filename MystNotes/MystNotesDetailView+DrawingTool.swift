@@ -72,6 +72,41 @@ extension NotebookDetailView {
     }
     #endif
 
+    // MARK: - Drawing toolbar
+
+    /// The one place the toolbar is built, for the navigation bar's slot
+    /// and the floating capsule both.
+    func drawingToolbar(page: Page, style: DrawingToolbarView.Style, containerSize: CGSize) -> DrawingToolbarView {
+        var scanNewPages: (() -> Void)?
+        #if canImport(UIKit)
+        if DocumentScannerView.isAvailable {
+            scanNewPages = { importTarget = .newPages; showingScanner = true }
+        }
+        #endif
+        return DrawingToolbarView(
+            style: style,
+            toolState: $toolState,
+            openPopover: $openToolOptions,
+            canUndo: canUndo,
+            canRedo: canRedo,
+            isFillToolAvailable: page.type != "whiteboard",
+            isTextBoxAvailable: page.type != "whiteboard",
+            containerSize: containerSize,
+            onUndo: { canvasView.undoManager?.undo() },
+            onRedo: { canvasView.undoManager?.redo() },
+            onAddTextBox: addTextBlock,
+            onAddSticker: { showingStickerPicker = true },
+            onAddLink: { addLink() },
+            onAddImage: { importTarget = .currentPage; showingImagePicker = true },
+            onImportFile: { importTarget = .currentPage; presentFileImporter(for: [.pdf, .image]) },
+            onPasteImage: { pasteImageFromClipboard() },
+            canPasteImage: pasteboardHasImage,
+            onNewPagesFromFiles: { importTarget = .newPages; presentFileImporter(for: [.pdf, .image]) },
+            onNewPagesFromPhotos: { importTarget = .newPages; showingImagePicker = true },
+            onNewPagesScan: scanNewPages
+        )
+    }
+
     // MARK: - Presentation
 
     /// Presentation mode is meant to be a clean, non-interactive view, but

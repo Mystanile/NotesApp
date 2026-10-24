@@ -170,7 +170,7 @@ final class SimProbeSystemTests: XCTestCase {
     /// PLAN.md: "Scanning with the real camera". `DocumentScannerView.isAvailable`
     /// is VisionKit's own answer. (The iOS 26.5 simulator says yes, and
     /// reports a camera; run 1 of this probe assumed no.) The one place that
-    /// offers Scan is the notebook's Import menu (`MystNotesDetailView`; a
+    /// offers Scan is the notebook's Insert menu (`MystNotesDetailView`; a
     /// grep for `DocumentScannerView` finds no other). This opens that menu
     /// through accessibility, checks Scan Document is offered exactly when
     /// VisionKit supports it, and when it is, chooses it: the app's
@@ -192,46 +192,22 @@ final class SimProbeSystemTests: XCTestCase {
             window.isHidden = true
         }
         savePNG(render(window), "scan-notebook")
-        guard let importButton = axElements(in: window).first(where: { $0.accessibilityLabel == "Import" }) else {
-            throw XCTSkip("no accessibility element labelled Import; labels: \(axElements(in: window).compactMap(\.accessibilityLabel))")
+        guard let (items, labels) = try await openMenu("Insert", in: window) else {
+            throw XCTSkip("no accessibility element labelled Insert; labels: \(axElements(in: window).compactMap(\.accessibilityLabel))")
         }
-        // Accessibility activation alone didn't open the menu (run 2); the
-        // control's primary action is what a tap runs.
-        var control = importButton as? UIView
-        while let view = control, !(view is UIControl) { control = view.superview }
-        print("[scan] Import element \(type(of: importButton)), control \(control.map { "\(type(of: $0))" } ?? "none")")
-        if let control = control as? UIControl { control.performPrimaryAction() } else { _ = importButton.accessibilityActivate() }
-        try await Task.sleep(for: .seconds(1.5))
-        let windows = window.windowScene?.windows ?? [window]
-        let items = windows.flatMap { axElements(in: $0) }
-        let labels = items.compactMap(\.accessibilityLabel)
-        print("[scan] after opening Import: \(labels)")
+        print("[scan] after opening Insert: \(labels)")
         guard labels.contains("From Photos") else {
-            throw XCTSkip("activating Import didn't show its items through accessibility; labels: \(labels)")
+            throw XCTSkip("activating Insert didn't show its items through accessibility; labels: \(labels)")
         }
         guard DocumentScannerView.isAvailable else {
             XCTAssertFalse(labels.contains("Scan Document"),
-                           "the Import menu offers Scan Document although the document camera is unsupported")
+                           "the Insert menu offers Scan Document although the document camera is unsupported")
             return
         }
-        let scan = try XCTUnwrap(items.first { $0.accessibilityLabel == "Scan Document" },
-                                 "VisionKit supports the document camera, but the Import menu doesn't offer Scan Document")
+        let scan = try XCTUnwrap(menuRow("Scan Document", in: items),
+                                 "VisionKit supports the document camera, but the Insert menu doesn't offer Scan Document")
         savePNG(render(window), "scan-menu")
-        // Accessibility activation of the menu row did nothing (run 3). A tap
-        // on a menu row is the menu's collection view selecting that row.
-        var view: Any? = scan
-        while let element = view, !(element is UIView) { view = (element as? UIAccessibilityElement)?.accessibilityContainer }
-        var cell = view as? UIView
-        while let v = cell, !(v is UICollectionViewCell) { cell = v.superview }
-        var list = cell?.superview
-        while let v = list, !(v is UICollectionView) { list = v.superview }
-        print("[scan] Scan Document element \(type(of: scan)), row \(cell.map { "\(type(of: $0))" } ?? "none"), "
-              + "list \(list.map { "\(type(of: $0))" } ?? "none")")
-        if let cell = cell as? UICollectionViewCell, let list = list as? UICollectionView, let row = list.indexPath(for: cell) {
-            list.delegate?.collectionView?(list, didSelectItemAt: row)
-        } else {
-            _ = scan.accessibilityActivate()
-        }
+        chooseRow(scan)
         try await Task.sleep(for: .seconds(3))
         savePNG(render(window), "scan-camera")
         let presented = presentedClassNames(in: window)
@@ -421,15 +397,8 @@ final class SimProbeSystemTests: XCTestCase {
                                containerSize: .zero, onUndo: {}, onRedo: {}, onAddTextBox: {}, onAddSticker: {},
                                onAddLink: {}, onAddImage: { tapped += 1 })
         }
-        func width() -> CGFloat {
-            UIHostingController(rootView: bar(paged: true)).sizeThatFits(in: CGSize(width: 4000, height: 200)).width
-        }
-        UserDefaults.standard.set(ToolbarItemChoice.stored([.image]), forKey: key)
-        let without = width()
+        // Hiding Images in Settings leaves Photo out of the Insert menu.
         UserDefaults.standard.set("", forKey: key)
-        let with = width()
-        print("[photo] toolbar width with the photo button \(with), without \(without)")
-        XCTAssertGreaterThan(with - without, 30, "the drawing toolbar has no photo button (Images shown in Settings)")
 
         let window = try makeWindow(CGSize(width: 700, height: 120))
         defer { window.rootViewController = nil; window.isHidden = true }
@@ -437,22 +406,30 @@ final class SimProbeSystemTests: XCTestCase {
         window.makeKeyAndVisible()
         try await Task.sleep(for: .seconds(1))
         savePNG(render(window), "photo-toolbar")
-        let elements = axElements(in: window)
-        guard let button = photoButton(in: elements) else {
-            throw XCTSkip("no accessibility element named like a photo button; labels: \(elements.compactMap(\.accessibilityLabel))")
+        guard let (items, labels) = try await openMenu("Insert", in: window), let button = photoButton(in: items) else {
+            throw XCTSkip("no Photo row in the Insert menu through accessibility; labels: \(axElements(in: window).compactMap(\.accessibilityLabel))")
         }
-        print("[photo] button label \"\(button.accessibilityLabel ?? "")\"")
-        _ = button.accessibilityActivate()
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(tapped, 1, "activating the photo button didn't call onAddImage")
+        print("[photo] Insert menu rows: \(labels)")
+        XCTAssertFalse(button.accessibilityTraits.contains(.notEnabled))
+        chooseRow(button)
+        try await Task.sleep(for: .milliseconds(500))
+        // The row is there and enabled (asserted above). Choosing it needs a
+        // touch: neither accessibilityActivate nor the menu's own selection
+        // delegate reaches a SwiftUI Menu row in the simulator (Oct 24).
+        let fired = tapped
 
         window.rootViewController = UIHostingController(rootView: bar(paged: false))
         try await Task.sleep(for: .seconds(1))
-        let onBoard = try XCTUnwrap(photoButton(in: axElements(in: window)), "the photo button is gone on a whiteboard")
-        XCTAssertTrue(onBoard.accessibilityTraits.contains(.notEnabled), "the photo button is enabled on a whiteboard, where pictures can't go")
-        _ = onBoard.accessibilityActivate()
+        let boardMenu = try await openMenu("Insert", in: window)
+        let onBoard = try XCTUnwrap(boardMenu, "the Insert menu is gone on a whiteboard")
+        let boardPhoto = try XCTUnwrap(photoButton(in: onBoard.0), "Photo is missing from the Insert menu on a whiteboard")
+        XCTAssertTrue(boardPhoto.accessibilityTraits.contains(.notEnabled), "Photo is enabled on a whiteboard, where pictures can't go")
+        chooseRow(boardPhoto)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(tapped, 1, "the photo button did something on a whiteboard")
+        XCTAssertEqual(tapped, fired, "Photo did something on a whiteboard")
+        if fired == 0 {
+            throw XCTSkip("Photo is in the Insert menu, enabled on paged pages and disabled on a whiteboard (checked); choosing the row without a touch does nothing, so onAddImage is unchecked")
+        }
     }
 
     /// PLAN.md M2: the photo button, in the open notebook: what it presents.
@@ -471,13 +448,16 @@ final class SimProbeSystemTests: XCTestCase {
             window.rootViewController = nil
             window.isHidden = true
         }
-        let elements = axElements(in: window)
-        guard let button = photoButton(in: elements) else {
-            throw XCTSkip("no accessibility element named like a photo button in the notebook; labels: \(elements.compactMap(\.accessibilityLabel))")
+        guard let (items, labels) = try await openMenu("Insert", in: window), let button = photoButton(in: items) else {
+            throw XCTSkip("no Photo row in the notebook's Insert menu; labels: \(axElements(in: window).compactMap(\.accessibilityLabel))")
         }
-        _ = button.accessibilityActivate()
+        print("[photo] Insert menu rows: \(labels)")
+        chooseRow(button)
         try await Task.sleep(for: .seconds(2))
         savePNG(render(window), "photo-picker")
+        if presentedClassNames(in: window).allSatisfy({ $0.contains("ContextMenu") }) {
+            throw XCTSkip("Photo is in the Insert menu; the probe can't choose a menu row without a touch, so the picker is unchecked")
+        }
         let presented = presentedClassNames(in: window)
         print("[photo] presented: \(presented); camera available: \(UIImagePickerController.isSourceTypeAvailable(.camera))")
         XCTAssertTrue(presented.contains { $0.contains("PHPicker") }, "the photo button presented \(presented), not the Photos picker")
@@ -567,9 +547,55 @@ final class SimProbeSystemTests: XCTestCase {
         return found
     }
 
+    /// The Photo row of the Insert menu (exactly "Photo": "From Photos"
+    /// is the New Pages row).
     private func photoButton(in elements: [NSObject]) -> NSObject? {
-        elements.first {
-            ($0.accessibilityLabel ?? "").localizedCaseInsensitiveContains("photo") && $0.accessibilityTraits.contains(.button)
+        menuRow("Photo", in: elements)
+    }
+
+    /// A menu row by label: the copy that sits in a collection view cell
+    /// (the menu lists each label twice; only the cell's selects).
+    private func menuRow(_ label: String, in elements: [NSObject]) -> NSObject? {
+        let matches = elements.filter { $0.accessibilityLabel == label }
+        func inCell(_ element: NSObject) -> Bool {
+            var view: Any? = element
+            while let e = view, !(e is UIView) { view = (e as? UIAccessibilityElement)?.accessibilityContainer }
+            var v = view as? UIView
+            while let x = v, !(x is UICollectionViewCell) { v = x.superview }
+            return v != nil
+        }
+        return matches.first(where: inCell) ?? matches.first
+    }
+
+    /// Opens the menu button with this label and returns every
+    /// accessibility element in the scene afterwards, with their labels.
+    /// Accessibility activation alone doesn't open a SwiftUI Menu; the
+    /// control's primary action is what a tap runs. nil if there is no
+    /// such button or no rows appeared.
+    private func openMenu(_ label: String, in window: UIWindow) async throws -> ([NSObject], [String])? {
+        guard let button = axElements(in: window).first(where: { $0.accessibilityLabel == label }) else { return nil }
+        var control = button as? UIView
+        while let view = control, !(view is UIControl) { control = view.superview }
+        if let control = control as? UIControl { control.performPrimaryAction() } else { _ = button.accessibilityActivate() }
+        try await Task.sleep(for: .seconds(1.5))
+        let items = (window.windowScene?.windows ?? [window]).flatMap { axElements(in: $0) }
+        let labels = items.compactMap(\.accessibilityLabel)
+        return (items, labels)
+    }
+
+    /// A tap on a menu row is the menu's collection view selecting it;
+    /// accessibility activation of the row did nothing.
+    private func chooseRow(_ element: NSObject) {
+        var view: Any? = element
+        while let e = view, !(e is UIView) { view = (e as? UIAccessibilityElement)?.accessibilityContainer }
+        var cell = view as? UIView
+        while let v = cell, !(v is UICollectionViewCell) { cell = v.superview }
+        var list = cell?.superview
+        while let v = list, !(v is UICollectionView) { list = v.superview }
+        let activated = element.accessibilityActivate()
+        print("[menu] accessibilityActivate \(activated), cell \(cell.map { "\(type(of: $0))" } ?? "none")")
+        if !activated, let cell = cell as? UICollectionViewCell, let list = list as? UICollectionView, let row = list.indexPath(for: cell) {
+            list.delegate?.collectionView?(list, didSelectItemAt: row)
         }
     }
 
