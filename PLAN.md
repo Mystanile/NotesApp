@@ -9,12 +9,13 @@ Every item ends with how it was checked:
 - [tests only]: automated tests pass, but nobody used it on a device.
 - [not tested]: no test and no device check.
 
-## Handoff: start here (2026-10-22, evening)
+## Handoff: start here (2026-10-24)
 
 Branch and build:
 
 - Work on `m2-graph`. It has every change from `m1-batch-2026-09-25` plus the M2 work. The last M1 commit `9f9b4b2` came in as the cherry-pick `1978a07`, so git still lists `m1-batch-2026-09-25` as not merged. Neither branch is merged into `main` (last commit `3ab3810`, Sept 25).
-- The last full test run passed: 276 tests, 1 skipped, 0 failures, on Oct 22 (`.claude/last-test.log`), with the save-order fix.
+- The last full test run passed: 327 tests, 2 skipped, 0 failures, on Oct 24 (`.claude/last-test.log`).
+- Oct 24: simulator probes (`MystNotesTests/SimProbe*Tests.swift`) checked the iPad list as far as the simulator allows; what each showed is under "Owed on the iPad". Their pictures go to `/tmp/mystnotes-probes/`.
 - M2 raises the sync format to 3, and smart folders (Oct 22) to 4. A device on an older build refuses the folder. Install the same build on the iPad and the Mac before you sync.
 - A full copy of the iPad's data is in `~/Desktop/MystNotes-iPad-backup-2026-10-10/` (289 MB).
 - The iPad runs an M1 build (sync format 2) from `m1-batch-2026-09-25` at `d6c7a0e`. It was built at 12:46 on Oct 10 (reflog and `.claude/real-build.log`) and launched at 12:47 (16:47 UTC in the iPad log). No M2 feature was used on the iPad.
@@ -22,16 +23,16 @@ Branch and build:
 
 Next, for the user to choose:
 
-1. The iPad pass: the "Owed on the iPad before M1 exits" list under Status, the M2 features with the Pencil, and the notebook covers in dark mode.
+1. The iPad pass: the "Owed on the iPad before M1 exits" list. The simulator cannot show a real Pencil touch, the sticker gesture, the scanner camera or a real Dropbox or Drive backup.
 2. Merge `m2-graph` into `main` after that pass.
-3. The rest of M2: a lasso action that turns ink into a node. It needs a design first: what a node is beyond a page in the Page Map. Ink transclusion waits for the conditions in `Docs/BACKLOG.md` ("Transclusion waits for").
-4. Shape tool on the Pencil: one undo after a snap should leave the page as before the stroke (decided Oct 22). If PencilKit's own stroke undo lands in a separate group, there is one extra undo step with no visible change. The object eraser removes a dashed shape one dash at a time, as decided.
+3. Ink to node: the design is on the UI review canvas (https://claude.ai/artifact/ND8TGfW4v9eC2nB8QWG3bR), with four decisions for the user. Do not build it before they answer.
+4. UI changes proposed on the same canvas: an Insert menu for text box, photo, sticker and link; "Save" renamed to a Share and Export button; a page sidebar instead of the bottom strip; the pen colour shown on the toolbar. None is decided.
+5. Shape tool on the Pencil: one undo after a snap should leave the page as before the stroke. The probe shows it does when the snap and PencilKit's stroke land in one undo group; whether PencilKit uses one group is still only checkable on the iPad.
 
 Still open from the Oct 22 bug hunt (small, not fixed):
 - If PencilKit's stroke undo lands in its own undo group, one extra undo after a snap changes nothing.
 
 Open bugs:
-
 
 - Launch hang of 6 to 8 s on the iPad, last reported around Sept 25. It waited on the first sync run. None of the 7 launches logged from Oct 7 to Oct 10 hung. If it comes back, read its `[hang] main thread stack:` line. [iPad]
 - Two stalls of about 1 s under `saveCurrentPage` (Sept 19). The cause is not known. The Oct 7 ones were the share sheet. [iPad]
