@@ -32,11 +32,10 @@ Still open from the Oct 22 bug hunt (small, not fixed):
 
 Open bugs:
 
+
 - Launch hang of 6 to 8 s on the iPad, last reported around Sept 25. It waited on the first sync run. None of the 7 launches logged from Oct 7 to Oct 10 hung. If it comes back, read its `[hang] main thread stack:` line. [iPad]
 - Two stalls of about 1 s under `saveCurrentPage` (Sept 19). The cause is not known. The Oct 7 ones were the share sheet. [iPad]
 - Trash loop: it stopped on the newer build, but the cause is not proven. 278 MB sits in the sync folder's trash. [iPad]
-- A notebook whose `notebooks/<id>.json` never arrives stays pending forever. It has no way out yet. [tests only]
-- `PageViewportLayer` hides the page until the viewport syncs, with no timeout. It is a candidate cause if images still vanish on a page turn. [not tested]
 
 ## Status
 
@@ -60,9 +59,9 @@ Open bugs:
 
 - [x] Shape tool fixes (Oct 22): the eraser and lasso no longer snap; a snap only replaces the held stroke, never one added by an undo or paste; size limits follow the zoom; snapped pencil strokes keep their tilt and opacity; whiteboards show the snap preview; tilted ellipses snap as themselves. [tests only] for the recognizer. Not tried with the Pencil.
 
-- [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. A zoomed whiteboard keeps its whole board reachable after a tool or colour change (the update reset its scrollable size to 3000 at any zoom), and zoomed out it fills the view. The whiteboard fix has a hosted test. [not tested] on a device, no test covers either.
+- [x] Zoom fixes (Oct 22): text boxes, stickers, PDF and lasso layers no longer stay off the ink after a layout pass during a pinch (the queued viewport update read old values). Imported PDFs stay sharp at full zoom on a 13" iPad. A zoomed whiteboard keeps its whole board reachable after a tool or colour change (the update reset its scrollable size to 3000 at any zoom), and zoomed out it fills the view. The whiteboard fix has a hosted test, and `SimProbePagesTests` plays a pinch with layout passes in the notebook screen (Oct 24). [tests only]
 
-- [x] Empty library shows New Notebook and Import PDF or Image buttons (Oct 22). [not tested]
+- [x] Empty library shows New Notebook and Import PDF or Image buttons (Oct 22). [tests only] (`SimProbeElementsTests`, Oct 24)
 
 - [x] Bug-hunt fixes (Oct 22): exports and Copy Pages wait for the open page's save, so they never take the previous ink; copied pages keep their tags; whole-library export keeps notebooks whose titles differ only in case; import, reorder and new pages first finish a pending Delete Page, so no two pages share an index; "Linked from" hides a page being deleted. [tests only] for the export name clash.
 
@@ -72,27 +71,33 @@ Open bugs:
 
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
 
+- [x] Lasso toolbar (Oct 24): the floating drawing toolbar hides while ink is selected, so it no longer covers the lasso toolbar in compact width. Under about 461 pt the lasso toolbar becomes Cut, Copy, Delete, More and Done. It moves to the bottom when the selection's top would be under it. [tests only] (`SimProbeElementsTests`). Not tried: the More menu on a device, the Mac.
+
+- [x] Page layers after a page change (Oct 24): if the canvas never reports the page's fit, the viewport asks again after 1 s and shows the paper, images and text after 2 s, with a `viewport` log line. Before, they stayed hidden with no timeout. [tests only] (`ViewportRevealTests`)
+
+- [x] A lost notebook file is no longer pending forever (Oct 24). If `notebooks/<id>.json` is absent (no file, no iCloud placeholder) for an hour and this device has pages of that notebook, the next push publishes this device's copy. A file that is still downloading stays pending, as before. The push that republishes skips the orphan pass, so pages only the other device had keep their ink files and come back on its next push. [tests only] (five tests in `SyncTests`). Not tried: a real provider losing a file.
+
 - [x] Convert to Text: if the selection moves while it is read, the text box goes where the ink is now, not where it was (Oct 24). [tests only]
 
-- [x] Editing a text box: a drag in the text selects it instead of moving the box; a move handle at the top right moves it (Oct 22). [not tested] on a device.
+- [x] Editing a text box: a drag in the text selects it instead of moving the box; a move handle at the top right moves it (Oct 22). [tests only] for the handle showing while editing (`SimProbeElementsTests`, Oct 24); the drag itself is not tested.
 
 ### Owed on the iPad before M1 exits
 
-All of these are [not tested]. None of them can be checked in the simulator.
+All of these are still owed on the iPad. On Oct 24 the simulator probes (`MystNotesTests/SimProbe*Tests.swift`) checked what a hosted test can check without a Pencil, a camera or a real touch. After each item: what the simulator showed.
 
-- [ ] The `[adjust]` log from one image resize.
-- [ ] Sticker pinch and rotate.
-- [ ] Lasso corner handles and the lasso toolbar, on the iPad and the Mac.
-- [ ] Convert to Text on real handwriting.
-- [ ] Rotate Page, and Delete Page undo.
-- [ ] Note lock with Face ID.
-- [ ] Scanning with the real camera.
-- [ ] A backup to a real Dropbox or Drive folder.
-- [ ] Imported PDF pages zoomed to 5x stay sharp.
-- [ ] The Pencil lasso on a zoomed whiteboard.
-- [ ] The Pencil lasso on a normal page: the host recognizer gets the Pencil, and the Pencil does not pan the canvas.
-- [ ] The shape hold-to-snap recognizer gets the Pencil touch during a PencilKit stroke.
-- [ ] Notebook covers in dark mode.
+- [x] The `[adjust]` log from one image resize. Void: the log is gone (`da33c62`). Simulator: the handles and the picture land on the same corners after a resize at zoom 1.5.
+- [ ] Sticker pinch and rotate. Simulator: a pinched and turned sticker draws at its scale and angle about its centre, at every zoom, and keeps them after a reload. Not shown: the two-finger gesture.
+- [ ] Lasso corner handles and the lasso toolbar, on the iPad and the Mac. Simulator: the handles sit on the corners at zoom 1, zoom 2 and after a resize. The three toolbar bugs it found are fixed (Oct 24).
+- [ ] Convert to Text on real handwriting. Simulator: generated slanted, joined cursive read as "lunch time / until then", 4 of 4 words. The flow removes exactly the read ink, and undo brings it back.
+- [ ] Rotate Page, and Delete Page undo. Simulator: both ran from the page strip's real menu. Rotate turned the ink, text box, sticker and PDF together, saved, and undo turned them back. Delete then Undo brought back the page, its ink file, its place and its links.
+- [ ] Note lock with Face ID. Simulator: the real `LAContext` path with simulated Face ID. A match opens the notebook, a non-match does not, and with no enrollment it refuses calmly.
+- [ ] Scanning with the real camera. Simulator: Scan Document is offered. Choosing it could not be driven.
+- [ ] A backup to a real Dropbox or Drive folder. Simulator: a local folder chosen through the same bookmark path gets the zip, and it restores.
+- [ ] Imported PDF pages zoomed to 5x stay sharp. Simulator: at 8.5x (13-inch fit times 5) the PDF tiles draw at the 32x level, and vector edges stay sharp where a bitmap control blurs.
+- [ ] The Pencil lasso on a zoomed whiteboard. Simulator: at 2.5x, scrolled far out, a loop in screen points selects only the ink under it, and a drag moves it by the right distance. The board's pan takes direct touches only. Not shown: a real Pencil touch.
+- [ ] The Pencil lasso on a normal page: the host recognizer gets the Pencil, and the Pencil does not pan the canvas. Simulator: the lasso recognizer takes the Pencil and nothing blocks it; the page's pan takes direct touches only. Not shown: a real Pencil touch.
+- [ ] The shape hold-to-snap recognizer gets the Pencil touch during a PencilKit stroke. Simulator: it is on both canvases, takes the Pencil and shares the touch with PencilKit. A snap in the same event as its stroke undoes in one step. Not shown: a real stroke, or how PencilKit groups its own undo.
+- [ ] Notebook covers in dark mode. Simulator: all six covers, title contrast 12.1:1 in light and in dark.
 
 ### M2, The Graph: started on `m2-graph`
 
@@ -105,7 +110,7 @@ All of these are [not tested]. None of them can be checked in the simulator.
 - [x] Type `[[` in a text box to mention another page (`d422f65`). [tests only]
 - [x] Links between notebooks (`855237e`). [tests only]
 - [x] Notebook covers with a spine, a title label and page edges (`c60306c`). [tests only], light mode only
-- [x] A photo button on the drawing toolbar (`8e5c0bc`). [not tested], no test of its own
+- [x] A photo button on the drawing toolbar (`8e5c0bc`). [tests only]: it opens the Photos picker, and is off on a whiteboard (`SimProbeSystemTests`, Oct 24)
 - [x] Smart folders: + menu, New Smart Folder. A folder with a saved search shows every matching page (typed text, handwriting, PDF text, now tags). The search syncs. Edit Search in the folder's menu (Oct 22). [tests only] for sync.
 - [ ] A lasso action that turns ink into a node.
 - [ ] Ink transclusion. It is not started on purpose.

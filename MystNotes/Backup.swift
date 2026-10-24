@@ -66,6 +66,7 @@ nonisolated enum Backup {
         var lastAppliedRemoteSignature: String?
         var lastPushSignature: String = ""
         var tombstonesData: Data? = LiveSyncStateStore.shared.tombstonesData
+        var absentNotebooksData: Data?
     }
 
     // MARK: The destination

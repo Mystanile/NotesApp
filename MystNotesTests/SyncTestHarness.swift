@@ -33,6 +33,7 @@ final class InMemorySyncStateStore: SyncStateStore {
     var lastAppliedRemoteSignature: String?
     var lastPushSignature: String = ""
     var tombstonesData: Data?
+    var absentNotebooksData: Data?
 }
 
 /// The mirror's markers, sharing the device's tombstones - as
@@ -42,6 +43,7 @@ final class InMemoryMirrorStateStore: SyncStateStore {
     init(sharingTombstonesWith device: InMemorySyncStateStore) { self.device = device }
     var lastAppliedRemoteSignature: String?
     var lastPushSignature: String = ""
+    var absentNotebooksData: Data?
     var tombstonesData: Data? {
         get { device.tombstonesData }
         set { device.tombstonesData = newValue }
@@ -161,6 +163,19 @@ final class SyncTestDevice {
         notebook.modifiedAt = clock.now
         try context.save()
         return notebook
+    }
+
+    /// Appends one inked page to an existing notebook.
+    @discardableResult
+    func addPage(to notebook: Notebook) throws -> Page {
+        let page = Page(index: notebook.pages?.count ?? 0, notebook: notebook)
+        context.insert(page)
+        notebook.pages?.append(page)
+        try writeInk(Data("\(notebook.title) page \(page.index + 1) original".utf8), to: page)
+        page.modifiedAt = clock.now
+        notebook.modifiedAt = clock.now
+        try context.save()
+        return page
     }
 
     /// Mirrors `MystNotesDetailView.save(_:to:)`: write the drawing file,

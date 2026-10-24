@@ -542,7 +542,12 @@ nonisolated struct SyncRunner {
         }
         try writeJSON(index, to: Self.indexURL(in: workingDir))
         keepHistory(of: index, workingDir: workingDir)
-        pruneFolder(workingDir: workingDir, tombstones: snapshot.tombstones, pending: pending)
+        // A notebook republished from absence holds only the pages this
+        // device knew; payloads of pages it never saw look orphaned until
+        // their owner pushes the page back. Skip the orphan pass this round
+        // (the same hold as for a pending notebook).
+        pruneFolder(workingDir: workingDir, tombstones: snapshot.tombstones,
+                    pending: pending.union(remote?.republished ?? []))
 
         // What was actually written - with the folder's own entries kept
         // for anything pending - not what this library holds. Recording the
@@ -586,6 +591,9 @@ nonisolated struct SyncRunner {
         /// never alongside the current file in one snapshot, because the
         /// merge plan is keyed by page and the last DTO seen would decide.
         var notebookConflictVersions: [NotebookDTO] = []
+        /// Notebooks whose file was absent long enough that this library
+        /// republishes its own copy (see `absentGracePeriod`).
+        var republished: Set<UUID> = []
 
         /// A conflict version's entries describe files that have since been
         /// replaced, so "doesn't match its entry" is its normal condition,
@@ -663,7 +671,7 @@ nonisolated struct SyncRunner {
     private func readRemote(workingDir: URL, context: ModelContext) throws -> RemoteLibrary? {
         let indexURL = Self.indexURL(in: workingDir)
         switch SyncFolder.availability(of: indexURL) {
-        case .available: return try readIndexedLibrary(indexURL: indexURL, workingDir: workingDir, context: context)
+        case .available: return try readIndexedLibrary(indexURL: indexURL, workingDir: workingDir, context: context, trackAbsence: true)
         case .pending: throw Waiting()
         case .absent: break
         }
@@ -682,15 +690,24 @@ nonisolated struct SyncRunner {
         return RemoteLibrary(snapshot: legacy, pending: [], mismatched: [], index: nil)
     }
 
-    private func readIndexedLibrary(indexURL: URL, workingDir: URL, context: ModelContext) throws -> RemoteLibrary {
+    /// `trackAbsence` is for the current index only: a notebook file missing
+    /// (not downloading) for `absentGracePeriod` stops being pending if this
+    /// library has pages for it, so the next push republishes it. Merge is
+    /// per page, so the other copy turning up later still merges in.
+    static let absentGracePeriod: TimeInterval = 60 * 60
+
+    private func readIndexedLibrary(indexURL: URL, workingDir: URL, context: ModelContext,
+                                    trackAbsence: Bool = false) throws -> RemoteLibrary {
         let index: LibraryIndex = try readJSON(from: indexURL)
         guard index.formatVersion <= librarySnapshotFormatVersion else {
             throw SyncFormatError.newerThanThisBuild(index.formatVersion)
         }
 
         // Only open the notebook files whose page set differs from ours.
+        let localNotebooks = try context.fetch(FetchDescriptor<Notebook>())
+        let hasLocalPages = Set(localNotebooks.filter { !($0.pages ?? []).isEmpty }.map(\.id))
         let localSignatures = Dictionary(
-            (try context.fetch(FetchDescriptor<Notebook>())).map { notebook in
+            localNotebooks.map { notebook in
                 (notebook.id, NotebookDTO.contentSignature(of: (notebook.pages ?? []).map { ($0.id, $0.modifiedAt) }))
             },
             uniquingKeysWith: { first, _ in first }
@@ -700,10 +717,25 @@ nonisolated struct SyncRunner {
         var notebookConflicts: [NotebookDTO] = []
         var pending: Set<UUID> = []
         var mismatched: Set<UUID> = []
+        var republished: Set<UUID> = []
+        let absentSince = trackAbsence ? SyncAbsence.load(from: environment.state) : [:]
+        var stillAbsent: [UUID: Date] = [:]
+        defer { if trackAbsence { SyncAbsence.save(stillAbsent, to: environment.state) } }
         for entry in index.notebooks where localSignatures[entry.id] != entry.contentSignature {
             let url = Self.notebookFileURL(for: entry.id, in: workingDir)
-            guard SyncFolder.availability(of: url) == .available,
+            let availability = SyncFolder.availability(of: url)
+            guard availability == .available,
                   let notebook: NotebookDTO = try? readJSON(from: url) else {
+                if trackAbsence, availability == .absent {
+                    let since = absentSince[entry.id] ?? environment.now()
+                    stillAbsent[entry.id] = since
+                    if environment.now().timeIntervalSince(since) >= Self.absentGracePeriod,
+                       hasLocalPages.contains(entry.id) {
+                        AppLog.note("sync", "notebook \(entry.id) absent from the folder for over an hour; republishing this device's copy")
+                        republished.insert(entry.id)
+                        continue   // not pending: the next push writes it
+                    }
+                }
                 pending.insert(entry.id)   // not here yet, or not all here yet
                 continue
             }
@@ -725,8 +757,10 @@ nonisolated struct SyncRunner {
             notebookIndex: index.notebooks,
             tombstones: try readTombstones(workingDir: workingDir) + (index.tombstones ?? [])
         )
-        return RemoteLibrary(snapshot: snapshot, pending: pending, mismatched: mismatched, index: index,
-                             notebookConflictVersions: notebookConflicts)
+        var library = RemoteLibrary(snapshot: snapshot, pending: pending, mismatched: mismatched, index: index,
+                                    notebookConflictVersions: notebookConflicts)
+        library.republished = republished
+        return library
     }
 
     /// `tombstones.json`, or nothing if it isn't there yet. An unreadable

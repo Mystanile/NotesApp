@@ -215,6 +215,102 @@ final class SyncTests: XCTestCase {
         _ = a
     }
 
+    // MARK: A notebook file that never arrives
+
+    /// Two devices share notebook B; the Mac edits a page, then B's file is
+    /// gone from the folder (and `placeholder` makes it look "downloading").
+    private func setUpLostNotebook(placeholder: Bool = false) throws
+        -> (mac: SyncTestDevice, ipad: SyncTestDevice, macPageID: UUID, ink: Data, bFile: URL) {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let b = try ipad.createNotebook(title: "B", pageCount: 2)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        let macB = try XCTUnwrap(try mac.pages(ofNotebook: b.id))
+        let ink = Data("Mac on B".utf8)
+        harness.clock.advance(); try mac.edit(page: macB[0], ink: ink)
+        let bFile = harness.folderFile("notebooks/\(b.id.uuidString).json")
+        try FileManager.default.moveItem(at: bFile, to: harness.folderFile("lost-B.json"))
+        if placeholder {
+            let dot = bFile.deletingLastPathComponent().appendingPathComponent(".\(bFile.lastPathComponent).icloud")
+            try Data().write(to: dot)
+        }
+        return (mac, ipad, macB[0].id, ink, bFile)
+    }
+
+    func testAbsentNotebook_overAnHour_isRepublishedFromThisLibrary() throws {
+        let t = try setUpLostNotebook()
+        harness.clock.advance(); try t.mac.sync()
+        XCTAssertNotEqual(harness.pageInFolder(t.macPageID)?.drawingHash, PayloadHash.sha256(of: t.ink), "inside the grace period: still pending")
+        harness.clock.advance(seconds: 3700); try t.mac.sync()
+        XCTAssertEqual(harness.pageInFolder(t.macPageID)?.drawingHash, PayloadHash.sha256(of: t.ink), "absent for over an hour: republished")
+        harness.clock.advance(); try t.ipad.sync()
+        XCTAssertEqual(t.ipad.ink(forPageID: t.macPageID), t.ink, "the other device gets the republished page")
+    }
+
+    /// B pulled N with only P1; A then added P2 and pushed; N's file is
+    /// lost. B republishes N with P1 only. The orphan pass must not move
+    /// P2's payload to trash in that round, and A's next push restores P2.
+    func testRepublishedNotebook_doesNotOrphanPagesTheRepublisherNeverSaw() throws {
+        let a = try harness.makeDevice("A")
+        let b = try harness.makeDevice("B")
+        b.orphanGracePeriod = 3600
+        let n = try a.createNotebook(title: "N", pageCount: 1)
+        harness.clock.advance(); try a.sync()
+        harness.clock.advance(); try b.sync()
+        let p2 = try a.addPage(to: n)
+        let p2Ink = try XCTUnwrap(a.ink(forPageID: p2.id))
+        harness.clock.advance(); try a.sync()
+        // B edits P1 so its copy differs from the folder's entry.
+        let bP1 = try XCTUnwrap(try b.pages(ofNotebook: n.id)?.first)
+        harness.clock.advance(); try b.edit(page: bP1, ink: Data("B edit".utf8))
+        let nFile = harness.folderFile("notebooks/\(n.id.uuidString).json")
+        // B must not see P2 yet: its pull only counts what it can read.
+        let lost = harness.folderFile("lost-N.json")
+        try FileManager.default.moveItem(at: nFile, to: lost)
+        harness.clock.advance(); try b.sync()
+        harness.clock.advance(seconds: 3700); try b.sync()   // republishes N with P1 only
+        let p2Name = "\(PayloadHash.sha256(of: p2Ink)).drawing"
+        XCTAssertTrue(harness.folderPayloadNames().contains(p2Name), "P2's payload was not orphaned by the republish round")
+
+        harness.clock.advance(); try a.sync()
+        XCTAssertEqual(a.ink(forPageID: p2.id), p2Ink, "A still has P2")
+        XCTAssertNotNil(harness.pageInFolder(p2.id), "the folder's N lists P2 again")
+        XCTAssertTrue(harness.folderPayloadNames().contains(p2Name), "…with its payload in files/, not only in trash")
+        harness.clock.advance(); try b.sync()
+        XCTAssertEqual(b.ink(forPageID: p2.id), p2Ink, "B gets P2")
+    }
+
+    func testAbsentNotebook_underAnHour_staysPending() throws {
+        let t = try setUpLostNotebook()
+        harness.clock.advance(); try t.mac.sync()
+        harness.clock.advance(seconds: 1800); try t.mac.sync()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: t.bFile.path), "not written inside the hour")
+        XCTAssertNotEqual(harness.pageInFolder(t.macPageID)?.drawingHash, PayloadHash.sha256(of: t.ink))
+    }
+
+    func testPlaceholderNotebook_overAnHour_staysPending() throws {
+        let t = try setUpLostNotebook(placeholder: true)
+        harness.clock.advance(); try t.mac.sync()
+        harness.clock.advance(seconds: 7200); try t.mac.sync()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: t.bFile.path), "a downloading file is never replaced")
+        XCTAssertNotEqual(harness.pageInFolder(t.macPageID)?.drawingHash, PayloadHash.sha256(of: t.ink))
+    }
+
+    func testAbsentNotebook_returningBeforeTheHour_clearsTheEntryAndMerges() throws {
+        let t = try setUpLostNotebook()
+        harness.clock.advance(); try t.mac.sync()
+        XCTAssertNotNil(t.mac.state.absentNotebooksData, "first seen absent is remembered")
+        try FileManager.default.moveItem(at: harness.folderFile("lost-B.json"), to: t.bFile)
+        harness.clock.advance(seconds: 1800); try t.mac.sync()
+        XCTAssertNil(t.mac.state.absentNotebooksData, "the file is back: entry cleared")
+        XCTAssertEqual(harness.pageInFolder(t.macPageID)?.drawingHash, PayloadHash.sha256(of: t.ink), "normal merge and push happened")
+        // And a later absence starts a fresh clock.
+        try FileManager.default.moveItem(at: t.bFile, to: harness.folderFile("lost-B.json"))
+        harness.clock.advance(seconds: 3700); try t.mac.sync()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: t.bFile.path), "fresh absence: still inside the grace period")
+    }
+
     /// The folder holds something other than this library, but the device's
     /// stored "last pushed" marker happens to equal its own state (a
     /// leftover from a push that had to substitute the folder's entry).

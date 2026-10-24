@@ -113,6 +113,20 @@ nonisolated protocol SyncStateStore: AnyObject {
     var lastPushSignature: String { get set }
     /// JSON-encoded `[Tombstone]`, see `SyncTombstones`.
     var tombstonesData: Data? { get set }
+    /// JSON-encoded `[UUID: Date]`, see `SyncAbsence`: when each notebook
+    /// file was first seen missing from the folder.
+    var absentNotebooksData: Data? { get set }
+}
+
+/// When each indexed notebook's file was first seen absent (not downloading).
+nonisolated enum SyncAbsence {
+    static func load(from store: SyncStateStore) -> [UUID: Date] {
+        guard let data = store.absentNotebooksData else { return [:] }
+        return (try? JSONDecoder().decode([UUID: Date].self, from: data)) ?? [:]
+    }
+    static func save(_ value: [UUID: Date], to store: SyncStateStore) {
+        store.absentNotebooksData = value.isEmpty ? nil : try? JSONEncoder().encode(value)
+    }
 }
 
 /// The local mirror's markers. Tombstones are shared with the live store:
@@ -135,6 +149,10 @@ nonisolated final class MirrorSyncStateStore: SyncStateStore {
         get { AppSettings.syncTombstonesData }
         set { AppSettings.syncTombstonesData = newValue }
     }
+    var absentNotebooksData: Data? {
+        get { UserDefaults.standard.data(forKey: "mirror.absentNotebooks") }
+        set { UserDefaults.standard.set(newValue, forKey: "mirror.absentNotebooks") }
+    }
 }
 
 /// The app's real store: `UserDefaults` through `AppSettings`.
@@ -153,5 +171,9 @@ nonisolated final class LiveSyncStateStore: SyncStateStore {
     var tombstonesData: Data? {
         get { AppSettings.syncTombstonesData }
         set { AppSettings.syncTombstonesData = newValue }
+    }
+    var absentNotebooksData: Data? {
+        get { UserDefaults.standard.data(forKey: "syncAbsentNotebooks") }
+        set { UserDefaults.standard.set(newValue, forKey: "syncAbsentNotebooks") }
     }
 }
