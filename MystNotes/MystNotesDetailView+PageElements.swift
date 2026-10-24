@@ -48,12 +48,13 @@ extension NotebookDetailView {
                 canvas.undoManager?.endUndoGrouping()
                 refreshUndoRedoState()
             }
-            guard inkSelection.delete(exactly: selection.strokes) else { return }
+            // Where the ink is now: the selection may have moved while it was read.
+            guard let bounds = inkSelection.delete(exactly: selection.strokes) else { return }
             let lines = max(text.split(separator: "\n").count, 1)
             var block = TextBlockSnapshot(id: UUID(), content: text)
-            block.frame = CGRect(x: selection.bounds.minX - 6, y: selection.bounds.minY - 6,
-                                 width: max(selection.bounds.width + 12, 120), height: selection.bounds.height + 12)
-            block.fontSize = min(max(Double(selection.bounds.height) / Double(lines) * 0.6, 12), 48)
+            block.frame = CGRect(x: bounds.minX - 6, y: bounds.minY - 6,
+                                 width: max(bounds.width + 12, 120), height: bounds.height + 12)
+            block.fontSize = min(max(Double(bounds.height) / Double(lines) * 0.6, 12), 48)
             setTextBlock(block, present: true, on: page)
         }
     }

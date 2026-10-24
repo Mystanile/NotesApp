@@ -28,7 +28,6 @@ Next, for the user to choose:
 4. Shape tool on the Pencil: one undo after a snap should leave the page as before the stroke (decided Oct 22). If PencilKit's own stroke undo lands in a separate group, there is one extra undo step with no visible change. The object eraser removes a dashed shape one dash at a time, as decided.
 
 Still open from the Oct 22 bug hunt (small, not fixed):
-- Convert to Text: if you move the selection while it is recognising, the text box lands where the ink was before the move.
 - If PencilKit's stroke undo lands in its own undo group, one extra undo after a snap changes nothing.
 
 Open bugs:
@@ -72,6 +71,8 @@ Open bugs:
 - [x] Lasso fixes (Oct 22): a rotated selection keeps its rotation on the next drag; undoing a paste or duplicate clears the empty selection box, and undoing a move puts the box back on the ink; Paste lights up straight after Copy; repeated pastes step apart, and a paste that would land off screen comes to the middle of it. [tests only] for rotation, undo and paste placement.
 
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
+
+- [x] Convert to Text: if the selection moves while it is read, the text box goes where the ink is now, not where it was (Oct 24). [tests only]
 
 - [x] Editing a text box: a drag in the text selects it instead of moving the box; a move handle at the top right moves it (Oct 22). [not tested] on a device.
 

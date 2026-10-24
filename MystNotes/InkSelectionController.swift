@@ -348,18 +348,20 @@ final class InkSelectionController: NSObject {
     /// Removes exactly these strokes - matched by id, not by what happens
     /// to be selected now - or nothing, if any of them has gone or changed
     /// since. Convert to Text reads the ink for a second or two; the user
-    /// may have moved on.
+    /// may have moved on. Returns where the strokes were when removed,
+    /// which is not where they were when read if the selection moved.
     @discardableResult
-    func delete(exactly strokes: [PKStroke]) -> Bool {
-        guard let canvas else { return false }
+    func delete(exactly strokes: [PKStroke]) -> CGRect? {
+        guard let canvas, !strokes.isEmpty else { return nil }
         let wanted = strokes.map(StrokeIDMap.Fingerprint.init)
         let present = canvas.drawing.strokes.map(StrokeIDMap.Fingerprint.init)
         let indices = wanted.compactMap { present.firstIndex(of: $0) }
-        guard indices.count == wanted.count else { return false }
+        guard indices.count == wanted.count else { return nil }
+        let bounds = InkSelection.bounds(of: canvas.drawing, indices: indices)
         canvas.setDrawingUndoably(InkSelection.removing(canvas.drawing, indices: indices))
         clear()
         onDrawingChanged()
-        return true
+        return bounds
     }
 
     func cutSelection() {

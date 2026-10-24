@@ -90,11 +90,32 @@ final class LassoActionsTests: XCTestCase {
         controller.canvas = canvas
 
         let gone = line(from: CGPoint(x: 0, y: 90), to: CGPoint(x: 10, y: 90))
-        XCTAssertFalse(controller.delete(exactly: [strokes[0], gone]), "one stroke isn't there any more")
+        XCTAssertNil(controller.delete(exactly: [strokes[0], gone]), "one stroke isn't there any more")
         XCTAssertEqual(canvas.drawing.strokes.count, 3, "nothing removed when refusing")
 
-        XCTAssertTrue(controller.delete(exactly: [strokes[0], strokes[2]]))
+        XCTAssertNotNil(controller.delete(exactly: [strokes[0], strokes[2]]))
         XCTAssertEqual(canvas.drawing.strokes.map(StrokeIDMap.Fingerprint.init), [StrokeIDMap.Fingerprint(strokes[1])])
+    }
+
+    /// Convert to Text reads the ink, then deletes it and places the box.
+    /// If the selection moved in between, the box goes where the ink is
+    /// now, not where it was read (Oct 22 bug hunt).
+    @MainActor
+    func testDeleteExactly_returnsWhereTheStrokesAreNow_afterAMove() throws {
+        let controller = InkSelectionController()
+        let canvas = PKCanvasView()
+        canvas.drawing = PKDrawing(strokes: [line(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 60, y: 10))])
+        controller.canvas = canvas
+        controller.select(lasso: [CGPoint(x: 0, y: 0), CGPoint(x: 80, y: 0), CGPoint(x: 80, y: 30), CGPoint(x: 0, y: 30)])
+        let read = try XCTUnwrap(controller.selectedStrokes)
+
+        controller.beginGesture()
+        controller.translate(by: CGPoint(x: 200, y: 300))
+        controller.endGesture()
+        let removed = try XCTUnwrap(controller.delete(exactly: read.strokes), "a moved stroke is the same stroke")
+        XCTAssertEqual(removed.minX, read.bounds.minX + 200, accuracy: 1)
+        XCTAssertEqual(removed.minY, read.bounds.minY + 300, accuracy: 1)
+        XCTAssertTrue(canvas.drawing.strokes.isEmpty)
     }
 
     @MainActor
