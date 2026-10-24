@@ -72,6 +72,10 @@ Open bugs:
 
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
 
+- [x] Notebook toolbar from the UI review (Oct 24): one Insert menu holds text box, photo, sticker, link, paste image, PDF or image file, and the new-page imports and scan (the nav-bar Import menu is gone); Save is now a Share menu; Outline, Present and New Page are in a More menu; the page-strip toggle is a sidebar icon; the pen and highlighter show their colour; every toolbar icon has a VoiceOver label. [tests only] (`NotebookToolbarTests`). Not tried: choosing a menu row with a real touch, the Mac.
+
+- [x] Library covers (Oct 24): "Edited today / yesterday / Tuesday / Oct 3" under each notebook, and a small preview of its last inked page on the cover (none when locked). [tests only] (`NotebookCoverTests`)
+
 - [x] Lasso toolbar (Oct 24): the floating drawing toolbar hides while ink is selected, so it no longer covers the lasso toolbar in compact width. Under about 461 pt the lasso toolbar becomes Cut, Copy, Delete, More and Done. It moves to the bottom when the selection's top would be under it. [tests only] (`SimProbeElementsTests`). Not tried: the More menu on a device, the Mac.
 
 - [x] Page layers after a page change (Oct 24): if the canvas never reports the page's fit, the viewport asks again after 1 s and shows the paper, images and text after 2 s, with a `viewport` log line. Before, they stayed hidden with no timeout. [tests only] (`ViewportRevealTests`)

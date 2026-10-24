@@ -234,10 +234,11 @@ struct LibraryView: View {
 
                 if !notebooks.isEmpty {
                     sectionHeader("Notebooks")
+                    let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
                     LazyVGrid(columns: gridColumns, spacing: 16) {
                         ForEach(notebooks, id: \.id) { notebook in
                             NavigationLink(value: notebook) {
-                                NotebookCellView(notebook: notebook)
+                                NotebookCellView(notebook: notebook, previewArtwork: previewArtwork)
                             }
                             .buttonStyle(.plain)
                             .contextMenu { notebookMenu(for: notebook) }
