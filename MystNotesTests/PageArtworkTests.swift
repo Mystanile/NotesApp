@@ -360,29 +360,7 @@ final class PageArtworkTests: XCTestCase {
         XCTAssertEqual(base, base, "an unchanged page keeps its cached thumbnail")
     }
 
-    // MARK: - The page strip's sizing
-
-    /// The strip is resizable now, so the numbers the drag clamps to and
-    /// the height the cells get have to agree - and the default has to be
-    /// the strip people already have.
-    func testStripMetrics_defaultIsTodaysStrip_andClampsBothWays() {
-        XCTAssertEqual(PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight), 80,
-                       "the default strip is the 80pt thumbnail the app has always drawn")
-
-        XCTAssertEqual(PageStripMetrics.clamped(10), PageStripMetrics.minimumHeight)
-        XCTAssertEqual(PageStripMetrics.clamped(10_000), PageStripMetrics.maximumHeight)
-        XCTAssertEqual(PageStripMetrics.clamped(200), 200)
-
-        // Even at the extremes a cell is a positive, usable size.
-        for height in [PageStripMetrics.minimumHeight, PageStripMetrics.defaultHeight, PageStripMetrics.maximumHeight] {
-            XCTAssertGreaterThan(PageStripMetrics.thumbnailHeight(for: height), 24)
-            XCTAssertLessThan(PageStripMetrics.thumbnailHeight(for: height), height,
-                              "the chrome has to fit in the strip alongside the page")
-        }
-        XCTAssertGreaterThan(PageStripMetrics.thumbnailHeight(for: PageStripMetrics.maximumHeight),
-                             PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight),
-                             "dragging up has to actually make the pages bigger")
-    }
+    // MARK: - The page sidebar's sizing (see PageSidebarTests)
 
     /// Resizing must re-render the bitmap, or a strip dragged large shows
     /// blurry thumbnails - but in steps, or every intermediate height

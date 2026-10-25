@@ -9,6 +9,17 @@ Every item ends with how it was checked:
 - [tests only]: automated tests pass, but nobody used it on a device.
 - [not tested]: no test and no device check.
 
+## Autonomous run: decided by the user on 2026-10-25
+
+The user asked Claude to finish the plan alone. These decisions hold for the whole run:
+
+- Scope: finish M2, then M3, M4 and M5, then the code parts of M6 (accessibility, strings, privacy manifest, onboarding) and a local-only M7 web viewer. This overrides the rule that a milestone waits for the one before it. The M1 iPad pass is still owed by the user.
+- Devices: Claude can install the `.agenttest` copy on the paired iPad. Claude can drive the Mac `.agenttest` copy with synthetic mouse events. Never use the real app.
+- Git: one local branch per milestone, each started from the one before (`m3-time`, `m4-recall`, `m5-reach`, `m6-ship`, `m7-web`). One commit per working feature. No push. Nothing merges into `main`.
+- Packages: if a small, well-known Swift package replaces a lot of code, Claude can add it. This file lists each one with the reason.
+- Defaults chosen by Claude: transclusion is built under the conditions in `BACKLOG.md`. The iPhone uses the same app target (its device family is already 1, 2, 7). `LoginView` stays as it is until M6.
+- Left for the user: the M1 iPad checks with a Pencil and the paid developer membership. Also App Store Connect, TestFlight, a public privacy policy URL, and public hosting for share links.
+
 ## Handoff: start here (2026-10-24)
 
 Branch and build:
@@ -73,6 +84,8 @@ Open bugs:
 - [x] Search and Markdown (Oct 22): the handwriting indexing pass stops when the search screen closes and skips pages deleted mid-pass; results refresh when pages come or go; Markdown export (one notebook or the library) reads handwriting on pages search never indexed. [not tested] by a test of its own; the suite passes.
 
 - [x] Notebook toolbar from the UI review (Oct 24): one Insert menu holds text box, photo, sticker, link, paste image, PDF or image file, and the new-page imports and scan (the nav-bar Import menu is gone); Save is now a Share menu; Outline, Present and New Page are in a More menu; the page-strip toggle is a sidebar icon; the pen and highlighter show their colour; every toolbar icon has a VoiceOver label. [tests only] (`NotebookToolbarTests`). Not tried: choosing a menu row with a real touch, the Mac.
+
+- [x] Page sidebar (Oct 25): the bottom page strip is now a left sidebar. Drag its edge to make it 96 to 220 pt wide, and the thumbnails grow with it. It scrolls to the open page. [tests only] (`PageSidebarTests`). Not tried: the drag with a real touch.
 
 - [x] Library covers (Oct 24): "Edited today / yesterday / Tuesday / Oct 3" under each notebook, and a small preview of its last inked page on the cover (none when locked). [tests only] (`NotebookCoverTests`)
 

@@ -22,6 +22,7 @@ nonisolated enum AppSettings {
         static let template = "defaultTemplate"
         static let pageStripVisible = "pageStripVisible"
         static let pageStripHeight = "pageStripHeight"
+        static let pageSidebarWidth = "pageSidebarWidth"
         static let appearance = "appearance"
         static let hasSeenOnboarding = "hasSeenOnboarding"
         static let hasSeededTutorialNotebook = "hasSeededTutorialNotebook"
@@ -215,9 +216,15 @@ nonisolated enum AppSettings {
         set { defaults.set(newValue, forKey: Keys.pageStripVisible) }
     }
 
+    /// Unused since the strip became the left sidebar; the key stays.
     static var pageStripHeight: Double {
-        get { defaults.object(forKey: Keys.pageStripHeight) as? Double ?? PageStripMetrics.defaultHeight }
+        get { defaults.object(forKey: Keys.pageStripHeight) as? Double ?? 122 }
         set { defaults.set(newValue, forKey: Keys.pageStripHeight) }
+    }
+
+    static var pageSidebarWidth: Double {
+        get { defaults.object(forKey: Keys.pageSidebarWidth) as? Double ?? PageSidebarMetrics.defaultWidth }
+        set { defaults.set(newValue, forKey: Keys.pageSidebarWidth) }
     }
 
     // MARK: Appearance

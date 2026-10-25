@@ -576,8 +576,8 @@ final class SimProbePagesTests: XCTestCase {
     private typealias ActionProvider = @convention(block) ([UIMenuElement]) -> UIMenu?
 
     /// Sends the menu item `title` of the first page's cell in the page
-    /// strip. The strip is under the canvas and starts at its first page,
-    /// so the first cell is the first point, scanning from the left, whose
+    /// strip. The sidebar is left of the canvas and starts at its first page,
+    /// so the first cell is the first point, scanning from the top, whose
     /// menu has that item. Point by point, each context-menu interaction in
     /// the window is asked for the configuration UIKit would show there. Its
     /// menu is built through the private `actionProvider` (checked before it
@@ -587,10 +587,10 @@ final class SimProbePagesTests: XCTestCase {
         guard let canvasHost = window.probeFirst(PagedCanvasHostView.self) else { return .unreachable("no canvas host") }
         let interactions = contextMenuInteractions(in: window)
         guard !interactions.isEmpty else { return .unreachable("no UIContextMenuInteraction in the window") }
-        let top = canvasHost.convert(canvasHost.bounds, to: window).maxY
+        let top = canvasHost.convert(canvasHost.bounds, to: window).minY
         var asked = 0
-        for y in stride(from: window.bounds.maxY - 12, through: top + 4, by: -8) {
-            for x: CGFloat in [28, 40, 52, 64] {
+        for y in stride(from: top + 4, through: window.bounds.maxY - 12, by: 8) {
+            for x: CGFloat in [40, 64, 88] {
                 for interaction in interactions {
                     guard let menu = self.menu(of: interaction, at: CGPoint(x: x, y: y), in: window, asked: &asked),
                           let action = self.action(titled: title, in: menu) else { continue }
@@ -600,7 +600,7 @@ final class SimProbePagesTests: XCTestCase {
                 }
             }
         }
-        return .unreachable("\(interactions.count) context-menu interaction(s), \(asked) menu(s) built under the canvas, none with \"\(title)\"")
+        return .unreachable("\(interactions.count) context-menu interaction(s), \(asked) menu(s) built in the sidebar, none with \"\(title)\"")
     }
 
     private func contextMenuInteractions(in view: UIView) -> [UIContextMenuInteraction] {

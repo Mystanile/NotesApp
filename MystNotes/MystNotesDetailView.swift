@@ -96,17 +96,20 @@ struct NotebookDetailView: View {
     /// under the canvas (a pull); anything else on the page redraws from
     /// the models by itself.
     @State var loadedInkStamp: InkStamp?
-    /// The page strip's visibility and height, persisted (`AppSettings`)
+    /// The page sidebar's visibility and width, persisted (`AppSettings`)
     /// so a strip you hid or dragged bigger stays that way - across page
     /// turns, notebooks, windows and launches.
     @AppStorage(AppSettings.Keys.pageStripVisible) var showingPageStrip = true
-    @AppStorage(AppSettings.Keys.pageStripHeight) var pageStripHeight = PageStripMetrics.defaultHeight
-    /// The height the current drag started from, and how far it has moved.
-    /// The live height is computed from these rather than written straight
+    @AppStorage(AppSettings.Keys.pageSidebarWidth) var pageSidebarWidth = PageSidebarMetrics.defaultWidth
+    /// In compact width the sidebar overlays the canvas and starts closed
+    /// on every open of a notebook, whatever the preference says.
+    @State var compactSidebarOpen = false
+    /// The width the current drag started from, and how far it has moved.
+    /// The live width is computed from these rather than written straight
     /// to the stored preference - a drag would otherwise write to
     /// `UserDefaults` on every frame.
-    @State var pageStripDragStart: CGFloat?
-    @State var pageStripDragTranslation: CGFloat = 0
+    @State var pageSidebarDragStart: CGFloat?
+    @State var pageSidebarDragTranslation: CGFloat = 0
 
     /// Hold-to-snap: what the stroke in progress will snap to when the
     /// pencil lifts, previewed over the page in the tool's own ink.
@@ -341,13 +344,13 @@ struct NotebookDetailView: View {
                 .help("Page Map")
 
                 Button {
-                    withAnimation(.snappy) { showingPageStrip.toggle() }
+                    togglePageSidebar()
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .symbolVariant(showingPageStrip ? .fill : .none)
+                        .symbolVariant(pageSidebarVisible ? .fill : .none)
                 }
                 .accessibilityLabel("Pages")
-                .help(showingPageStrip ? "Hide the page strip" : "Show the page strip")
+                .help(pageSidebarVisible ? "Hide the page sidebar" : "Show the page sidebar")
 
                 Menu {
                     Button("Save Now") {
@@ -528,8 +531,11 @@ struct NotebookDetailView: View {
     /// The screen without its modifiers; `body` adds those.
     var mainContent: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 0) {
+            HStack(spacing: 0) {
                 if let page = currentPage {
+                    if pageSidebarVisible && !isCompactWidth && !isPresenting {
+                        pageSidebar
+                    }
                     canvasSection(for: page)
                         #if targetEnvironment(macCatalyst) || canImport(UIKit)
                         .overlay(alignment: .top) {
@@ -547,8 +553,8 @@ struct NotebookDetailView: View {
                                 && !inkSelection.hasSelection {
                                 // GeometryReader gives the bar the canvas
                                 // area to clamp its dragging within, which
-                                // is also what keeps it from sliding down
-                                // underneath the page-thumbnail strip.
+                                // is also what keeps it inside the canvas,
+                                // clear of the page sidebar.
                                 GeometryReader { geo in
                                     drawingToolbar(page: page, style: .floating, containerSize: geo.size)
                                     .frame(maxWidth: .infinity, alignment: .center)
@@ -586,6 +592,11 @@ struct NotebookDetailView: View {
                             }
                         }
                         .overlay(alignment: .topTrailing) { linkedFromStrip }
+                        .overlay(alignment: .leading) {
+                            if pageSidebarVisible && isCompactWidth && !isPresenting {
+                                pageSidebar.shadow(color: .black.opacity(0.25), radius: 10, x: 2)
+                            }
+                        }
                         .overlay(alignment: .bottom) {
                             if showingSaveConfirmation {
                                 Label("Saved", systemImage: "checkmark.circle.fill")
@@ -599,9 +610,6 @@ struct NotebookDetailView: View {
                             }
                         }
                         #endif
-                    if showingPageStrip && !isPresenting {
-                        pageStrip
-                    }
                 } else {
                     ProgressView("Loading…")
                 }
@@ -891,93 +899,99 @@ struct NotebookDetailView: View {
         }
     }
 
-    /// The page strip, with a grabber along its top edge: drag to resize,
-    /// drag below the minimum to put it away, and the toolbar's pages
-    /// button brings it back. Both the height and the visibility persist.
-    var pageStrip: some View {
-        VStack(spacing: 0) {
-            pageStripGrabber
-            pageStripContent
+    /// The page sidebar: a column of thumbnails down the left edge, with a
+    /// grabber on its right edge that drags its width. Regular width puts
+    /// it beside the canvas (the toolbar's pages button shows/hides it, and
+    /// that persists); compact width overlays it on the canvas, closed each
+    /// time the notebook opens, and a tap on a page closes it again.
+    var pageSidebar: some View {
+        HStack(spacing: 0) {
+            pageSidebarContent
+            pageSidebarGrabber
         }
-        .frame(height: liveStripHeight)
+        .frame(width: livePageSidebarWidth)
         .background(.thinMaterial)
-        .transition(.move(edge: .bottom))
+        .transition(.move(edge: .leading))
     }
 
-    /// What the strip is actually this tall right now: the stored height,
+    var isCompactWidth: Bool { horizontalSizeClass == .compact }
+
+    /// Whether the sidebar is up: the persisted preference, or in compact
+    /// width the per-open state.
+    var pageSidebarVisible: Bool { isCompactWidth ? compactSidebarOpen : showingPageStrip }
+
+    func togglePageSidebar() {
+        withAnimation(.snappy) {
+            if isCompactWidth { compactSidebarOpen.toggle() } else { showingPageStrip.toggle() }
+        }
+    }
+
+    /// What the sidebar is actually this wide right now: the stored width,
     /// or the in-progress drag.
-    var liveStripHeight: CGFloat {
-        guard let start = pageStripDragStart else { return PageStripMetrics.clamped(pageStripHeight) }
-        return PageStripMetrics.clamped(start - pageStripDragTranslation)
+    var livePageSidebarWidth: CGFloat {
+        guard let start = pageSidebarDragStart else { return PageSidebarMetrics.clamped(pageSidebarWidth) }
+        return PageSidebarMetrics.clamped(start + pageSidebarDragTranslation)
     }
 
-    var pageStripGrabber: some View {
-        // A capsule, like every other resizable drawer on the platform.
+    var pageSidebarGrabber: some View {
         Capsule()
-            .fill(Color.secondary.opacity(pageStripDragStart == nil ? 0.35 : 0.7))
-            .frame(width: 40, height: 5)
-            .frame(maxWidth: .infinity)
-            .frame(height: PageStripMetrics.grabberHeight)
-            // The whole bar is the grab area, not just the 5pt capsule.
+            .fill(Color.secondary.opacity(pageSidebarDragStart == nil ? 0.35 : 0.7))
+            .frame(width: 5, height: 40)
+            .frame(maxHeight: .infinity)
+            .frame(width: PageSidebarMetrics.grabberWidth)
+            // The whole edge is the grab area, not just the capsule.
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
-                        if pageStripDragStart == nil {
-                            pageStripDragStart = PageStripMetrics.clamped(pageStripHeight)
+                        if pageSidebarDragStart == nil {
+                            pageSidebarDragStart = PageSidebarMetrics.clamped(pageSidebarWidth)
                         }
-                        // Up is negative in screen coordinates, and up means
-                        // a taller strip.
-                        pageStripDragTranslation = value.translation.height
+                        pageSidebarDragTranslation = value.translation.width
                     }
                     .onEnded { value in
-                        let start = pageStripDragStart ?? PageStripMetrics.clamped(pageStripHeight)
-                        let dragged = start - value.translation.height
-                        pageStripHeight = PageStripMetrics.clamped(dragged)
-                        pageStripDragStart = nil
-                        pageStripDragTranslation = 0
-                        // Dragged well below the minimum: put it away rather
-                        // than leaving a strip too short to read. The height
-                        // is kept at the minimum, so bringing it back gives
-                        // a usable strip.
-                        if dragged < PageStripMetrics.minimumHeight - 24 {
-                            withAnimation(.snappy) { showingPageStrip = false }
-                        }
+                        let start = pageSidebarDragStart ?? PageSidebarMetrics.clamped(pageSidebarWidth)
+                        pageSidebarWidth = PageSidebarMetrics.clamped(start + value.translation.width)
+                        pageSidebarDragStart = nil
+                        pageSidebarDragTranslation = 0
                     }
             )
-            .onTapGesture(count: 2) { togglePageStripSize() }
-            .accessibilityLabel("Resize the page strip")
-            .accessibilityHint("Drag up for larger previews, down to hide")
+            .onTapGesture(count: 2) { togglePageSidebarSize() }
+            .accessibilityLabel("Resize the page sidebar")
+            .accessibilityHint("Drag right for larger previews")
             .accessibilityAdjustableAction { direction in
-                let step: CGFloat = 40
-                pageStripHeight = PageStripMetrics.clamped(
-                    pageStripHeight + (direction == .increment ? step : -step)
+                let step: CGFloat = 24
+                pageSidebarWidth = PageSidebarMetrics.clamped(
+                    pageSidebarWidth + (direction == .increment ? step : -step)
                 )
             }
     }
 
-    var pageStripContent: some View {
-        // Lazy, emphatically: a plain HStack builds every page's thumbnail
+    var pageSidebarContent: some View {
+        // Lazy, emphatically: a plain VStack builds every page's thumbnail
         // the moment the notebook opens, and each one decodes that page's
         // ink record and rasterizes its background. A 200-page notebook did
         // all 200 before showing anything.
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 12) {
+        ScrollViewReader { proxy in
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 12) {
                 let documents = documentsByPageID
-                let thumbnailHeight = PageStripMetrics.thumbnailHeight(for: liveStripHeight)
                 // Mid-drag the cells scale the bitmap they have; the
                 // re-render at the new size happens once, on release.
-                let renderHeight = PageStripMetrics.thumbnailHeight(for: PageStripMetrics.clamped(pageStripHeight))
+                let liveWidth = livePageSidebarWidth
+                let storedWidth = PageSidebarMetrics.clamped(pageSidebarWidth)
                 ForEach(Array(sortedPages.enumerated()), id: \.element.id) { index, page in
+                    let aspect = PageGeometry.aspectRatio(page.aspectRatio)
                     Button {
                         jumpToPage(at: index)
+                        if isCompactWidth { withAnimation(.snappy) { compactSidebarOpen = false } }
                     } label: {
                         VStack(spacing: 4) {
                             PageThumbnailView(page: page,
                                               importedDocuments: documents[page.id] ?? [],
                                               isSelected: index == currentPageIndex,
-                                              height: thumbnailHeight,
-                                              renderHeight: renderHeight)
+                                              height: PageSidebarMetrics.thumbnailHeight(sidebarWidth: liveWidth, aspect: aspect),
+                                              renderHeight: PageSidebarMetrics.thumbnailHeight(sidebarWidth: storedWidth, aspect: aspect))
                                 .overlay(alignment: .topTrailing) {
                                     if page.isBookmarked == true {
                                         Image(systemName: "bookmark.fill")
@@ -1075,21 +1089,57 @@ struct NotebookDetailView: View {
                         }
                         .disabled(sortedPages.count <= 1)
                     }
+                    .id(page.id)
                 }
+                addPageButton
             }
-            .padding(.horizontal)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+        }
+        .onAppear { scrollSidebarToCurrentPage(proxy) }
+        .onChange(of: currentPageIndex) { _, _ in scrollSidebarToCurrentPage(proxy) }
         }
     }
 
-    /// Double-tapping the grabber jumps between the size you had and a big
-    /// one, the way a double-click on a window edge does - so "let me
-    /// actually see these pages" is one gesture, not a drag.
-    func togglePageStripSize() {
+    /// Keeps the open page in view in the sidebar (deferred a tick so the
+    /// lazy stack has laid out).
+    func scrollSidebarToCurrentPage(_ proxy: ScrollViewProxy) {
+        guard sortedPages.indices.contains(currentPageIndex) else { return }
+        let id = sortedPages[currentPageIndex].id
+        DispatchQueue.main.async { proxy.scrollTo(id) }
+    }
+
+    /// A page after the current one, on the current paper - the same as
+    /// the page's own "New Page Like This".
+    @ViewBuilder
+    var addPageButton: some View {
+        Button {
+            if let page = currentPage, page.type == "paged" {
+                addPage(like: page)
+            } else {
+                addPage(type: "paged", template: AppSettings.defaultTemplate)
+            }
+            if isCompactWidth { withAnimation(.snappy) { compactSidebarOpen = false } }
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.title3)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.gray.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4])))
+                Text("Add page").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add page")
+    }
+
+    /// Double-tapping the grabber jumps between the width you had and the
+    /// widest, the way a double-click on a window edge does.
+    func togglePageSidebarSize() {
         withAnimation(.snappy) {
-            pageStripHeight = pageStripHeight < PageStripMetrics.maximumHeight - 1
-                ? PageStripMetrics.maximumHeight
-                : PageStripMetrics.defaultHeight
+            pageSidebarWidth = pageSidebarWidth < PageSidebarMetrics.maximumWidth - 1
+                ? PageSidebarMetrics.maximumWidth
+                : PageSidebarMetrics.defaultWidth
         }
     }
 

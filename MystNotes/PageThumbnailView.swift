@@ -5,35 +5,30 @@ import PencilKit
 import UIKit
 #endif
 
-/// The page strip's sizes, in one place because the view that draws the
-/// strip, the preference that persists its height and the thumbnail cells
-/// inside it all have to agree.
-///
-/// `height` throughout means the **whole strip**, chrome included, which is
-/// what the user is actually dragging. `thumbnailHeight` is what's left for
-/// the page itself.
-nonisolated enum PageStripMetrics {
-    /// The grabber, the page-number label, the gap above it and the
-    /// strip's bottom padding - everything in the strip that isn't the
-    /// page itself. 16 + 4 + ~13 + 8, with a point of slack.
-    static let chrome: CGFloat = 42
-    /// Today's strip: 80pt thumbnails, so an existing library opens
-    /// looking exactly as it did.
-    static let defaultHeight: CGFloat = 122
-    /// Below this a thumbnail stops being a legible page; dragging past it
-    /// hides the strip instead.
-    static let minimumHeight: CGFloat = 86
-    /// Past this the strip is eating the page you're drawing on.
-    static let maximumHeight: CGFloat = 340
-    /// The grab area at the top edge.
-    static let grabberHeight: CGFloat = 16
+/// The page sidebar's sizes, in one place because the view that draws it,
+/// the preference that persists its width and the cells inside it all have
+/// to agree. `width` means the whole sidebar, grabber included.
+nonisolated enum PageSidebarMetrics {
+    static let defaultWidth: CGFloat = 128
+    static let minimumWidth: CGFloat = 96
+    static let maximumWidth: CGFloat = 220
+    /// The grab area on the right edge.
+    static let grabberWidth: CGFloat = 12
+    /// Space either side of a thumbnail.
+    static let horizontalPadding: CGFloat = 8
 
-    static func clamped(_ height: CGFloat) -> CGFloat {
-        min(max(height, minimumHeight), maximumHeight)
+    static func clamped(_ width: CGFloat) -> CGFloat {
+        min(max(width, minimumWidth), maximumWidth)
     }
 
-    static func thumbnailHeight(for stripHeight: CGFloat) -> CGFloat {
-        max(clamped(stripHeight) - chrome, 24)
+    /// The width a thumbnail may take in a sidebar this wide.
+    static func thumbnailWidth(sidebarWidth: CGFloat) -> CGFloat {
+        clamped(sidebarWidth) - grabberWidth - 2 * horizontalPadding
+    }
+
+    /// The height of a page of this shape (width / height) at that width.
+    static func thumbnailHeight(sidebarWidth: CGFloat, aspect: CGFloat) -> CGFloat {
+        (thumbnailWidth(sidebarWidth: sidebarWidth) / max(aspect, 0.1)).rounded()
     }
 }
 
@@ -96,7 +91,7 @@ nonisolated enum PageThumbnailRenderer {
 
             // Rendered at the screen's scale on top of `output`, which is
             // already 2x the displayed size. That is deliberate, if dear:
-            // a page's 1pt ruling is well under a pixel at the strip's
+            // a page's 1pt ruling is well under a pixel at the sidebar's
             // scale, and at anything less than this it fades out of the
             // thumbnail altogether (`testThumbnail_showsTheTemplate`).
             let output = request.output
@@ -135,11 +130,11 @@ struct PageThumbnailView: View {
     /// This page's artwork, bottom first (`ImportedDocument.stack`).
     var importedDocuments: [ImportedDocument] = []
     var isSelected: Bool = false
-    /// How tall to draw it. The strip is resizable, so this is whatever the
+    /// How tall to draw it. The sidebar is resizable, so this is whatever the
     /// user has dragged it to; the width follows the page's own shape.
-    var height: CGFloat = PageStripMetrics.thumbnailHeight(for: PageStripMetrics.defaultHeight)
+    var height: CGFloat = 80
     /// The height to *render* for, when that isn't `height`: while the
-    /// strip is being dragged the parent holds this at the height the drag
+    /// sidebar is being dragged the parent holds this at the height the drag
     /// started from, so the bitmap is scaled rather than re-rendered every
     /// 80 px of the drag - each of those re-renders decoded every visible
     /// page's ink and rasterized its PDF, and the strip stuttered. One
@@ -155,7 +150,7 @@ struct PageThumbnailView: View {
     #endif
 
     /// The cell takes the page's own shape rather than a fixed portrait
-    /// box, so a landscape page reads as landscape in the strip instead of
+    /// box, so a landscape page reads as landscape in the sidebar instead of
     /// being letterboxed inside a tall one.
     private var cellSize: CGSize {
         CGSize(width: (height * PageGeometry.aspectRatio(page.aspectRatio)).rounded(), height: height)
@@ -207,7 +202,7 @@ struct PageThumbnailView: View {
     /// template and a landscape one don't both come back the same shape.
     ///
     /// The pixel height follows the displayed height at 2x, but in steps of
-    /// 80: dragging the strip bigger has to re-render, and without the
+    /// 80: dragging the sidebar wider has to re-render, and without the
     /// quantisation every intermediate height during the drag would be its
     /// own cache key and its own render.
     private var renderSize: CGSize {
