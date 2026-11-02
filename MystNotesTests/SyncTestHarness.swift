@@ -85,7 +85,7 @@ final class SyncTestDevice {
         // and it leaves the door open to reopen it in a durability test.
         let schema = Schema([
             Folder.self, Notebook.self, Page.self, TypedTextBlock.self,
-            ImportedDocument.self, Link.self, Sticker.self
+            ImportedDocument.self, Link.self, Sticker.self, Recording.self
         ])
         let configuration = ModelConfiguration(
             name,
@@ -215,6 +215,25 @@ final class SyncTestDevice {
         page.markModified(at: clock.now)
         try context.save()
         return doc
+    }
+
+    /// Mirrors `PageAudioController.finishRecording`: the audio file lands in
+    /// the library, a record joins the page, the page is marked modified.
+    @discardableResult
+    func addRecording(to page: Page, named fileRef: String, bytes: Data,
+                      startedAt: Date? = nil, duration: Double = 30, title: String? = nil) throws -> Recording {
+        try bytes.write(to: filesDirectory.appendingPathComponent(fileRef))
+        let recording = Recording(page: page, startedAt: startedAt ?? clock.now, duration: duration,
+                                  fileRef: fileRef, title: title)
+        context.insert(recording)
+        page.recordings?.append(recording)
+        page.markModified(at: clock.now)
+        try context.save()
+        return recording
+    }
+
+    func recordings(onPageID pageID: UUID) throws -> [Recording] {
+        Recording.ordered(try context.fetch(FetchDescriptor<Recording>()).filter { $0.page?.id == pageID })
     }
 
     /// The page's artwork, bottom first - what it would draw.

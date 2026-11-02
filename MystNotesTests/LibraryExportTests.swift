@@ -9,7 +9,7 @@ final class LibraryExportTests: XCTestCase {
 
     private static let schema = Schema([
         Folder.self, Notebook.self, Page.self, TypedTextBlock.self,
-        ImportedDocument.self, Link.self, Sticker.self
+        ImportedDocument.self, Link.self, Sticker.self, Recording.self
     ])
 
     @MainActor

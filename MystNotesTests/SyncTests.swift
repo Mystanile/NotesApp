@@ -423,6 +423,56 @@ final class SyncTests: XCTestCase {
         }
     }
 
+    /// A recording travels inside its page: the other device gets the
+    /// record with its dates, length and title, and the audio file itself,
+    /// content-addressed in `files/`.
+    func testRecording_roundTripsWithItsAudioFile() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+
+        let notebook = try ipad.createNotebook(title: "Lecture", pageCount: 1)
+        let page = try XCTUnwrap(ipad.pages(ofNotebook: notebook.id)?.first)
+        let audio = Data("fake-aac-bytes".utf8)
+        let started = Date(timeIntervalSince1970: 1_800_000_000.25)
+        let recording = try ipad.addRecording(to: page, named: "\(UUID().uuidString).m4a", bytes: audio,
+                                              startedAt: started, duration: 93.5, title: "Week 4")
+
+        harness.clock.advance(); try ipad.sync()
+        let stored = try FileManager.default.contentsOfDirectory(atPath: harness.folderFile("files").path)
+        XCTAssertTrue(stored.contains { $0.hasSuffix(".m4a") }, "the audio is a payload in files/: \(stored)")
+
+        harness.clock.advance(); try mac.sync()
+        let arrived = try mac.recordings(onPageID: page.id)
+        XCTAssertEqual(arrived.map(\.id), [recording.id])
+        let copy = try XCTUnwrap(arrived.first)
+        XCTAssertEqual(copy.duration, 93.5)
+        XCTAssertEqual(copy.title, "Week 4")
+        XCTAssertEqual(copy.fileRef, recording.fileRef)
+        XCTAssertEqual(try XCTUnwrap(copy.startedAt).timeIntervalSince1970, started.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(mac.payload(named: recording.fileRef), audio, "the second device gets the file")
+    }
+
+    /// Deleting a recording is a page edit: it reaches the other device.
+    func testRecording_deletionTravelsWithThePage() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Lecture", pageCount: 1)
+        let page = try XCTUnwrap(ipad.pages(ofNotebook: notebook.id)?.first)
+        let kept = try ipad.addRecording(to: page, named: "\(UUID().uuidString).m4a", bytes: Data("one".utf8))
+        let gone = try ipad.addRecording(to: page, named: "\(UUID().uuidString).m4a", bytes: Data("two".utf8))
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try mac.recordings(onPageID: page.id).count, 2)
+
+        harness.clock.advance()
+        Recording.delete(gone, in: ipad.context, store: DrawingStore.inDirectory(ipad.filesDirectory), now: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertEqual(try mac.recordings(onPageID: page.id).map(\.id), [kept.id])
+    }
+
     /// The order is not incidental: reading the stack back from a decoded
     /// snapshot, ties between records with no position fall back to the id
     /// on both devices, so two pre-ordering imports never swap.

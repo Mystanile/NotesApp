@@ -35,6 +35,7 @@ nonisolated enum LibraryRebuild {
         for doc in try context.fetch(FetchDescriptor<ImportedDocument>()) { context.delete(doc) }
         for block in try context.fetch(FetchDescriptor<TypedTextBlock>()) { context.delete(block) }
         for sticker in try context.fetch(FetchDescriptor<Sticker>()) { context.delete(sticker) }
+        for recording in try context.fetch(FetchDescriptor<Recording>()) { context.delete(recording) }
         try context.save()
 
         // The folder is the record now; nothing has been pulled or pushed.

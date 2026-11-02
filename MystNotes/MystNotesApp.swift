@@ -32,7 +32,8 @@ struct NotebookApp: App {
             TypedTextBlock.self,
             ImportedDocument.self,
             Link.self,
-            Sticker.self
+            Sticker.self,
+            Recording.self
         ])
 
         // SwiftData is a local, rebuildable index over the sync folder

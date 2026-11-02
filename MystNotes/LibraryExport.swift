@@ -31,6 +31,10 @@ enum LibraryExport {
                 lines.append("Nodes: " + names.joined(separator: ", "))
                 lines.append("")
             }
+            for recording in Recording.ordered(page.recordings ?? []) {
+                lines.append("Audio: \(recording.displayTitle) (\(Recording.clock(recording.duration)))")
+                lines.append("")
+            }
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }
             for block in blocks where !block.content.isEmpty {
                 lines.append(markdownLists(block.content))
@@ -61,7 +65,8 @@ enum LibraryExport {
     /// between notebooks so the app stays responsive.
     static func makeArchive(of notebooks: [Notebook], documents: [ImportedDocument],
                             in directory: URL,
-                            handwritingProfile: URL = HandwritingProfileStore.fileURL) async throws -> (folder: URL, zip: URL) {
+                            handwritingProfile: URL = HandwritingProfileStore.fileURL,
+                            localFiles: URL = FileStore.baseDirectory()) async throws -> (folder: URL, zip: URL) {
         let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
         let root = directory.appendingPathComponent("Linework Library \(stamp)", isDirectory: true)
         let fm = FileManager.default
@@ -93,6 +98,7 @@ enum LibraryExport {
                 try pdf.write(to: folder.appendingPathComponent("\(name).pdf"), options: .atomic)
             }
             try Data(markdown(for: notebook).utf8).write(to: folder.appendingPathComponent("\(name).md"), options: .atomic)
+            copyRecordings(of: notebook, from: localFiles, to: folder.appendingPathComponent(name, isDirectory: true))
             await Task.yield()
         }
 
@@ -102,6 +108,41 @@ enum LibraryExport {
         try? fm.removeItem(at: zip)
         try zipDirectory(root, to: zip)
         return (root, zip)
+    }
+
+    /// The file name a recording gets in an export: its title, made safe,
+    /// plus a short id so two recordings with one title never collide.
+    static func recordingFileName(_ recording: Recording) -> String {
+        "\(safe(recording.displayTitle)) \(recording.id.uuidString.prefix(8)).m4a"
+    }
+
+    /// Copies every page's recordings into `<destination>/Recordings/`
+    /// (invariant 9). A missing audio file is logged and skipped; nothing
+    /// in the library is moved or removed.
+    @discardableResult
+    static func copyRecordings(of notebook: Notebook, from localFiles: URL, to destination: URL) -> Int {
+        let recordings = (notebook.pages ?? []).sorted { $0.index < $1.index }
+            .flatMap { Recording.ordered($0.recordings ?? []) }
+        guard !recordings.isEmpty else { return 0 }
+        let fm = FileManager.default
+        let folder = destination.appendingPathComponent("Recordings", isDirectory: true)
+        var copied = 0
+        for recording in recordings where !recording.fileRef.isEmpty {
+            let source = localFiles.appendingPathComponent(recording.fileRef)
+            guard fm.fileExists(atPath: source.path) else {
+                AppLog.note("export", "recording file missing: \(recording.fileRef)")
+                continue
+            }
+            do {
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                let target = folder.appendingPathComponent(recordingFileName(recording))
+                if !fm.fileExists(atPath: target.path) { try fm.copyItem(at: source, to: target) }
+                copied += 1
+            } catch {
+                AppLog.note("export", "recording not copied: \(error)")
+            }
+        }
+        return copied
     }
 
     /// Copies the taught handwriting (`Handwriting/profile.json`) into an

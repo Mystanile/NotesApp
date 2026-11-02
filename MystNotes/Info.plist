@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Linework records audio only when you tap Record, and keeps it with your notes.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Linework saves exported pages to your photo library.</string>
 	<key>CFBundleDocumentTypes</key>

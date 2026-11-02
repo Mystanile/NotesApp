@@ -1055,6 +1055,9 @@ nonisolated struct SyncRunner {
         for doc in page.importedDocuments where !doc.fileRef.isEmpty {
             refs.append(PayloadRef(localName: doc.fileRef, hash: doc.fileHash, isMutable: false))
         }
+        for recording in page.recordings ?? [] where !recording.fileRef.isEmpty {
+            refs.append(PayloadRef(localName: recording.fileRef, hash: recording.fileHash, isMutable: false))
+        }
         return refs
     }
 
@@ -1268,6 +1271,11 @@ nonisolated struct SyncRunner {
                                             cropX: $0.cropX, cropY: $0.cropY,
                                             cropWidth: $0.cropWidth, cropHeight: $0.cropHeight,
                                             stackOrder: $0.stackOrder)
+                    },
+                    recordings: (page.recordings ?? []).isEmpty ? nil : Recording.ordered(page.recordings ?? []).map {
+                        RecordingDTO(id: $0.id, startedAt: $0.startedAt, duration: $0.duration,
+                                     fileRef: $0.fileRef, fileHash: hashes.hash(of: $0.fileRef, in: local),
+                                     title: $0.title)
                     }
                 )
             }
@@ -1469,6 +1477,8 @@ nonisolated struct SyncRunner {
         page.stickers = []
         for doc in docs where doc.page?.id == page.id { context.delete(doc) }
         docs.removeAll { $0.page?.id == page.id }
+        for recording in page.recordings ?? [] { context.delete(recording) }
+        page.recordings = []
         for link in links where link.sourcePageID == page.id { context.delete(link) }
         links.removeAll { $0.sourcePageID == page.id }
     }
@@ -1522,6 +1532,16 @@ nonisolated struct SyncRunner {
             doc.stackOrder = docDTO.stackOrder
             context.insert(doc)
         }
+
+        var recordings: [Recording] = []
+        for recordingDTO in pageDTO.recordings ?? [] {
+            let recording = Recording(page: page, startedAt: recordingDTO.startedAt, duration: recordingDTO.duration,
+                                      fileRef: recordingDTO.fileRef, title: recordingDTO.title)
+            recording.id = recordingDTO.id
+            context.insert(recording)
+            recordings.append(recording)
+        }
+        page.recordings = recordings
 
         for linkDTO in links where linkDTO.sourcePageID == page.id {
             let link = Link(sourcePageID: linkDTO.sourcePageID, destinationPageID: linkDTO.destinationPageID)

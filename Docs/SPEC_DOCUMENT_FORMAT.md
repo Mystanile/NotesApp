@@ -281,6 +281,18 @@ Tags are never stored as links; the graph derives them from `Page.tags`.
 
 **`Notebook.manualOrder`** (new, optional, absent before; in `NotebookIndexEntry` and `NotebookDTO`; also format 5, since no device runs format 5 yet): the notebook's position in the library's Custom sort, among the notebooks of its folder. A `Double`; smaller sorts first; nil sorts after every numbered notebook (then by `modifiedAt`, newest first). A move writes the midpoint of the new neighbours (or the end neighbour -/+ 1.0) and, when the gap falls below 1e-6, renumbers the whole level 1, 2, 3... Every write goes through `markSettingsModified(at:liftModifiedAt: false)` (so a reorder doesn't change the notebook's Edited date), so it merges on `settingsModifiedAt` with the title and cover. The index signature needs no change: a changed order moves `settingsModifiedAt`. Moving a notebook to another folder clears its `manualOrder`.
 
+**`PageDTO.recordings`** (new, optional, absent before and when a page has none; also format 5, since no device runs format 5 yet): audio recorded while writing, an array of `RecordingDTO`:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable record id |
+| `startedAt` | Wall-clock start (`SnapshotDates` string, ms). Strokes carry creation dates; `startedAt` plus a stroke's date minus it is the stroke's offset in the audio, which is how playback follows the ink |
+| `duration` | Seconds |
+| `fileRef` / `fileHash` | Local name (`<uuid>.m4a`, AAC 44.1 kHz mono) and SHA-256. The payload is `files/<hash>.m4a`, content-addressed, immutable, copied exactly like an imported document's file |
+| `title` | Optional name |
+
+Recordings travel inside their page, so they merge with it (per-page last-writer-wins on `modifiedAt`) and are never merged on their own. Adding or deleting one calls `Page.markModified`. Deleting moves the file to `trash/` unless another recording still names it. A format-4 build would drop `recordings` on its next write of the page, hence the same format bump. Exports put the files in `<Notebook>/Recordings/` and list `Audio: <title> (<m:ss>)` under the page in the Markdown. Backups carry them because a backup is a sync folder.
+
 **Folder order is not in the format.** Folders have no settings clock: they merge as a flat upsert by id, so a synced `manualOrder` would last-writer-win across unrelated edits and could not be compared. Folder Custom order is therefore per device, in `AppSettings` (`libraryFolderOrder`, JSON `{"<folder id>": Double}`). Sort key, direction and grid/list choice are per device too. Revisit if folders ever get a settings clock.
 
 

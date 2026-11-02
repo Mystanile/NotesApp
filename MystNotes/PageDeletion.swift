@@ -36,6 +36,15 @@ enum PageDeletion {
             drawingStore.trashPayload(named: ref)
         }
 
+        // Its audio, the same way: to trash/ unless another page's
+        // recording names the same file.
+        let recordings = (try? context.fetch(FetchDescriptor<Recording>())) ?? []
+        let recordingRefsHere = Set(recordings.filter { $0.page?.id == page.id }.map(\.fileRef))
+        let recordingRefsElsewhere = Set(recordings.filter { $0.page?.id != page.id }.map(\.fileRef))
+        for ref in recordingRefsHere.subtracting(recordingRefsElsewhere) where !ref.isEmpty {
+            drawingStore.trashPayload(named: ref)
+        }
+
         notebook.pages?.removeAll { $0.id == page.id }
         context.delete(page) // cascades to its TypedTextBlocks/Stickers
         // So sync removes it elsewhere instead of bringing it back from

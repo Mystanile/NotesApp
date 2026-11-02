@@ -157,6 +157,11 @@ final class Page {
     @Relationship(deleteRule: .cascade, inverse: \ImportedDocument.page)
     var importedDocuments: [ImportedDocument]? = []
 
+    /// Audio recorded while writing on this page (M3 seed). Travels with
+    /// the page in sync; the audio files are content-addressed payloads.
+    @Relationship(deleteRule: .cascade, inverse: \Recording.page)
+    var recordings: [Recording]? = []
+
     init(index: Int = 0, type: String = "paged", template: String = "blank", notebook: Notebook? = nil) {
         self.id = UUID()
         self.index = index
@@ -324,6 +329,81 @@ extension ImportedDocument {
             result[id]?.sort { ($0.stackOrder ?? 0, $0.id.uuidString) < ($1.stackOrder ?? 0, $1.id.uuidString) }
         }
         return result
+    }
+}
+
+// MARK: - Recording
+
+/// One audio recording made on a page. The audio is `<uuid>.m4a` in
+/// Documents, named by `fileRef`; `startedAt` is the wall-clock moment the
+/// recording began, which is what lines it up with stroke creation dates
+/// (`InkTimeline`). All properties optional or defaulted (invariant 11).
+/// Change a recording only together with `Page.markModified()`.
+@Model
+final class Recording {
+    var id: UUID = UUID()
+    var page: Page?
+    var startedAt: Date?
+    /// Seconds.
+    var duration: Double = 0
+    var fileRef: String = ""
+    var title: String?
+    var createdAt: Date = Date()
+
+    init(page: Page? = nil, startedAt: Date? = nil, duration: Double = 0,
+         fileRef: String = "", title: String? = nil) {
+        self.id = UUID()
+        self.page = page
+        self.startedAt = startedAt
+        self.duration = duration
+        self.fileRef = fileRef
+        self.title = title
+        self.createdAt = Date()
+    }
+}
+
+extension Recording {
+    /// The page's recordings, oldest first (ties by id, so every device
+    /// lists them alike).
+    static func ordered(_ recordings: [Recording]) -> [Recording] {
+        recordings.sorted {
+            ($0.startedAt ?? $0.createdAt, $0.id.uuidString) < ($1.startedAt ?? $1.createdAt, $1.id.uuidString)
+        }
+    }
+
+    /// "Recording 2:05" style name when the user has not named it.
+    var displayTitle: String {
+        if let title, !title.isEmpty { return title }
+        let date = startedAt ?? createdAt
+        return "Recording " + date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// "m:ss" (or "h:mm:ss") for a number of seconds.
+    static func clock(_ seconds: Double) -> String {
+        let total = Int(max(0, seconds).rounded())
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// Moves the file to `trash/` unless another recording still names it
+    /// (invariant 3: never `removeItem`). Call after deleting the record
+    /// from `context` has been decided; pass the recordings that remain.
+    static func trashFileIfUnused(_ fileRef: String, remaining: [Recording], store: DrawingStore) {
+        guard !fileRef.isEmpty, !remaining.contains(where: { $0.fileRef == fileRef }) else { return }
+        store.trashPayload(named: fileRef)
+    }
+
+    /// Deletes one recording: the record, a `markModified` on its page so
+    /// the deletion syncs, and the file to `trash/` if no other recording
+    /// shares it. The caller saves.
+    static func delete(_ recording: Recording, in context: ModelContext, store: DrawingStore, now: Date = Date()) {
+        let ref = recording.fileRef
+        let page = recording.page
+        page?.recordings?.removeAll { $0.id == recording.id }
+        context.delete(recording)
+        page?.markModified(at: now)
+        let all = (try? context.fetch(FetchDescriptor<Recording>())) ?? []
+        trashFileIfUnused(ref, remaining: all.filter { $0.id != recording.id }, store: store)
     }
 }
 

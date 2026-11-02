@@ -16,6 +16,7 @@ struct LibraryView: View {
     @Query(sort: \Folder.name) private var allFolders: [Folder]
     @Query(sort: \Notebook.title) private var storedNotebooks: [Notebook]
     @Query private var allImportedDocuments: [ImportedDocument]
+    @Query private var allRecordings: [Recording]
 
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
@@ -1080,6 +1081,16 @@ struct LibraryView: View {
         let refsInside = Set(allImportedDocuments.filter(belongsToDeletedPage).map(\.fileRef))
         let refsOutside = Set(allImportedDocuments.filter { !belongsToDeletedPage($0) }.map(\.fileRef))
         for ref in refsInside.subtracting(refsOutside) where !ref.isEmpty {
+            store.trashPayload(named: ref)
+        }
+
+        // Recorded audio goes the same way.
+        func recordingBelongsToDeletedPage(_ recording: Recording) -> Bool {
+            recording.page.map { pageIDs.contains($0.id) } ?? false
+        }
+        let audioInside = Set(allRecordings.filter(recordingBelongsToDeletedPage).map(\.fileRef))
+        let audioOutside = Set(allRecordings.filter { !recordingBelongsToDeletedPage($0) }.map(\.fileRef))
+        for ref in audioInside.subtracting(audioOutside) where !ref.isEmpty {
             store.trashPayload(named: ref)
         }
     }

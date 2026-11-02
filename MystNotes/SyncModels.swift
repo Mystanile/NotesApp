@@ -42,6 +42,9 @@ import CryptoKit
 /// No device runs format 5 yet, so this stays one version. Folders have no
 /// settings clock (flat upsert), so their custom order is per device in
 /// `AppSettings`, not here.
+/// Also in 5: `PageDTO.recordings` (audio recorded on a page; each file is a
+/// content-addressed payload in `files/`). A format-4 build would drop them
+/// on its next write of the page. Still one version for the same reason.
 let librarySnapshotFormatVersion = 5
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
@@ -349,6 +352,20 @@ nonisolated struct PageDTO: Codable {
     var textBlocks: [TextBlockDTO]
     var stickers: [StickerDTO]
     var importedDocuments: [ImportedDocumentDTO]
+    /// Format 5: audio recorded on this page. Absent before and when there
+    /// is none. Travels with the page, so it merges at page granularity.
+    var recordings: [RecordingDTO]? = nil
+}
+
+nonisolated struct RecordingDTO: Codable {
+    var id: UUID
+    /// Encoded with `SnapshotDates` like every other date in a snapshot.
+    var startedAt: Date?
+    var duration: Double
+    var fileRef: String
+    /// See `PageDTO.drawingHash`.
+    var fileHash: String?
+    var title: String?
 }
 
 nonisolated struct TextBlockDTO: Codable {
