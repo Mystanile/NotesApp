@@ -49,6 +49,106 @@ enum Links {
         return link
     }
 
+    // MARK: Transclusion
+
+    /// What undoing a transclusion's removal needs: the link's own identity
+    /// and where it sat, as plain values.
+    struct TransclusionSnapshot: Equatable {
+        var id: UUID
+        var hostPageID: UUID
+        var nodeID: UUID
+        var frame: CGRect
+    }
+
+    static func isTransclusion(_ link: Link) -> Bool { link.kind == "transclusion" }
+
+    /// The node a transclusion shows, found among `links`. nil while the
+    /// node has not arrived (sync order) or is deleted.
+    static func node(for transclusion: Link, in links: [Link]) -> Link? {
+        guard isTransclusion(transclusion), let key = transclusion.destinationID else { return nil }
+        return links.first { isNode($0) && $0.id.uuidString == key }
+    }
+
+    /// A frame for a new transclusion of `node`, centred on `center` (page
+    /// points): the node's own shape, the longer side `longSide`, shrunk to
+    /// fit inside `pageSize` and kept on the page.
+    static func transclusionFrame(for node: Link, centeredAt center: CGPoint, pageSize: CGSize,
+                                  longSide: CGFloat = 300) -> CGRect {
+        let w = max(node.anchorWidth, 1), h = max(node.anchorHeight, 1)
+        var factor = longSide / max(w, h)
+        if pageSize.width > 0, pageSize.height > 0 {
+            factor = min(factor, pageSize.width * 0.9 / w, pageSize.height * 0.9 / h)
+        }
+        let size = CGSize(width: max(w * factor, 40), height: max(h * factor, 40))
+        var origin = CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2)
+        if pageSize.width > 0, pageSize.height > 0 {
+            origin.x = min(max(origin.x, 0), max(pageSize.width - size.width, 0))
+            origin.y = min(max(origin.y, 0), max(pageSize.height - size.height, 0))
+        }
+        return CGRect(origin: origin, size: size)
+    }
+
+    /// Shows `node`'s ink on `host` at `frame` (host page points). The link
+    /// lives on the host, points its destination at the node's page, and has
+    /// no strokes of its own: the node owns the list. Marks the host and
+    /// saves. `id` restores a removed one under its old identity.
+    @discardableResult
+    static func addTransclusion(of node: Link, onto host: Page, frame: CGRect,
+                                in context: ModelContext, now: Date = Date(), id: UUID? = nil) -> Link {
+        let link = Link(sourcePageID: host.id, destinationPageID: node.sourcePageID)
+        if let id { link.id = id }
+        link.kind = "transclusion"
+        link.destinationKind = "region"
+        link.destinationID = node.id.uuidString
+        setFrame(link, frame)
+        context.insert(link)
+        host.markModified(at: now)
+        try? context.save()
+        return link
+    }
+
+    /// Moves or resizes a transclusion. Marks the host and saves.
+    static func moveTransclusion(_ link: Link, to frame: CGRect, in context: ModelContext, now: Date = Date()) {
+        setFrame(link, frame)
+        markSources([link.sourcePageID], in: context, now: now)
+        try? context.save()
+    }
+
+    /// Takes a transclusion off its host. Marks the host, saves, and returns
+    /// what `restoreTransclusion` needs. The node and its ink are untouched.
+    @discardableResult
+    static func removeTransclusion(_ link: Link, in context: ModelContext, now: Date = Date()) -> TransclusionSnapshot {
+        let snapshot = TransclusionSnapshot(
+            id: link.id, hostPageID: link.sourcePageID,
+            nodeID: UUID(uuidString: link.destinationID ?? "") ?? UUID(),
+            frame: CGRect(x: link.anchorX, y: link.anchorY, width: link.anchorWidth, height: link.anchorHeight))
+        let host = link.sourcePageID
+        context.delete(link)
+        markSources([host], in: context, now: now)
+        try? context.save()
+        return snapshot
+    }
+
+    /// Undo of `removeTransclusion`: the same link, under its old id. nil
+    /// when the host page or the node is gone by now.
+    @discardableResult
+    static func restoreTransclusion(_ snapshot: TransclusionSnapshot, in context: ModelContext,
+                                    now: Date = Date()) -> Link? {
+        let pages = (try? context.fetch(FetchDescriptor<Page>())) ?? []
+        let links = (try? context.fetch(FetchDescriptor<Link>())) ?? []
+        guard let host = pages.first(where: { $0.id == snapshot.hostPageID }),
+              let node = links.first(where: { isNode($0) && $0.id == snapshot.nodeID }),
+              !links.contains(where: { $0.id == snapshot.id }) else { return nil }
+        return addTransclusion(of: node, onto: host, frame: snapshot.frame, in: context, now: now, id: snapshot.id)
+    }
+
+    private static func setFrame(_ link: Link, _ frame: CGRect) {
+        link.anchorX = Double(frame.minX)
+        link.anchorY = Double(frame.minY)
+        link.anchorWidth = Double(frame.width)
+        link.anchorHeight = Double(frame.height)
+    }
+
     /// Renames a link's title. Empty or whitespace-only is refused (false,
     /// nothing changed). Saves.
     @discardableResult

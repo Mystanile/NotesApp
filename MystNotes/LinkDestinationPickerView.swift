@@ -12,6 +12,10 @@ struct LinkDestinationPickerView: View {
     /// Every link in the library; its nodes fill the "Nodes" section.
     var links: [Link] = []
     var currentNotebookID: UUID? = nil
+    /// Insert ▸ Node…: only the Nodes section, across the whole library; a
+    /// node whose ink is gone cannot be picked. `NodePickerSheet` is the
+    /// wrapper that fills this in.
+    var nodesOnly = false
     /// (destination page, the node picked instead of the page, if any).
     var onSelect: (UUID, UUID?) -> Void
 
@@ -53,7 +57,11 @@ struct LinkDestinationPickerView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(Array(pages.enumerated()), id: \.element.id) { index, page in
+                if nodesOnly && choices.isEmpty {
+                    ContentUnavailableView("No Nodes Yet", systemImage: "scribble",
+                                           description: Text("Lasso some ink and choose Make Node."))
+                }
+                ForEach(Array((nodesOnly ? [] : pages).enumerated()), id: \.element.id) { index, page in
                     Button {
                         onSelect(page.id, nil)
                         dismiss()
@@ -85,10 +93,11 @@ struct LinkDestinationPickerView: View {
                                 .foregroundStyle(isGone ? Color.secondary : Color.primary)
                             }
                             .buttonStyle(.plain)
+                            .disabled(nodesOnly && isGone)
                         }
                     }
                 }
-                let others = Self.otherNotebooks(PageTemplates.libraryNotebooks(notebooks), excluding: currentNotebookID)
+                let others = nodesOnly ? [] : Self.otherNotebooks(PageTemplates.libraryNotebooks(notebooks), excluding: currentNotebookID)
                 if !others.isEmpty {
                     Section("Other Notebooks") {
                         ForEach(others, id: \.id) { other in
@@ -117,7 +126,7 @@ struct LinkDestinationPickerView: View {
                 let gone = await NodeInk.goneDetached(probes).value
                 if !Task.isCancelled { goneNodeIDs = gone }
             }
-            .navigationTitle("Link to Page")
+            .navigationTitle(nodesOnly ? "Insert Node" : "Link to Page")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

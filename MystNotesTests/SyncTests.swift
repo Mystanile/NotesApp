@@ -1610,6 +1610,106 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(arrived.strokeIDs, ["S1"])
     }
 
+    // MARK: Transclusion (M2 task 9)
+
+    private func transclusions(on device: SyncTestDevice) throws -> [Link] {
+        try device.context.fetch(FetchDescriptor<Link>()).filter { Links.isTransclusion($0) }
+    }
+
+    /// The node is on the other device before the transclusion that shows it.
+    func testTransclusion_syncs_whenItsNodeWasPushedFirst() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Transclude", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).sorted { $0.index < $1.index }
+        let owner = pages[0], host = pages[1]
+        harness.clock.advance()
+        let node = Links.makeNode(on: owner, strokeIDs: ["S1"], title: "Chain rule",
+                                  anchor: CGRect(x: 1, y: 2, width: 30, height: 40), in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance()
+        let made = Links.addTransclusion(of: node, onto: host, frame: CGRect(x: 50, y: 60, width: 200, height: 100),
+                                         in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try transclusions(on: mac).first { $0.id == made.id })
+        XCTAssertEqual(arrived.sourcePageID, host.id)
+        XCTAssertEqual(arrived.destinationPageID, owner.id)
+        XCTAssertEqual(arrived.destinationKind, "region")
+        XCTAssertEqual(arrived.destinationID, node.id.uuidString)
+        XCTAssertEqual(arrived.anchorWidth, 200)
+        XCTAssertNil(arrived.strokeIDs, "the node owns the stroke list")
+        let macLinks = try mac.context.fetch(FetchDescriptor<Link>())
+        XCTAssertEqual(Links.node(for: arrived, in: macLinks)?.id, node.id, "resolves")
+    }
+
+    /// The transclusion is pushed while its node is not (the owner page was not
+    /// touched), then the node follows: it resolves once both are there.
+    func testTransclusion_syncs_beforeItsNode_andResolvesWhenTheNodeArrives() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Transclude", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).sorted { $0.index < $1.index }
+        let owner = pages[0], host = pages[1]
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        // A node inserted without marking its page: it does not travel yet.
+        harness.clock.advance()
+        let node = Link(sourcePageID: owner.id, destinationPageID: owner.id)
+        node.kind = "node"
+        node.destinationKind = "region"
+        node.strokeIDs = ["S1"]
+        node.title = "Late node"
+        ipad.context.insert(node)
+        let made = Links.addTransclusion(of: node, onto: host, frame: CGRect(x: 10, y: 10, width: 100, height: 80),
+                                         in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertNotNil(try transclusions(on: mac).first { $0.id == made.id }, "the transclusion arrived")
+
+        harness.clock.advance()
+        owner.markModified(at: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try transclusions(on: mac).first { $0.id == made.id })
+        let macLinks = try mac.context.fetch(FetchDescriptor<Link>())
+        XCTAssertEqual(Links.node(for: arrived, in: macLinks)?.title, "Late node")
+    }
+
+    /// Deleting the owner page removes the transclusion that shows its ink,
+    /// on the other device too (`Links.removeAll(touching:)` covers a link's
+    /// destination page, and marks the host so it ships).
+    func testTransclusion_isRemovedOnTheOtherDevice_whenItsOwnerPageIsDeleted() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Transclude", pageCount: 2)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).sorted { $0.index < $1.index }
+        let owner = pages[0], host = pages[1]
+        harness.clock.advance()
+        let node = Links.makeNode(on: owner, strokeIDs: ["S1"], title: "Gone soon",
+                                  anchor: CGRect(x: 0, y: 0, width: 30, height: 30), in: ipad.context, now: harness.clock.now)
+        Links.addTransclusion(of: node, onto: host, frame: CGRect(x: 0, y: 0, width: 90, height: 90),
+                              in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertEqual(try transclusions(on: mac).count, 1)
+
+        harness.clock.advance()
+        Links.removeAll(touching: [owner.id], in: ipad.context, now: harness.clock.now)
+        try ipad.deletePage(owner)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertEqual(try transclusions(on: mac).count, 0, "the transclusion is gone with its owner")
+        XCTAssertEqual(try transclusions(on: ipad).count, 0)
+    }
+
     /// A format-4 link has no title key and still decodes.
     func testLinkDTO_fromFormat4_decodesWithNilTitle() throws {
         let json = """

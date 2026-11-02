@@ -145,7 +145,39 @@ final class BitmapStore<Request: Hashable & Sendable> {
     }
 }
 
-/// The app's two bitmap stores. A generic type can't hold static stored
+/// A node's ink as it is shown on another page. `size` is not part of the
+/// key on purpose: the bitmap is the region at a fixed 2.5x and the view
+/// scales it, so resizing a transclusion never re-renders. The owner's
+/// `modifiedAt` and ink file are, so editing or pulling the owner does.
+nonisolated struct TransclusionRequest: Hashable, Sendable {
+    var ownerPageID: UUID
+    var ownerModifiedAt: Date?
+    var ownerDrawingFileRef: String?
+    /// The node's stroke ids, sorted.
+    var strokeIDs: [String]
+}
+
+/// Renders a transclusion's bitmap: the owner's strokes only, read from its
+/// record alone (`DrawingStore.regionInk`), never the owner's elements.
+nonisolated enum TransclusionRenderer {
+    /// 2.5x, to stay sharp under the page's zoom (`scaleEffect`).
+    static let scale: CGFloat = 2.5
+
+    static func render(_ request: TransclusionRequest) async -> UIImage? {
+        let ids = Set(request.strokeIDs.compactMap(UUID.init(uuidString:)))
+        guard !ids.isEmpty else { return nil }
+        let pageID = request.ownerPageID
+        // Exactly one hop onto the ink render queue, which does the read and
+        // the PencilKit render together (CLAUDE.md: never PKDrawing.image on
+        // the cooperative pool, and never nest `InkRenderQueue.run`).
+        return await InkRenderQueue.run { () -> UIImage? in
+            guard let ink = DrawingStore.regionInk(pageID: pageID, ids: ids) else { return nil }
+            return PageElements.transclusionImage(strokes: ink.strokes, bounds: ink.bounds, scale: scale)
+        }
+    }
+}
+
+/// The app's bitmap stores. A generic type can't hold static stored
 /// properties, so they live here.
 enum PageBitmaps {
     /// Full-page imported artwork, oversampled for zoom. A page at 2.5x is
@@ -161,6 +193,12 @@ enum PageBitmaps {
     /// and every scroll of the strip decoded each page's ink record again.
     static let thumbnails = BitmapStore<PageThumbnailRequest>(byteLimit: 24 * 1024 * 1024) { request in
         await PageThumbnailRenderer.render(request)
+    }
+
+    /// Transcluded ink at 2.5x, transparent. A region is usually a few
+    /// hundred points across (about 1 MB); the budget holds a page's worth.
+    static let transclusions = BitmapStore<TransclusionRequest>(byteLimit: 32 * 1024 * 1024) { request in
+        await TransclusionRenderer.render(request)
     }
 }
 #endif

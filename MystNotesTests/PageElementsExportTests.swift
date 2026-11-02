@@ -2,6 +2,7 @@ import XCTest
 import SwiftData
 import PDFKit
 import UIKit
+import PencilKit
 @testable import Mystnotes
 
 /// Stickers, link anchors and typed text reach exports and thumbnails
@@ -99,6 +100,54 @@ final class PageElementsExportTests: XCTestCase {
         let image = try XCTUnwrap(rendered)
         let textRegion = CGRect(x: 20, y: 20, width: 300, height: 60)   // in thumbnail points
         XCTAssertGreaterThan(try inkedPixels(in: textRegion, of: image), 500, "no text in the thumbnail")
+    }
+
+    /// A transcluded node's ink is in the export, inside its frame; once the
+    /// owner's strokes are erased the frame holds the dashed placeholder.
+    @MainActor
+    func testImageExport_drawsTranscludedInk_andThePlaceholderAfterErase() throws {
+        let (context, host, owner) = try twoPages()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TransclusionExport-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DrawingStore.inDirectory(directory)
+
+        let drawing = TransclusionTests.makeDrawing(strokes: 4)
+        try store.save(drawing, pageID: owner.id)
+        let map = store.ids.map(for: owner.id)
+        let picked = [drawing.strokes[1], drawing.strokes[2]]
+        let ids = try picked.map { try XCTUnwrap(map.existingID(for: $0)).uuidString }
+        let node = Links.makeNode(on: owner, strokeIDs: ids, title: "Chain", anchor: PKDrawing(strokes: picked).bounds, in: context)
+        let frame = CGRect(x: 100, y: 200, width: 300, height: 200)
+        Links.addTransclusion(of: node, onto: host, frame: frame, in: context)
+
+        func export() throws -> UIImage {
+            let links = try context.fetch(FetchDescriptor<Link>())
+            var elements = PageElements()
+            elements.transclusions = PageElements.resolveTransclusions(hostedOn: host.id, links: links, owners: [owner.id: owner])
+            let size = CGSize(width: 800, height: 1000)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                UIColor.white.setFill()
+                renderer.fill(CGRect(origin: .zero, size: size))
+                elements.draw(in: size, regionInk: { store.readRegionInk(pageID: $0, ids: $1) })
+            }
+        }
+        let topEdge = CGRect(x: frame.minX + 10, y: frame.minY, width: frame.width - 20, height: 3)
+
+        let withInk = try export()
+        XCTAssertGreaterThan(try inkedPixels(in: frame, of: withInk), 400, "no owner ink in the export")
+        XCTAssertLessThan(try inkedPixels(in: topEdge, of: withInk), 5, "no placeholder while the ink is there")
+        XCTAssertEqual(try inkedPixels(in: CGRect(x: 500, y: 600, width: 200, height: 200), of: withInk), 0,
+                       "nothing outside the frame")
+
+        // Erase both of the node's strokes.
+        try store.save(PKDrawing(strokes: [drawing.strokes[0], drawing.strokes[3]]), pageID: owner.id)
+        let erased = try export()
+        XCTAssertGreaterThan(try inkedPixels(in: topEdge, of: erased), 100, "no dashed placeholder after the erase")
+        XCTAssertNotNil(node.modelContext, "nothing is deleted because the ink is gone")
     }
 
     /// A turned sticker exports turned: a wide symbol at 90 degrees is tall.

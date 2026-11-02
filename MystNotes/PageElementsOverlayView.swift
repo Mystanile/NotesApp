@@ -17,6 +17,7 @@ struct PageElementsOverlayView: View {
     var scale: CGFloat = 1
 
     @Query private var allLinks: [Link]
+    @Environment(\.modelContext) private var modelContext
 
     var onNavigateToPage: (UUID) -> Void
     var onMention: (UUID, UUID, String) -> Void = { _, _, _ in }
@@ -32,13 +33,37 @@ struct PageElementsOverlayView: View {
     var onShowPageMap: () -> Void = {}
     /// Undoable delete; the detail view owns the undo stack.
     var onDeleteNode: (Link) -> Void = { _ in }
+    /// Tap a transcluded node's ink -> Open Source: jump to the owner's page.
+    var onOpenTransclusionSource: (UUID) -> Void = { _ in }
+    /// Remove a transclusion. Pass one to make it undoable (take the
+    /// snapshot from `Links.removeTransclusion`); without it the overlay
+    /// removes it and does not offer undo.
+    var onRemoveTransclusion: ((Link) -> Void)? = nil
 
     private var links: [Link] {
         allLinks.filter { $0.sourcePageID == page.id }
     }
 
+    private func removeTransclusion(_ link: Link) {
+        if let onRemoveTransclusion {
+            onRemoveTransclusion(link)
+        } else {
+            Links.removeTransclusion(link, in: modelContext)
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // Transcluded ink sits under the page's own elements.
+            #if canImport(UIKit)
+            ForEach(links.filter(Links.isTransclusion), id: \.id) { link in
+                TransclusionElementView(
+                    link: link, scale: scale, onOpenSource: onOpenTransclusionSource,
+                    onRemove: removeTransclusion
+                )
+            }
+            #endif
+
             ForEach(page.textBlocks ?? [], id: \.id) { block in
                 TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onTextCommit: onTextCommit, onSave: onSave,
                               onDelete: onDeleteTextBlock)

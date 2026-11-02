@@ -16,6 +16,14 @@ enum LibraryExport {
         let pageIDs = Set(pages.map(\.id))
         let allLinks = links ?? ((try? notebook.modelContext?.fetch(FetchDescriptor<Link>())) ?? [])
         let nodes = allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
+        let transclusions = allLinks.filter { Links.isTransclusion($0) && pageIDs.contains($0.sourcePageID) }
+        var owners: [UUID: Page] = [:]
+        if !transclusions.isEmpty {
+            let wanted = Set(transclusions.map(\.destinationPageID))
+            for page in (try? notebook.modelContext?.fetch(FetchDescriptor<Page>())) ?? [] where wanted.contains(page.id) {
+                owners[page.id] = page
+            }
+        }
         for (offset, page) in pages.enumerated() {
             let name = page.title.map { ": \($0)" } ?? ""
             lines.append("## Page \(offset + 1)\(name)")
@@ -29,6 +37,17 @@ enum LibraryExport {
                 .compactMap(\.title)
             if !names.isEmpty {
                 lines.append("Nodes: " + names.joined(separator: ", "))
+                lines.append("")
+            }
+            // What this page shows of other pages' ink. The title is the
+            // node's; where it lives is the owner's notebook and page.
+            for transclusion in transclusions.filter({ $0.sourcePageID == page.id })
+                .sorted(by: { ($0.anchorY, $0.anchorX) < ($1.anchorY, $1.anchorX) }) {
+                let node = Links.node(for: transclusion, in: allLinks)
+                let owner = owners[transclusion.destinationPageID]
+                let title = node?.title ?? "Node"
+                let place = owner.map { "\($0.notebook?.title ?? "Notebook") \u{00B7} p. \($0.index + 1)" } ?? "page not found"
+                lines.append("Transcluded: \(title) (\(place))")
                 lines.append("")
             }
             for recording in Recording.ordered(page.recordings ?? []) {

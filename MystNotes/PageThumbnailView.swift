@@ -144,6 +144,14 @@ struct PageThumbnailView: View {
     /// page's ink and rasterized its PDF, and the strip stuttered. One
     /// render at the final size, when the finger lifts.
     var renderHeight: CGFloat? = nil
+    /// The node ink shown on this page, resolved by the parent from the
+    /// links and pages it already holds (`PageElements.resolveTransclusions`)
+    /// - a cell fetching them itself would be a query per cell. Empty draws
+    /// none. Their owner stamps are in the request's hash, so a thumbnail
+    /// re-renders when the owner is edited.
+    #if canImport(UIKit)
+    var transclusions: [PageElements.Transclusion] = []
+    #endif
 
     /// Observed only so the body (and the request's paper) refreshes when Settings changes.
     @AppStorage(AppSettings.Keys.paperColor) private var paperColorRaw = PaperColor.white.rawValue
@@ -221,6 +229,12 @@ struct PageThumbnailView: View {
         return CGSize(width: max((nominal.width * scale).rounded(), 1), height: output)
     }
 
+    private var elementsWithTransclusions: PageElements {
+        var elements = PageElements(page: page, links: [])
+        elements.transclusions = transclusions
+        return elements
+    }
+
     var thumbnailRequest: PageThumbnailRequest {
         PageThumbnailRequest(
             pageID: page.id,
@@ -230,7 +244,7 @@ struct PageThumbnailView: View {
             artwork: ArtworkLayer.stack(for: page, documents: importedDocuments),
             // No links: an anchor is a speck at this size, and fetching them
             // here would be a query per cell.
-            elements: PageElements(page: page, links: []),
+            elements: elementsWithTransclusions,
             nominal: nominalPageSize, output: renderSize,
             paper: PaperStyle.resolve(colorRaw: paperColorRaw, spacingRaw: lineSpacingRaw)
         )
