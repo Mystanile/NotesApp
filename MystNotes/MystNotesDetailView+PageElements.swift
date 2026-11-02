@@ -364,13 +364,14 @@ extension NotebookDetailView {
 
     var nodeSetKey: NodeSetKey {
         var fingerprint = 0
-        for link in allLinks where Links.isNode(link) { fingerprint ^= link.id.hashValue }
+        for link in allLinks where Links.isNode(link) || Links.isTape(link) { fingerprint ^= link.id.hashValue }
         return NodeSetKey(linkCount: allLinks.count, nodeFingerprint: fingerprint, pageCount: notebook.pages?.count ?? 0)
     }
 
     func refreshNodeCache() {
         let pageIDs = Set((notebook.pages ?? []).map(\.id))
         nodeCache = allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
+        tapeCache = allLinks.filter { Links.isTape($0) && pageIDs.contains($0.sourcePageID) }
     }
 
     /// What `.task(id:)` watches to re-probe the nodes' ink: the node set,
@@ -384,11 +385,13 @@ extension NotebookDetailView {
     }
 
     var goneNodesKey: GoneNodesKey {
-        let nodePageIDs = Set(nodeCache.map(\.sourcePageID))
+        // Nodes and tape are probed the same way: do the strokes still resolve?
+        let probed = nodeCache + tapeCache
+        let nodePageIDs = Set(probed.map(\.sourcePageID))
         let skipped = canvasIsDirty ? canvasPageID : nil
         let pages = (notebook.pages ?? []).filter { nodePageIDs.contains($0.id) && $0.id != skipped }
             .sorted { $0.id.uuidString < $1.id.uuidString }
-        return GoneNodesKey(nodeIDs: nodeCache.map(\.id).sorted { $0.uuidString < $1.uuidString },
+        return GoneNodesKey(nodeIDs: probed.map(\.id).sorted { $0.uuidString < $1.uuidString },
                             stamps: pages.map(\.modifiedAt))
     }
 
@@ -399,7 +402,7 @@ extension NotebookDetailView {
     func refreshGoneNodes() async {
         try? await Task.sleep(for: .seconds(2))
         if Task.isCancelled { return }
-        let byPage = Dictionary(grouping: NodeInk.probes(of: nodeCache), by: \.pageID)
+        let byPage = Dictionary(grouping: NodeInk.probes(of: nodeCache + tapeCache), by: \.pageID)
         var cache = goneCache.filter { byPage[$0.key] != nil }
         let drawingOn = canvasIsDirty ? canvasPageID : nil
         for (pageID, probes) in byPage where pageID != drawingOn {
@@ -412,6 +415,147 @@ extension NotebookDetailView {
         if cache != goneCache { goneCache = cache }
         let gone = cache.values.reduce(into: Set<UUID>()) { $0.formUnion($1.gone) }
         if gone != goneNodeIDs { goneNodeIDs = gone }
+    }
+
+    // MARK: - Transclusion (Insert > Node...)
+
+    /// Insert > Node...: shows `node`'s ink on `page`, centred on what is on
+    /// screen. One undo step takes it away again.
+    func addTransclusion(of node: Link, onto page: Page) {
+        guard page.type != "whiteboard" else { return }
+        let center = viewport.pagePoint(from: CGPoint(x: canvasView.bounds.midX, y: canvasView.bounds.midY))
+        let frame = Links.transclusionFrame(for: node, centeredAt: center, pageSize: PageGeometry.contentSize(for: page))
+        let link = Links.addTransclusion(of: node, onto: page, frame: frame, in: modelContext)
+        registerTransclusionUndo(Self.transclusionSnapshot(of: link), restore: false)
+    }
+
+    /// The overlay's Remove: takes the transclusion off the page; undo puts
+    /// the same link back under its old id.
+    func removeTransclusion(_ link: Link, on page: Page) {
+        let snapshot = Links.removeTransclusion(link, in: modelContext)
+        registerTransclusionUndo(snapshot, restore: true)
+    }
+
+    static func transclusionSnapshot(of link: Link) -> Links.TransclusionSnapshot {
+        Links.TransclusionSnapshot(
+            id: link.id, hostPageID: link.sourcePageID,
+            nodeID: UUID(uuidString: link.destinationID ?? "") ?? UUID(),
+            frame: CGRect(x: link.anchorX, y: link.anchorY, width: link.anchorWidth, height: link.anchorHeight))
+    }
+
+    /// Registers the inverse of a change that has just been made: `restore`
+    /// true means the next undo puts the transclusion back, false that it
+    /// takes it off. Each step registers its own inverse, so redo works.
+    private func registerTransclusionUndo(_ snapshot: Links.TransclusionSnapshot, restore: Bool) {
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in
+            if restore {
+                if Links.restoreTransclusion(snapshot, in: modelContext) != nil {
+                    registerTransclusionUndo(snapshot, restore: false)
+                }
+            } else {
+                let id = snapshot.id
+                let found = (try? modelContext.fetch(FetchDescriptor<Link>(predicate: #Predicate { $0.id == id }))) ?? []
+                for link in found { Links.removeTransclusion(link, in: modelContext) }
+                registerTransclusionUndo(snapshot, restore: true)
+            }
+            refreshUndoRedoState()
+        }
+        refreshUndoRedoState()
+    }
+
+    /// The transclusions to draw in each page's strip thumbnail, resolved
+    /// once for the whole strip from the links and notebooks the screen
+    /// already holds. Only pages that host one appear in the result.
+    static func thumbnailTransclusions(hosts: [Page], links: [Link],
+                                       notebooks: [Notebook]) -> [UUID: [PageElements.Transclusion]] {
+        let hostIDs = Set(hosts.map(\.id))
+        let hosted = links.filter { Links.isTransclusion($0) && hostIDs.contains($0.sourcePageID) }
+        guard !hosted.isEmpty else { return [:] }
+        let ownerIDs = Set(hosted.map(\.destinationPageID))
+        var owners: [UUID: Page] = [:]
+        for notebook in notebooks {
+            for page in notebook.pages ?? [] where ownerIDs.contains(page.id) { owners[page.id] = page }
+        }
+        let nodes = links.filter(Links.isNode)
+        var out: [UUID: [PageElements.Transclusion]] = [:]
+        for (hostID, own) in Dictionary(grouping: hosted, by: \.sourcePageID) {
+            out[hostID] = PageElements.resolveTransclusions(hostedOn: hostID, links: own + nodes, owners: owners)
+        }
+        return out
+    }
+
+    // MARK: - Tape and review
+
+    /// Lasso > Tape: covers the selection with a strip. Reads the stroke ids
+    /// (saving first, like Make Node); one undo step removes the tape.
+    func makeTape(on page: Page) {
+        guard page.type != "whiteboard", let selection = inkSelection.selectedStrokes else { return }
+        let canvas = canvasView
+        let strokes = selection.strokes
+        let bounds = selection.bounds
+        Task {
+            let ids = await flushInkAndReadIDs(strokes, on: page)
+            guard canvasView === canvas else { return }
+            guard let ids else {
+                exportMessage = "Couldn't tape this ink yet. Try again in a moment."
+                return
+            }
+            let snapshot = Links.TapeSnapshot(id: UUID(), pageID: page.id, strokeIDs: ids,
+                                              anchor: bounds.insetBy(dx: -6, dy: -6), reviewState: nil)
+            hideAllTape = false
+            setTape(snapshot, present: true, on: page)
+            inkSelection.clear()
+        }
+    }
+
+    /// Adds or removes one tape and registers the opposite on the page's
+    /// undo stack, like `setNode`.
+    func setTape(_ snapshot: Links.TapeSnapshot, present: Bool, on page: Page) {
+        Self.applyTape(snapshot, present: present, on: page, in: modelContext)
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in
+            setTape(snapshot, present: !present, on: page)
+        }
+        refreshUndoRedoState()
+    }
+
+    /// The model half of `setTape`. Putting a tape back keeps its id and
+    /// schedule; one already there is left alone.
+    static func applyTape(_ snapshot: Links.TapeSnapshot, present: Bool, on page: Page, in context: ModelContext) {
+        let id = snapshot.id
+        let found = (try? context.fetch(FetchDescriptor<Link>(predicate: #Predicate { $0.id == id }))) ?? []
+        if present {
+            guard found.isEmpty else { return }
+            Links.makeTape(on: page, strokeIDs: snapshot.strokeIDs, anchor: snapshot.anchor, in: context,
+                           id: snapshot.id, reviewState: snapshot.reviewState)
+        } else {
+            for link in found { Links.removeTape(link, in: context) }
+        }
+    }
+
+    func deleteTape(_ link: Link, on page: Page) {
+        setTape(Links.tapeSnapshot(of: link), present: false, on: page)
+    }
+
+    /// Tapes due now in this notebook, skipping ones over erased ink.
+    var dueTapes: [Link] {
+        Links.dueTapes(in: tapeCache, pageIDs: Set((notebook.pages ?? []).map(\.id)), now: Date(),
+                       excluding: goneNodeIDs)
+    }
+
+    var dueTapeCount: Int { dueTapes.count }
+
+    /// What Review shows, as plain values: the tape, where it sits, the
+    /// strokes it covers and its schedule so far.
+    func reviewQueue() -> [ReviewItem] {
+        let pagesByID = Dictionary((notebook.pages ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return dueTapes.compactMap { link in
+            guard let page = pagesByID[link.sourcePageID] else { return nil }
+            return ReviewItem(linkID: link.id, pageID: page.id, pageNumber: page.index + 1,
+                              anchor: CGRect(x: link.anchorX, y: link.anchorY, width: link.anchorWidth, height: link.anchorHeight),
+                              pageSize: PageGeometry.contentSize(for: page))
+        }
     }
 
     // MARK: Connections panel data

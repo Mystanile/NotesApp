@@ -49,6 +49,103 @@ enum Links {
         return link
     }
 
+    // MARK: Tape (recall)
+
+    /// What undoing a tape's removal (or redoing its making) needs.
+    struct TapeSnapshot: Equatable {
+        var id: UUID
+        var pageID: UUID
+        var strokeIDs: [String]
+        var anchor: CGRect
+        var reviewState: String?
+    }
+
+    static func isTape(_ link: Link) -> Bool { link.kind == "tape" }
+
+    /// A strip of tape over `strokeIDs` on `page`: a self-link of kind
+    /// "tape", no title, the anchor being the region's bounds when made.
+    /// The ink is untouched. Marks the page and saves. `id` and
+    /// `reviewState` restore a removed tape under its old identity and
+    /// schedule.
+    @discardableResult
+    static func makeTape(on page: Page, strokeIDs: [String], anchor: CGRect,
+                         in context: ModelContext, now: Date = Date(),
+                         id: UUID? = nil, reviewState: String? = nil) -> Link {
+        let link = Link(sourcePageID: page.id, destinationPageID: page.id)
+        // Before the insert, like `makeNode`: an id changed after insert is a second identity.
+        if let id { link.id = id }
+        link.kind = "tape"
+        link.destinationKind = "region"
+        link.strokeIDs = strokeIDs
+        link.title = nil
+        link.reviewState = reviewState
+        setFrame(link, anchor)
+        context.insert(link)
+        page.markModified(at: now)
+        try? context.save()
+        return link
+    }
+
+    /// Takes a tape off its page and returns what `makeTape` needs to put it
+    /// back. Marks the page and saves. The ink is untouched.
+    @discardableResult
+    static func removeTape(_ link: Link, in context: ModelContext, now: Date = Date()) -> TapeSnapshot {
+        let snapshot = tapeSnapshot(of: link)
+        let host = link.sourcePageID
+        context.delete(link)
+        markSources([host], in: context, now: now)
+        try? context.save()
+        return snapshot
+    }
+
+    static func tapeSnapshot(of link: Link) -> TapeSnapshot {
+        TapeSnapshot(id: link.id, pageID: link.sourcePageID, strokeIDs: link.strokeIDs ?? [],
+                     anchor: CGRect(x: link.anchorX, y: link.anchorY, width: link.anchorWidth, height: link.anchorHeight),
+                     reviewState: link.reviewState)
+    }
+
+    /// The single writer of `Link.reviewState`. Marks the source page (a link
+    /// syncs with its page, and `contentSignature` hashes only the page's
+    /// date) and saves.
+    static func setReviewState(_ link: Link, _ state: ReviewScheduler.State, in context: ModelContext,
+                               now: Date = Date()) {
+        link.reviewState = ReviewScheduler.encode(state)
+        markSources([link.sourcePageID], in: context, now: now)
+        try? context.save()
+    }
+
+    /// The tapes of `links` that are due at `now` (never reviewed counts as
+    /// due), restricted to `pageIDs` and minus `excluding` (tapes whose ink
+    /// is gone). Never-reviewed first, then by due date; ties by page then
+    /// position, then id, so the order is stable.
+    static func dueTapes(in links: [Link], pageIDs: Set<UUID>, now: Date,
+                         excluding: Set<UUID> = []) -> [Link] {
+        func due(_ link: Link) -> Date? { ReviewScheduler.decode(link.reviewState)?.due }
+        return links
+            .filter { isTape($0) && pageIDs.contains($0.sourcePageID) && !excluding.contains($0.id)
+                && ReviewScheduler.isDue(ReviewScheduler.decode($0.reviewState), now: now) }
+            .sorted { a, b in
+                let da = due(a) ?? .distantPast, db = due(b) ?? .distantPast
+                if da != db { return da < db }
+                if a.sourcePageID != b.sourcePageID { return a.sourcePageID.uuidString < b.sourcePageID.uuidString }
+                if a.anchorY != b.anchorY { return a.anchorY < b.anchorY }
+                if a.anchorX != b.anchorX { return a.anchorX < b.anchorX }
+                return a.id.uuidString < b.id.uuidString
+            }
+    }
+
+    /// Due tapes per notebook, from one pass over `links`. `notebookByPage`
+    /// maps a page id to its notebook id (built once by the caller).
+    static func dueCounts(links: [Link], notebookByPage: [UUID: UUID], now: Date) -> [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for link in links where isTape(link) {
+            guard let notebook = notebookByPage[link.sourcePageID],
+                  ReviewScheduler.isDue(ReviewScheduler.decode(link.reviewState), now: now) else { continue }
+            counts[notebook, default: 0] += 1
+        }
+        return counts
+    }
+
     // MARK: Transclusion
 
     /// What undoing a transclusion's removal needs: the link's own identity

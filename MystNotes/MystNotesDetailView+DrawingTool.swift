@@ -167,7 +167,8 @@ extension NotebookDetailView {
             canPasteImage: pasteboardHasImage,
             onNewPagesFromFiles: { importTarget = .newPages; presentFileImporter(for: [.pdf, .image]) },
             onNewPagesFromPhotos: { importTarget = .newPages; showingImagePicker = true },
-            onNewPagesScan: scanNewPages
+            onNewPagesScan: scanNewPages,
+            onAddNode: { showingNodePicker = true }
         )
     }
 

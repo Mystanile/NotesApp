@@ -1287,7 +1287,7 @@ nonisolated struct SyncRunner {
                             anchorWidth: $0.anchorWidth, anchorHeight: $0.anchorHeight,
                             kind: $0.kind, destinationKind: $0.destinationKind,
                             destinationID: $0.destinationID, strokeIDs: $0.strokeIDs,
-                            title: $0.title)
+                            title: $0.title, reviewState: $0.reviewState)
                 }
             return NotebookDTO(
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
@@ -1589,6 +1589,7 @@ nonisolated struct SyncRunner {
             link.destinationID = linkDTO.destinationID
             link.strokeIDs = linkDTO.strokeIDs
             link.title = linkDTO.title
+            link.reviewState = linkDTO.reviewState
             context.insert(link)
         }
     }

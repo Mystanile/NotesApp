@@ -17,6 +17,9 @@ struct LibraryView: View {
     @Query(sort: \Notebook.title) private var storedNotebooks: [Notebook]
     @Query private var allImportedDocuments: [ImportedDocument]
     @Query private var allRecordings: [Recording]
+    /// Tape only (the "N due" badges): one filtered query for the whole
+    /// library, never one per cell.
+    @Query(filter: #Predicate<Link> { $0.kind == "tape" }) private var tapeLinks: [Link]
 
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
@@ -338,10 +341,11 @@ struct LibraryView: View {
                 if !notebooks.isEmpty {
                     section("Notebooks") {
                         let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
+                        let dueCounts = notebookDueCounts(for: notebooks)
                         let context = notebookReorder
                         itemLayout(gridSpacing: Space.xl) {
                             ForEach(notebooks, id: \.id) { notebook in
-                                notebookItem(notebook, previewArtwork: previewArtwork, context: context)
+                                notebookItem(notebook, previewArtwork: previewArtwork, dueCounts: dueCounts, context: context)
                             }
                         }
                         .libraryReorderContainer(enabled: arrangeActive, context: context)
@@ -559,14 +563,14 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func notebookItem(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
-                              context: LibraryReorderContext) -> some View {
+                              dueCounts: [UUID: Int], context: LibraryReorderContext) -> some View {
         if arrangeActive {
-            notebookCell(notebook, previewArtwork: previewArtwork, showsGrip: true)
+            notebookCell(notebook, previewArtwork: previewArtwork, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: true)
                 .libraryReorderable(id: notebook.id, context: context)
                 .libraryMoveActions(enabled: true, earlier: { moveNotebook(notebook, by: -1) }, later: { moveNotebook(notebook, by: 1) })
         } else {
             NavigationLink(value: notebook) {
-                notebookCell(notebook, previewArtwork: previewArtwork, showsGrip: false)
+                notebookCell(notebook, previewArtwork: previewArtwork, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: false)
             }
             .buttonStyle(LibraryCellButtonStyle())
             .contextMenu {
@@ -582,12 +586,23 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func notebookCell(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
-                              showsGrip: Bool) -> some View {
+                              dueCount: Int, showsGrip: Bool) -> some View {
         if isList {
-            NotebookRowView(notebook: notebook, showsGrip: showsGrip)
+            NotebookRowView(notebook: notebook, dueCount: dueCount, showsGrip: showsGrip)
         } else {
-            NotebookCellView(notebook: notebook, previewArtwork: previewArtwork, showsGrip: showsGrip)
+            NotebookCellView(notebook: notebook, previewArtwork: previewArtwork, dueCount: dueCount, showsGrip: showsGrip)
         }
+    }
+
+    /// Due tapes per notebook id, from the one tape query and a page-to-
+    /// notebook map built once per body (not per cell).
+    private func notebookDueCounts(for notebooks: [Notebook]) -> [UUID: Int] {
+        guard !tapeLinks.isEmpty else { return [:] }
+        var notebookByPage: [UUID: UUID] = [:]
+        for notebook in notebooks {
+            for page in notebook.pages ?? [] { notebookByPage[page.id] = notebook.id }
+        }
+        return Links.dueCounts(links: tapeLinks, notebookByPage: notebookByPage, now: Date())
     }
 
     // MARK: Custom order

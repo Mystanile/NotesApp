@@ -252,6 +252,8 @@ extension PageElements {
                    rotation: $0.rotationDegrees ?? 0)
         }
         let all = links ?? (try? page.modelContext?.fetch(FetchDescriptor<Link>())) ?? []
+        // Plain anchors only (kind nil). Tape (kind "tape") is never drawn into
+        // an export or a thumbnail: it covers ink on screen, and the ink is the data.
         self.links = all.filter { $0.sourcePageID == page.id && $0.kind == nil }.map {
             Anchor(frame: CGRect(x: $0.anchorX, y: $0.anchorY, width: $0.anchorWidth, height: $0.anchorHeight),
                    destinationPageID: $0.destinationPageID)

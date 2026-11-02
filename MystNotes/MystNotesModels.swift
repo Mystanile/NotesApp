@@ -431,6 +431,9 @@ final class Link {
     /// the block's key, `title` reserved for the inserted label, nil until M2 task 6 writes it; draws nothing).
     /// "transclusion": a node's ink shown on the source page (draws ink;
     /// `destinationID` is the node's id; no `strokeIDs` of its own).
+    /// "tape": a self-link covering `strokeIDs` with a peelable strip, for
+    /// recall (M4 seed). The ink is untouched; the strip is a view over it
+    /// and is never exported.
     var kind: String?
     /// nil/"page": the destination is the page. "region": a node (see
     /// `destinationID`). Later "textBlock", "notebook".
@@ -445,6 +448,11 @@ final class Link {
     var strokeIDs: [String]?
     /// A node's name (never empty). Reserved for a mention's inserted label; nil on mentions until M2 task 6 writes it.
     var title: String?
+    /// kind "tape": spaced-repetition state as JSON (`ReviewState`: due,
+    /// interval in days, ease, reps, lapses). nil: never reviewed (due at
+    /// once). Write it only through `Links.setReviewState`, which marks the
+    /// source page.
+    var reviewState: String?
 
     init(sourcePageID: UUID = UUID(), destinationPageID: UUID = UUID()) {
         self.id = UUID()

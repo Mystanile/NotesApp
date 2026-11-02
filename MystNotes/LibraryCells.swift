@@ -189,6 +189,8 @@ struct RecentNotebookCellView: View {
 struct NotebookCellView: View {
     let notebook: Notebook
     var previewArtwork: [UUID: [ImportedDocument]] = [:]
+    /// Tapes due for review in this notebook (counted once by the library).
+    var dueCount = 0
     /// Arrange mode: a grip says the cell can be dragged.
     var showsGrip = false
 
@@ -224,6 +226,9 @@ struct NotebookCellView: View {
                 .overlay(alignment: .bottomTrailing) {
                     if showsGrip { LibraryGripBadge().padding(Space.s) }
                 }
+                .overlay(alignment: .bottomLeading) {
+                    if dueCount > 0 { DueBadge(count: dueCount).padding(Space.s) }
+                }
             VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(notebook.title.isEmpty ? "Untitled" : notebook.title)
                     .font(Typography.headline)
@@ -240,7 +245,8 @@ struct NotebookCellView: View {
         .accessibilityLabel("\(notebook.title), \(pageCount) page\(pageCount == 1 ? "" : "s"), "
                             + Self.editedText(notebook.modifiedAt).lowercasedFirst
                             + (notebook.isLocked == true ? ", locked" : "")
-                            + (notebook.isFavorite == true ? ", favorite" : ""))
+                            + (notebook.isFavorite == true ? ", favorite" : "")
+                            + (dueCount > 0 ? ", \(dueCount) due for review" : ""))
     }
 
     /// "Edited today", "Edited yesterday", "Edited Tuesday" (within the last
@@ -271,6 +277,7 @@ struct NotebookCellView: View {
 /// "folder - Edited ... - N pages".
 struct NotebookRowView: View {
     let notebook: Notebook
+    var dueCount = 0
     var showsGrip = false
 
     private var pageCount: Int { notebook.pages?.count ?? 0 }
@@ -297,6 +304,7 @@ struct NotebookRowView: View {
                     if notebook.isFavorite == true {
                         Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
                     }
+                    if dueCount > 0 { DueBadge(count: dueCount) }
                 }
                 Text(detail)
                     .font(Typography.caption)
@@ -311,6 +319,22 @@ struct NotebookRowView: View {
         .accessibilityLabel("\(notebook.title.isEmpty ? "Untitled" : notebook.title), \(detail)"
                             + (notebook.isLocked == true ? ", locked" : "")
                             + (notebook.isFavorite == true ? ", favorite" : ""))
+    }
+}
+
+/// "N due": tapes waiting for review in a notebook.
+struct DueBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count) due")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(Color.black.opacity(0.82))
+            .padding(.horizontal, Space.s)
+            .padding(.vertical, Space.xxs)
+            .background(Capsule().fill(Color(red: 1.0, green: 0.93, blue: 0.62)))
+            .overlay(Capsule().strokeBorder(Color.black.opacity(0.15), lineWidth: 1))
+            .accessibilityHidden(true)
     }
 }
 

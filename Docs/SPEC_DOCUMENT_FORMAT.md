@@ -272,10 +272,13 @@ The folder's `librarySnapshotFormatVersion` is 5. A build that reads a newer fol
 | `node` | A named region of strokes (self-link on its page) | Nothing (badge in the graph UI) | `destinationKind = "region"`, `strokeIDs`, `title` (never empty), anchor = region bounds when last seen |
 | `mention` | `[[ ]]` reference from a text block | Nothing | `destinationID` = text block key, `title` = inserted label (nil until M2 task 6 writes it) |
 | `transclusion` | A node's ink shown on another page | The node's ink | `destinationKind = "region"`, `destinationID` = node id; no `strokeIDs` of its own |
+| `tape` | A strip covering a region of ink, for recall (M4 seed) | A peelable opaque strip over the anchor, on screen only: never exported, never in a thumbnail (the ink is the data) | Self-link, `destinationKind = "region"`, `strokeIDs` of the covered ink, no `title`, anchor = the region's bounds when made, `reviewState` |
 
 Tags are never stored as links; the graph derives them from `Page.tags`.
 
 **`LinkDTO.title`** (new, optional, absent in format 4): a node's name or a mention's label.
+
+**`LinkDTO.reviewState`** (new, optional, absent before; also format 5, since no device runs format 5 yet): a tape's spaced-repetition schedule, a JSON string `{"due": "<SnapshotDates string, ms>", "interval": <days, Double>, "ease": <Double>, "reps": <Int>, "lapses": <Int>}`. nil means never reviewed, which counts as due. Only `kind = "tape"` carries it. It is written only through `Links.setReviewState`, which marks the source page, so it travels and merges with the page (per-page last-writer-wins on `modifiedAt`): two devices reviewing tapes on different pages both keep their grades; the same page, the later edit wins. A format-4 build would drop it on its next write of the page, hence the same format bump. Scheduling is `ReviewScheduler` (SM-2 lite: Again due in 10 minutes, ease -0.2; Hard x1.2 and ease -0.15; Good 1 day, 3 days, then x ease; Easy Good x1.3 and ease +0.15; ease floor 1.3).
 
 **`Notebook.role`** (new, optional, absent in format 4; in `NotebookIndexEntry` and `NotebookDTO`): marks a notebook the app itself uses. `"templates"` is the custom page-templates notebook; nil is an ordinary notebook. It is a notebook setting and merges on `settingsModifiedAt` like the title and cover.
 

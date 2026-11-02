@@ -39,6 +39,16 @@ struct PageElementsOverlayView: View {
     /// snapshot from `Links.removeTransclusion`); without it the overlay
     /// removes it and does not offer undo.
     var onRemoveTransclusion: ((Link) -> Void)? = nil
+    /// Tape on this page is not drawn at all while this is set (More >
+    /// Hide All Tape). A per-viewer, per-session choice.
+    var hideAllTape = false
+    /// Undoable remove of a tape (the detail view owns the undo stack).
+    /// Without it the overlay removes it and does not offer undo.
+    var onRemoveTape: ((Link) -> Void)? = nil
+
+    /// Tapes peeled back this session. Never stored: reopening the page
+    /// covers the ink again.
+    @State private var peeledTapeIDs: Set<UUID> = []
 
     private var links: [Link] {
         allLinks.filter { $0.sourcePageID == page.id }
@@ -50,6 +60,20 @@ struct PageElementsOverlayView: View {
         } else {
             Links.removeTransclusion(link, in: modelContext)
         }
+    }
+
+    private func removeTape(_ link: Link) {
+        if let onRemoveTape {
+            onRemoveTape(link)
+        } else {
+            Links.removeTape(link, in: modelContext)
+        }
+    }
+
+    /// The tapes drawn now: not hidden, and not over ink that is gone.
+    private var visibleTapes: [Link] {
+        guard !hideAllTape else { return [] }
+        return links.filter { Links.isTape($0) && !goneNodeIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -81,6 +105,15 @@ struct PageElementsOverlayView: View {
                     onSave: onSave,
                     onRequestDestinationChange: onRequestLinkDestinationChange
                 )
+            }
+
+            ForEach(visibleTapes, id: \.id) { tape in
+                TapeStripView(
+                    tape: tape, isPeeled: peeledTapeIDs.contains(tape.id),
+                    onToggle: {
+                        if peeledTapeIDs.contains(tape.id) { peeledTapeIDs.remove(tape.id) } else { peeledTapeIDs.insert(tape.id) }
+                    },
+                    onRemove: removeTape)
             }
 
             ForEach(links.filter(Links.isNode), id: \.id) { node in
@@ -643,5 +676,61 @@ private struct NodeBadgeView: View {
         .fixedSize()
         .offset(x: node.anchorX, y: node.anchorY)
         .accessibilityLabel("Node \(node.title ?? "")")
+    }
+}
+
+
+// MARK: - Tape
+
+/// A strip of tape over a region of ink, in page space like every other
+/// element. Opaque so the ink under it cannot be read; tap to peel it back
+/// (a dashed outline stays so it can be put back), tap again to cover. It is
+/// a view over the ink and never exported or thumbnailed: the ink is the data.
+private struct TapeStripView: View {
+    let tape: Link
+    let isPeeled: Bool
+    var onToggle: () -> Void
+    var onRemove: (Link) -> Void
+
+    private static let fill = Color(red: 1.0, green: 0.93, blue: 0.62)
+    private static let edge = Color(red: 0.80, green: 0.66, blue: 0.20)
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        ZStack {
+            if isPeeled {
+                shape.strokeBorder(Self.edge.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            } else {
+                shape.fill(Self.fill)
+                Canvas { context, size in
+                    var path = Path()
+                    var x = -size.height
+                    while x < size.width {
+                        path.move(to: CGPoint(x: x, y: size.height))
+                        path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                        x += 9
+                    }
+                    context.stroke(path, with: .color(Self.edge.opacity(0.28)), lineWidth: 1)
+                }
+                .clipShape(shape)
+                shape.strokeBorder(Self.edge.opacity(0.7), lineWidth: 1)
+            }
+        }
+        .frame(width: max(tape.anchorWidth, 12), height: max(tape.anchorHeight, 12))
+        .contentShape(shape)
+        .offset(x: tape.anchorX, y: tape.anchorY)
+        .onTapGesture(perform: onToggle)
+        .contextMenu {
+            Button { onToggle() } label: {
+                Label(isPeeled ? "Cover" : "Peel Back", systemImage: isPeeled ? "eye.slash" : "eye")
+            }
+            Button(role: .destructive) { onRemove(tape) } label: {
+                Label("Remove Tape", systemImage: "trash")
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(isPeeled ? "Tape, peeled back" : "Tape, covering ink")
+        .accessibilityHint("Double tap to \(isPeeled ? "cover" : "peel back")")
+        .accessibilityAddTraits(.isButton)
     }
 }

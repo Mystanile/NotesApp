@@ -42,6 +42,9 @@ import CryptoKit
 /// No device runs format 5 yet, so this stays one version. Folders have no
 /// settings clock (flat upsert), so their custom order is per device in
 /// `AppSettings`, not here.
+/// Also in 5: `LinkDTO.reviewState` (a tape's review schedule). A format-4
+/// build would drop it on its next write of the page and every tape on
+/// every device would be due again. Still one version for the same reason.
 /// Also in 5: `PageDTO.recordings` (audio recorded on a page; each file is a
 /// content-addressed payload in `files/`). A format-4 build would drop them
 /// on its next write of the page. Still one version for the same reason.
@@ -84,6 +87,14 @@ nonisolated enum SnapshotDates {
     /// round trip - pending forever, on every device.)
     static func stamp(_ date: Date?) -> String {
         date.map { fractional.string(from: $0) } ?? "-"
+    }
+
+    /// The encoded form of a date (millisecond ISO-8601).
+    static func string(from date: Date) -> String { fractional.string(from: date) }
+
+    /// Reads either form (milliseconds or whole seconds); nil if unreadable.
+    static func date(from string: String) -> Date? {
+        fractional.date(from: string) ?? whole.date(from: string)
     }
 }
 
@@ -433,4 +444,7 @@ nonisolated struct LinkDTO: Codable {
     var strokeIDs: [String]?
     /// Format 5: a node's name or a mention's label. Absent before.
     var title: String? = nil
+    /// Format 5: a tape's spaced-repetition state (JSON string). Absent before
+    /// and for every other kind.
+    var reviewState: String? = nil
 }

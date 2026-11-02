@@ -515,6 +515,8 @@ struct DrawingToolbarView: View {
     var onNewPagesFromFiles: (() -> Void)?
     var onNewPagesFromPhotos: (() -> Void)?
     var onNewPagesScan: (() -> Void)?
+    /// Insert > Node...: show a node's ink on this page. nil leaves the row out.
+    var onAddNode: (() -> Void)? = nil
 
     // Lets the whole bar be dragged out of the way instead of sitting fixed
     // over the canvas. Session-only (resets to the default top-center spot
@@ -600,6 +602,7 @@ struct DrawingToolbarView: View {
                 if shows(.image) { Button { onAddImage() } label: { Label("Photo", systemImage: "photo") }.disabled(!isTextBoxAvailable) }
                 if shows(.sticker) { Button { onAddSticker() } label: { Label("Sticker", systemImage: "face.smiling") }.disabled(!isTextBoxAvailable) }
                 if shows(.link) { Button { onAddLink() } label: { Label("Link to a Page", systemImage: "link") }.disabled(!isTextBoxAvailable) }
+                if let onAddNode { Button { onAddNode() } label: { Label("Node…", systemImage: "scribble") }.disabled(!isTextBoxAvailable) }
                 // Not tied to the Photo item: the old Import menu always offered it.
                 if let onPasteImage {
                     Button { onPasteImage() } label: { Label("Paste Image", systemImage: "doc.on.clipboard") }

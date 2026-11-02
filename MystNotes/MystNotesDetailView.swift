@@ -183,6 +183,14 @@ struct NotebookDetailView: View {
     @State var goneCache: [UUID: NodeInk.PageResult] = [:]
     /// This notebook's nodes, recomputed on change only (`refreshNodeCache`).
     @State var nodeCache: [Link] = []
+    /// This notebook's tape, kept the same way. Tape ids share `goneNodeIDs`
+    /// (a tape over erased ink is hidden and skipped in review).
+    @State var tapeCache: [Link] = []
+    /// More > Hide All Tape. Per viewer, this session only.
+    @State var hideAllTape = false
+    @State var showingReview = false
+    /// Insert > Node...: the picker for a transclusion.
+    @State var showingNodePicker = false
     /// The Connections card's data, recomputed on change only.
     @State var connections = ConnectionsPanel.Snapshot()
     /// A per-viewer convenience only.
@@ -504,6 +512,21 @@ struct NotebookDetailView: View {
                     }
                     .disabled(isPresenting || currentPage == nil)
                     Button {
+                        showingReview = true
+                    } label: {
+                        Label(dueTapeCount > 0 ? "Review (\(dueTapeCount) due)" : "Review",
+                              systemImage: "rectangle.stack")
+                    }
+                    .disabled(isPresenting)
+                    if !tapeCache.isEmpty {
+                        Button {
+                            hideAllTape.toggle()
+                        } label: {
+                            Label(hideAllTape ? "Show All Tape" : "Hide All Tape",
+                                  systemImage: hideAllTape ? "eye" : "eye.slash")
+                        }
+                    }
+                    Button {
                         promptGoToPage()
                     } label: {
                         Label("Go to Page…", systemImage: "arrow.right.doc.on.clipboard")
@@ -592,6 +615,15 @@ struct NotebookDetailView: View {
         }
         .sheet(isPresented: $showingStickerPicker) {
             StickerPickerView { symbol in addSticker(symbol) }
+        }
+        .sheet(isPresented: $showingNodePicker) {
+            NodePickerSheet { node in
+                showingNodePicker = false
+                if let page = currentPage { addTransclusion(of: node, onto: page) }
+            }
+        }
+        .fullScreenCover(isPresented: $showingReview) {
+            ReviewView(notebookTitle: notebook.title, queue: reviewQueue())
         }
         .navigationDestination(item: $otherNotebookTarget) { target in
             NotebookDetailView(notebook: target.notebook, initialPageID: target.pageID)
@@ -718,7 +750,7 @@ struct NotebookDetailView: View {
             onConvertToText: { convertSelectionToText(on: page) },
             onLinkTo: paged ? { linkSelection() } : nil,
             onMakeNode: paged ? { beginMakeNode(on: page) } : nil,
-            onTape: nil
+            onTape: paged ? { makeTape(on: page) } : nil
         )
     }
 
@@ -1028,7 +1060,11 @@ struct NotebookDetailView: View {
                     goneNodeIDs: goneNodeIDs,
                     onRenameNode: { beginRenameNode($0) },
                     onShowPageMap: { showingPageMap = true },
-                    onDeleteNode: { deleteNode($0, on: page) }
+                    onDeleteNode: { deleteNode($0, on: page) },
+                    onOpenTransclusionSource: { jumpToPage(withID: $0) },
+                    onRemoveTransclusion: { removeTransclusion($0, on: page) },
+                    hideAllTape: hideAllTape,
+                    onRemoveTape: { deleteTape($0, on: page) }
                 )
             }
 
@@ -1216,6 +1252,10 @@ struct NotebookDetailView: View {
         // all 200 before showing anything. `PageSidebarReorderList` keeps the
         // LazyVStack and owns reordering (see PageSidebarReorder.swift).
         let documents = documentsByPageID
+        // Resolved once for the whole strip, not per cell (a cell fetching
+        // them would be a query per cell).
+        let transclusionsByPage = Self.thumbnailTransclusions(hosts: sortedPages, links: allLinks,
+                                                              notebooks: allNotebooks)
         // Mid-drag the cells scale the bitmap they have; the
         // re-render at the new size happens once, on release.
         let liveWidth = livePageSidebarWidth
@@ -1237,7 +1277,8 @@ struct NotebookDetailView: View {
                                           importedDocuments: documents[page.id] ?? [],
                                           isSelected: index == currentPageIndex,
                                           height: PageSidebarMetrics.thumbnailHeight(sidebarWidth: liveWidth, aspect: aspect),
-                                          renderHeight: PageSidebarMetrics.thumbnailHeight(sidebarWidth: storedWidth, aspect: aspect))
+                                          renderHeight: PageSidebarMetrics.thumbnailHeight(sidebarWidth: storedWidth, aspect: aspect),
+                                          transclusions: transclusionsByPage[page.id] ?? [])
                             .overlay(alignment: .topTrailing) {
                                 if page.isBookmarked == true {
                                     Image(systemName: "bookmark.fill")
