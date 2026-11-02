@@ -1327,12 +1327,42 @@ nonisolated struct SyncRunner {
         var links = try context.fetch(FetchDescriptor<Link>())
         var docs = try context.fetch(FetchDescriptor<ImportedDocument>())
 
+        // Which audio files each page names, read ONCE before any row is
+        // deleted. A replaced or deleted page's audio goes to trash/ like its
+        // ink (invariant 3) unless a surviving page - or the remote copy -
+        // still names the file.
+        var audioRefsByPage: [UUID: Set<String>] = [:]
+        for recording in try context.fetch(FetchDescriptor<Recording>()) {
+            guard let pageID = recording.page?.id, !recording.fileRef.isEmpty else { continue }
+            audioRefsByPage[pageID, default: []].insert(recording.fileRef)
+        }
+        var remoteAudioRefs = Set<String>()
+        for notebook in remote.notebooks where plan.tombstones[notebook.id] == nil {
+            for page in notebook.pages {
+                for recording in page.recordings ?? [] where !recording.fileRef.isEmpty {
+                    remoteAudioRefs.insert(recording.fileRef)
+                }
+            }
+        }
+        let audioStore = DrawingStore.inDirectory(environment.localFilesDirectory())
+        /// Trashes the audio of `pageIDs` that no other page and no remote
+        /// page uses, then forgets those pages.
+        func trashAudio(of pageIDs: Set<UUID>) {
+            var used = remoteAudioRefs
+            for (id, refs) in audioRefsByPage where !pageIDs.contains(id) { used.formUnion(refs) }
+            var mine = Set<String>()
+            for id in pageIDs { mine.formUnion(audioRefsByPage[id] ?? []) }
+            for ref in mine.subtracting(used) { audioStore.trashPayload(named: ref) }
+            for id in pageIDs { audioRefsByPage[id] = nil }
+        }
+
         // 1. Deletions.
         for stone in plan.tombstones.values {
             switch stone.kind {
             case .notebook:
                 if let notebook = notebookByID[stone.id], notebook.modifiedAt <= stone.deletedAt {
                     trashFiles(for: notebook)
+                    trashAudio(of: Set((notebook.pages ?? []).map(\.id)))
                     context.delete(notebook)
                     notebookByID[stone.id] = nil
                     for page in notebook.pages ?? [] { pageByID[page.id] = nil }
@@ -1344,6 +1374,7 @@ nonisolated struct SyncRunner {
                 }
             case .page:
                 guard plan.deletedLocalPages.contains(stone.id), let page = pageByID[stone.id] else { continue }
+                trashAudio(of: [page.id])
                 removeChildren(of: page, links: &links, docs: &docs, context: context)
                 page.notebook?.pages?.removeAll { $0.id == page.id }
                 context.delete(page)
@@ -1423,9 +1454,12 @@ nonisolated struct SyncRunner {
 
                 case .remoteWins?:
                     guard let page = pageByID[pageDTO.id] else { continue }
+                    trashAudio(of: [page.id])
                     removeChildren(of: page, links: &links, docs: &docs, context: context)
                     setFields(of: page, from: pageDTO)
                     addChildren(to: page, from: pageDTO, links: dto.links, context: context)
+                    let winning = Set((pageDTO.recordings ?? []).map(\.fileRef).filter { !$0.isEmpty })
+                    if !winning.isEmpty { audioRefsByPage[page.id] = winning }
                     mergeRecognizedText(into: page, from: pageDTO)
                     lift(notebook, to: page.modifiedAt)
 
