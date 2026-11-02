@@ -387,7 +387,7 @@ Shorter than planned — onboarding, settings, tutorial notebook and export alre
 ## 5. Explicit non-goals for v1
 
 - **Real-time collaborative editing.** Needs a backend and CRDTs. M7 at the earliest.
-- **AI chat with your notes.** Both competitors have it; it's becoming table stakes rather than a differentiator, and it costs money per query that a free app can't absorb. M4's on-device semantic search delivers most of the value at zero marginal cost.
+- ~~**AI chat with your notes.**~~ **Lifted by the user Nov 2, 2026:** an opt-in study helper on the user's own keys (see CLAUDE.md locked decisions). Original reasoning: Both competitors have it; it's becoming table stakes rather than a differentiator, and it costs money per query that a free app can't absorb. M4's on-device semantic search delivers most of the value at zero marginal cost.
 - **Native Android and Windows clients.** The M7 web viewer is the cheap reach.
 - **Template marketplace.** Content problem, not a product problem.
 - **Any paywall, subscription, or StoreKit work.** Free.

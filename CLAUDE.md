@@ -76,7 +76,7 @@ Currently flat — all Swift files sit in `MystNotes/`. Don't reorganize as a si
 - Entitlements carry only self-declarable sandbox keys so free-account signing works. CloudKit/Sign-in-with-Apple/push stay parked in `Mystnotes.entitlements.paid-account-backup`.
 - Document files live on disk; SwiftData holds metadata and references.
 - Mac Catalyst as the second target, full editing, not view-only.
-- AI features stay behind a stub. No network AI calls in v1.
+- ~~AI features stay behind a stub. No network AI calls in v1.~~ **Changed by the user Nov 2, 2026:** an AI study helper may call Featherless (text) and ElevenLabs (voice), opt-in and off by default, with the user's own API keys in the Keychain. Nothing leaves the device unless the user asks for that specific action. No key ships in the app.
 - `AnyView` is an accepted escape hatch for recursive `some View` compiler errors (see `FolderPickerView`).
 - **`Page.recognizedTextCache` / `ocrUpdatedAt` never bump `Page.modifiedAt`.** They are derived data and merge on their own (newest `ocrUpdatedAt` wins). A background OCR pass on one device must never out-rank a real stroke on another. (Decided Sept 12, 2026.)
 - **Same-page concurrent edits keep both versions.** Per-page last-writer-wins picks what the page shows, but the losing ink goes to `trash/` and is recoverable, never discarded. Tasks 5 and 11 are designed together for this. (Decided Sept 12, 2026.)
