@@ -42,6 +42,36 @@ nonisolated enum NodeInk {
     static func goneDetached(_ probes: [NodeProbe]) -> Task<Set<UUID>, Never> {
         Task.detached(priority: .utility) { goneIDs(probes) }
     }
+
+    /// `goneDetached` with the record check injected (tests observe the
+    /// thread it runs on, or point it at a temporary store).
+    static func goneDetached(_ probes: [NodeProbe],
+                             regionExists: @escaping @Sendable (UUID, Set<UUID>) -> Bool) -> Task<Set<UUID>, Never> {
+        Task.detached(priority: .utility) { goneIDs(probes, regionExists: regionExists) }
+    }
+
+    /// What one page's probe left behind: the record it was judged against
+    /// (date and size on disk), the nodes judged, and which of them are gone.
+    struct PageResult: Equatable, Sendable {
+        var stamp: InkStamp?
+        var probeIDs: Set<UUID>
+        var gone: Set<UUID>
+    }
+
+    /// Judges one page's nodes against its record in `store`, off the main
+    /// thread - unless `previous` already was judged against the same record
+    /// and the same nodes, in which case nothing is read and the result is
+    /// nil. A page whose ink hasn't changed is never decoded again.
+    static func recheckDetached(pageID: UUID, probes: [NodeProbe], previous: PageResult?,
+                                store: DrawingStore) -> Task<PageResult?, Never> {
+        Task.detached(priority: .utility) {
+            let stamp = InkStamp(of: pageID, in: store)
+            let ids = Set(probes.map(\.id))
+            if let previous, previous.stamp == stamp, previous.probeIDs == ids { return nil }
+            let gone = goneIDs(probes) { store.readRegionInk(pageID: $0, ids: $1) != nil }
+            return PageResult(stamp: stamp, probeIDs: ids, gone: gone)
+        }
+    }
 }
 
 // MARK: - Connections panel
@@ -62,22 +92,29 @@ struct ConnectionsPanel: View {
         let isGone: Bool
     }
 
+    /// What the card shows, computed once per change by the parent: the
+    /// lists only when the card is expanded (they cost a fetch), the count
+    /// always.
+    struct Snapshot: Equatable {
+        var count = 0
+        var linkedFrom: [Entry] = []
+        var linksTo: [Entry] = []
+        var nodes: [NodeEntry] = []
+    }
+
+    var count: Int
+    var expanded: Binding<Bool>
     var linkedFrom: [Entry] = []
     var linksTo: [Entry] = []
     var nodes: [NodeEntry] = []
     var onSelectPage: (UUID) -> Void
     var onOpenPageMap: () -> Void
 
-    /// A per-viewer convenience only.
-    @AppStorage("connectionsPanelExpanded") private var expanded = false
-
-    private var count: Int { linkedFrom.count + linksTo.count + nodes.count }
-
     var body: some View {
         if count > 0 {
             VStack(alignment: .leading, spacing: Space.m) {
                 header
-                if expanded {
+                if expanded.wrappedValue {
                     if !linkedFrom.isEmpty {
                         ConnectionSection(title: "Linked from", entries: linkedFrom, onSelect: onSelectPage)
                     }
@@ -113,12 +150,12 @@ struct ConnectionsPanel: View {
             .frame(maxWidth: 340, alignment: .leading)
             .surfaceCard()
             .padding(Space.m)
-            .animation(Motion.snappy, value: expanded)
+            .animation(Motion.snappy, value: expanded.wrappedValue)
         }
     }
 
     private var header: some View {
-        Button { expanded.toggle() } label: {
+        Button { expanded.wrappedValue.toggle() } label: {
             HStack(spacing: Space.s) {
                 Image(systemName: "arrow.triangle.branch").foregroundStyle(Color.accentColor)
                 Text("Connections").font(Typography.headline)
@@ -128,14 +165,14 @@ struct ConnectionsPanel: View {
                     .padding(.vertical, Space.xxs)
                     .background(Capsule().fill(Color.primary.opacity(0.08)))
                 Spacer(minLength: Space.s)
-                Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.up")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(expanded ? "Collapse connections" : "Expand connections")
+        .accessibilityLabel(expanded.wrappedValue ? "Collapse connections" : "Expand connections")
     }
 
     private func nodeChip(_ node: NodeEntry) -> some View {

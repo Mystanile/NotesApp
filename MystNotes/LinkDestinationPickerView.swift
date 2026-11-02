@@ -40,6 +40,9 @@ struct LinkDestinationPickerView: View {
     }
 
     @State private var goneNodeIDs: Set<UUID> = []
+    /// Computed once when the sheet appears (and when the links change), not
+    /// on every body.
+    @State private var choices: [NodeChoice] = []
 
     static func otherNotebooks(_ all: [Notebook], excluding id: UUID?) -> [Notebook] {
         all.filter { $0.id != id }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -62,7 +65,6 @@ struct LinkDestinationPickerView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                let choices = Self.nodeChoices(links: links, notebooks: PageTemplates.libraryNotebooks(notebooks))
                 if !choices.isEmpty {
                     Section("Nodes") {
                         ForEach(choices) { choice in
@@ -104,8 +106,14 @@ struct LinkDestinationPickerView: View {
                 }
             }
             .task(id: links.count) {
-                let probes = Self.nodeChoices(links: links, notebooks: PageTemplates.libraryNotebooks(notebooks)).map(\.probe)
-                guard !probes.isEmpty else { return }
+                choices = Self.nodeChoices(links: links, notebooks: PageTemplates.libraryNotebooks(notebooks))
+            }
+            .task(id: choices.map(\.probe)) {
+                let probes = choices.map(\.probe)
+                guard !probes.isEmpty else {
+                    if !goneNodeIDs.isEmpty { goneNodeIDs = [] }
+                    return
+                }
                 let gone = await NodeInk.goneDetached(probes).value
                 if !Task.isCancelled { goneNodeIDs = gone }
             }

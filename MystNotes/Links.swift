@@ -26,11 +26,14 @@ enum Links {
 
     /// A named region of strokes on `page`: a self-link of kind "node".
     /// A blank title falls back to a generic one, so a node is never nameless.
-    /// Marks the page and saves.
+    /// `id` restores a node under its old identity. Marks the page and saves.
     @discardableResult
     static func makeNode(on page: Page, strokeIDs: [String], title: String, anchor: CGRect,
-                         in context: ModelContext, now: Date = Date()) -> Link {
+                         in context: ModelContext, now: Date = Date(), id: UUID? = nil) -> Link {
         let link = Link(sourcePageID: page.id, destinationPageID: page.id)
+        // Set before the insert: undo of a delete puts the node back under
+        // its own id, and an id changed after insert is a second identity.
+        if let id { link.id = id }
         link.kind = "node"
         link.destinationKind = "region"
         link.strokeIDs = strokeIDs

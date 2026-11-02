@@ -168,6 +168,14 @@ struct NotebookDetailView: View {
     @State var renameNodeText = ""
     /// Nodes on this notebook whose ink is gone (derived, never stored).
     @State var goneNodeIDs: Set<UUID> = []
+    /// Per node page: the record the verdict was reached on, and the verdict.
+    @State var goneCache: [UUID: NodeInk.PageResult] = [:]
+    /// This notebook's nodes, recomputed on change only (`refreshNodeCache`).
+    @State var nodeCache: [Link] = []
+    /// The Connections card's data, recomputed on change only.
+    @State var connections = ConnectionsPanel.Snapshot()
+    /// A per-viewer convenience only.
+    @AppStorage("connectionsPanelExpanded") var connectionsExpanded = false
 
     /// Whether an import lands on the page you're looking at or creates new
     /// page(s) after it. Set by whichever Import menu item was tapped, read
@@ -571,6 +579,7 @@ struct NotebookDetailView: View {
             Button("Cancel", role: .cancel) { nodeToRename = nil }
             Button("Save") { commitRenameNode() }
         }
+        .onChange(of: nodeSetKey, initial: true) { refreshNodeCache() }
         .task(id: goneNodesKey) { await refreshGoneNodes() }
         .alert("Export", isPresented: Binding(
             get: { exportMessage != nil },
@@ -956,7 +965,7 @@ struct NotebookDetailView: View {
     /// notebook's pages here would fault the whole library in on each
     /// redraw, and this view redraws on every colour change.
     func pagesLinking(to pageID: UUID) -> [Page] {
-        let ids = Array(Set(allLinks.lazy.filter { $0.destinationPageID == pageID }.map(\.sourcePageID)))
+        let ids = Self.incomingSourceIDs(to: pageID, links: allLinks)
         guard !ids.isEmpty else { return [] }
         return (try? modelContext.fetch(FetchDescriptor<Page>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
     }
@@ -974,21 +983,16 @@ struct NotebookDetailView: View {
     /// and its nodes, in one collapsible card.
     @ViewBuilder
     var connectionsPanel: some View {
-        if !isPresenting, let page = currentPage {
-            let hiding = pendingDeletion?.pageID
-            let entry: (Page) -> ConnectionsPanel.Entry = {
-                .init(id: $0.id, label: LinkedFromStrip.label(for: $0, currentNotebookID: notebook.id))
-            }
-            let incoming = LinkedFromStrip.sources(linkingTo: page.id, links: allLinks,
-                                                   pages: pagesLinking(to: page.id).filter { $0.id != hiding })
-            let outgoing = pagesLinked(from: page.id).filter { $0.id != hiding }
-                .sorted { ($0.notebook?.title ?? "", $0.index) < ($1.notebook?.title ?? "", $1.index) }
+        if !isPresenting, currentPage != nil {
             ConnectionsPanel(
-                linkedFrom: incoming.map(entry),
-                linksTo: outgoing.map(entry),
-                nodes: nodes(on: page).map { .init(id: $0.id, title: $0.title ?? "Node", isGone: goneNodeIDs.contains($0.id)) },
+                count: connections.count,
+                expanded: $connectionsExpanded,
+                linkedFrom: connections.linkedFrom,
+                linksTo: connections.linksTo,
+                nodes: connections.nodes.map { .init(id: $0.id, title: $0.title, isGone: goneNodeIDs.contains($0.id)) },
                 onSelectPage: { jumpToPage(withID: $0) },
                 onOpenPageMap: { showingPageMap = true })
+                .onChange(of: connectionsKey, initial: true) { refreshConnections() }
         }
     }
 

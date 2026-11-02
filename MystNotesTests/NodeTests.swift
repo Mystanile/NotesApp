@@ -91,6 +91,71 @@ final class NodeTests: XCTestCase {
         XCTAssertNotNil(node.modelContext, "nothing is deleted because the ink is gone")
     }
 
+    func testNodeInk_recheck_againstARealRecord_presentThenErased() async throws {
+        let context = try makeContext()
+        let page = try XCTUnwrap(notebook("Recheck", pages: 1, in: context).pages?.first)
+        let drawing = makeDrawing(strokes: 3)
+        try store.save(drawing, pageID: page.id)
+        let map = store.ids.map(for: page.id)
+        let ids = try [drawing.strokes[1]].map { try XCTUnwrap(map.existingID(for: $0)).uuidString }
+        let probe = NodeProbe(id: UUID(), pageID: page.id, strokeIDs: ids)
+
+        let firstResult = await NodeInk.recheckDetached(pageID: page.id, probes: [probe], previous: nil, store: store).value
+        let first = try XCTUnwrap(firstResult)
+        XCTAssertTrue(first.gone.isEmpty, "the ink is in the record")
+        XCTAssertNotNil(first.stamp)
+        let again = await NodeInk.recheckDetached(pageID: page.id, probes: [probe], previous: first, store: store).value
+        XCTAssertNil(again, "an unchanged record is not read again")
+
+        // Erase the node's stroke; the record changes size and date.
+        try store.save(PKDrawing(strokes: [drawing.strokes[0], drawing.strokes[2]]), pageID: page.id)
+        let erasedResult = await NodeInk.recheckDetached(pageID: page.id, probes: [probe], previous: first, store: store).value
+        let erased = try XCTUnwrap(erasedResult)
+        XCTAssertEqual(erased.gone, [probe.id])
+        XCTAssertNotEqual(erased.stamp, first.stamp)
+
+        // A new node on an unchanged page is judged too.
+        let other = NodeProbe(id: UUID(), pageID: page.id, strokeIDs: ids)
+        let withNew = await NodeInk.recheckDetached(pageID: page.id, probes: [probe, other], previous: erased, store: store).value
+        XCTAssertEqual(withNew?.gone, [probe.id, other.id])
+    }
+
+    func testGoneDetached_runsOffTheMainThread() async {
+        final class ThreadProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var calls = 0
+            private(set) var onMain = 0
+            func record() { lock.lock(); calls += 1; if Thread.isMainThread { onMain += 1 }; lock.unlock() }
+        }
+        let probe = ThreadProbe()
+        let node = NodeProbe(id: UUID(), pageID: UUID(), strokeIDs: [UUID().uuidString])
+        let gone = await NodeInk.goneDetached([node]) { _, _ in probe.record(); return false }.value
+        XCTAssertEqual(gone, [node.id])
+        XCTAssertGreaterThan(probe.calls, 0)
+        XCTAssertEqual(probe.onMain, 0, "the gone check ran on the main thread \(probe.onMain) of \(probe.calls) times")
+    }
+
+    func testIncomingSources_excludeThePageItself_andRepeats() throws {
+        let context = try makeContext()
+        let pages = (notebook("Incoming", pages: 3, in: context).pages ?? []).sorted { $0.index < $1.index }
+        let selfLink = Link(sourcePageID: pages[0].id, destinationPageID: pages[0].id)
+        let fromOne = Link(sourcePageID: pages[1].id, destinationPageID: pages[0].id)
+        let fromOneAgain = Link(sourcePageID: pages[1].id, destinationPageID: pages[0].id)
+        let node = Links.makeNode(on: pages[0], strokeIDs: ["A"], title: "N", anchor: .init(x: 0, y: 0, width: 10, height: 10), in: context)
+        let out = Link(sourcePageID: pages[0].id, destinationPageID: pages[2].id)
+        let links = [selfLink, fromOne, fromOneAgain, node, out]
+        XCTAssertEqual(NotebookDetailView.incomingSourceIDs(to: pages[0].id, links: links), [pages[1].id])
+        XCTAssertEqual(NotebookDetailView.outgoingDestinationIDs(from: pages[0].id, links: links), [pages[2].id])
+    }
+
+    func testMakeNode_withAnID_keepsItFromTheInsert() throws {
+        let context = try makeContext()
+        let page = try XCTUnwrap(notebook("Ident", pages: 1, in: context).pages?.first)
+        let id = UUID()
+        let node = Links.makeNode(on: page, strokeIDs: ["A"], title: "T", anchor: .zero, in: context, id: id)
+        XCTAssertEqual(node.id, id)
+    }
+
     func testNodeInk_aNodeWithUnreadableIDs_isNeverGone() {
         let probe = NodeProbe(id: UUID(), pageID: UUID(), strokeIDs: ["not-a-uuid"])
         XCTAssertTrue(NodeInk.goneIDs([probe]) { _, _ in false }.isEmpty)

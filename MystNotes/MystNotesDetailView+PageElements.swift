@@ -216,7 +216,22 @@ extension NotebookDetailView {
         if canvasIsDirty && canvasPageID == page.id {
             canvasIsDirty = false
             autosaveTask?.cancel()
-            await save(canvasView.drawing, to: page)
+            let drawing = canvasView.drawing
+            let before = page.modifiedAt
+            await save(drawing, to: page)
+            // A successful save stamps the page; an unchanged date means the
+            // write failed. `save` re-marks the canvas dirty when it is still
+            // this page's, but that leaves nothing scheduled - re-arm the
+            // autosave. If the canvas has moved on, the ink exists only in
+            // `drawing`: one more try, so it isn't stranded.
+            if page.modifiedAt == before {
+                if canvasPageID == page.id {
+                    canvasIsDirty = true
+                    scheduleAutosave()
+                } else {
+                    await save(drawing, to: page)
+                }
+            }
         }
         let map = StrokeIDCache.shared.map(for: page.id)
         var ids: [String] = []
@@ -276,9 +291,8 @@ extension NotebookDetailView {
     /// takes it away. Marks the page and saves either way.
     static func applyNode(_ snapshot: NodeSnapshot, present: Bool, on page: Page, in context: ModelContext) {
         if present {
-            let link = Links.makeNode(on: page, strokeIDs: snapshot.strokeIDs, title: snapshot.title,
-                                      anchor: snapshot.anchor, in: context)
-            link.id = snapshot.id
+            Links.makeNode(on: page, strokeIDs: snapshot.strokeIDs, title: snapshot.title,
+                           anchor: snapshot.anchor, in: context, id: snapshot.id)
         } else {
             let id = snapshot.id
             let found = (try? context.fetch(FetchDescriptor<Link>(predicate: #Predicate { $0.id == id }))) ?? []
@@ -304,29 +318,139 @@ extension NotebookDetailView {
         Links.setTitle(link, renameNodeText, in: modelContext)
     }
 
-    /// Every node on this notebook's pages (the Page Map's chips, greying).
-    var notebookNodes: [Link] {
-        let pageIDs = Set(sortedPages.map(\.id))
-        return allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
+    /// Every node on this notebook's pages, from the cache `refreshNodeCache`
+    /// keeps (the Page Map's chips, greying). Not recomputed per body.
+    var notebookNodes: [Link] { nodeCache }
+
+    /// The cache's input: changes when a node is made or removed, or the
+    /// notebook's pages change. O(links) of trivial work, no fetch.
+    struct NodeSetKey: Equatable {
+        var linkCount: Int
+        var nodeFingerprint: Int
+        var pageCount: Int
     }
 
-    /// What `.task(id:)` watches to recompute `goneNodeIDs`: a page's ink
-    /// only changes with its `modifiedAt`, and nodes come and go.
-    struct GoneNodesKey: Equatable {
-        var stamps: [Date?]
+    var nodeSetKey: NodeSetKey {
+        var fingerprint = 0
+        for link in allLinks where Links.isNode(link) { fingerprint ^= link.id.hashValue }
+        return NodeSetKey(linkCount: allLinks.count, nodeFingerprint: fingerprint, pageCount: notebook.pages?.count ?? 0)
+    }
+
+    func refreshNodeCache() {
+        let pageIDs = Set((notebook.pages ?? []).map(\.id))
+        nodeCache = allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
+    }
+
+    /// What `.task(id:)` watches to re-probe the nodes' ink: the node set,
+    /// and each node page's `modifiedAt` (cheap to read; the task itself
+    /// compares the record's `InkStamp`, so a page whose ink didn't change
+    /// is not decoded). The open page is left out while it has unsaved
+    /// ink - its record is about to change and the canvas is the truth.
+    nonisolated struct GoneNodesKey: Equatable {
         var nodeIDs: [UUID]
+        var stamps: [Date?]
     }
 
     var goneNodesKey: GoneNodesKey {
-        GoneNodesKey(stamps: sortedPages.map(\.modifiedAt), nodeIDs: notebookNodes.map(\.id).sorted { $0.uuidString < $1.uuidString })
+        let nodePageIDs = Set(nodeCache.map(\.sourcePageID))
+        let skipped = canvasIsDirty ? canvasPageID : nil
+        let pages = (notebook.pages ?? []).filter { nodePageIDs.contains($0.id) && $0.id != skipped }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        return GoneNodesKey(nodeIDs: nodeCache.map(\.id).sorted { $0.uuidString < $1.uuidString },
+                            stamps: pages.map(\.modifiedAt))
     }
 
     /// Which nodes' ink is gone, read from the records off the main thread.
+    /// Debounced (2 s, so a burst of autosaves while drawing costs nothing),
+    /// and per page: only a page whose record changed on disk is decoded
+    /// again. A page that's being drawn on is left to its last verdict.
     func refreshGoneNodes() async {
-        let probes = NodeInk.probes(of: notebookNodes)
-        let gone = probes.isEmpty ? [] : await NodeInk.goneDetached(probes).value
-        guard !Task.isCancelled, gone != goneNodeIDs else { return }
-        goneNodeIDs = gone
+        try? await Task.sleep(for: .seconds(2))
+        if Task.isCancelled { return }
+        let byPage = Dictionary(grouping: NodeInk.probes(of: nodeCache), by: \.pageID)
+        var cache = goneCache.filter { byPage[$0.key] != nil }
+        let drawingOn = canvasIsDirty ? canvasPageID : nil
+        for (pageID, probes) in byPage where pageID != drawingOn {
+            if Task.isCancelled { return }
+            let result = await NodeInk.recheckDetached(pageID: pageID, probes: probes,
+                                                       previous: cache[pageID], store: drawingStore).value
+            if let result { cache[pageID] = result }
+        }
+        if Task.isCancelled { return }
+        if cache != goneCache { goneCache = cache }
+        let gone = cache.values.reduce(into: Set<UUID>()) { $0.formUnion($1.gone) }
+        if gone != goneNodeIDs { goneNodeIDs = gone }
+    }
+
+    // MARK: Connections panel data
+
+    /// Pages that link to `pageID`, each once, never the page itself.
+    static func incomingSourceIDs(to pageID: UUID, links: [Link]) -> [UUID] {
+        Array(Set(links.lazy.filter { $0.destinationPageID == pageID && $0.sourcePageID != pageID }.map(\.sourcePageID)))
+    }
+
+    /// Pages `pageID` links out to, each once, never the page itself.
+    static func outgoingDestinationIDs(from pageID: UUID, links: [Link]) -> [UUID] {
+        Array(Set(links.lazy.filter { $0.sourcePageID == pageID && $0.destinationPageID != pageID }.map(\.destinationPageID)))
+    }
+
+    /// What the connections snapshot is recomputed on: the open page, the
+    /// links that touch it, whether the card is open, and what is hiding.
+    struct ConnectionsKey: Equatable {
+        var pageID: UUID?
+        var linkPrint: Int
+        var expanded: Bool
+        var hiding: UUID?
+        var presenting: Bool
+    }
+
+    var connectionsKey: ConnectionsKey {
+        guard let id = currentPage?.id else {
+            return ConnectionsKey(pageID: nil, linkPrint: 0, expanded: connectionsExpanded,
+                                  hiding: pendingDeletion?.pageID, presenting: isPresenting)
+        }
+        var hasher = Hasher()
+        for link in allLinks where link.sourcePageID == id || link.destinationPageID == id {
+            hasher.combine(link.id)
+            hasher.combine(link.sourcePageID)
+            hasher.combine(link.destinationPageID)
+            hasher.combine(link.kind)
+            hasher.combine(link.title)
+            hasher.combine(link.anchorX)
+            hasher.combine(link.anchorY)
+        }
+        return ConnectionsKey(pageID: id, linkPrint: hasher.finalize(), expanded: connectionsExpanded,
+                              hiding: pendingDeletion?.pageID, presenting: isPresenting)
+    }
+
+    /// Recomputes the card's data. Collapsed, that is a count and nothing
+    /// fetched; expanded, the page fetches the lists need.
+    func refreshConnections() {
+        guard !isPresenting, let page = currentPage else {
+            if connections != .init() { connections = .init() }
+            return
+        }
+        let hiding = pendingDeletion?.pageID
+        let nodeLinks = nodes(on: page)
+        let nodeEntries = nodeLinks.map { ConnectionsPanel.NodeEntry(id: $0.id, title: $0.title ?? "Node", isGone: false) }
+        var next = ConnectionsPanel.Snapshot()
+        if connectionsExpanded {
+            let entry: (Page) -> ConnectionsPanel.Entry = {
+                .init(id: $0.id, label: LinkedFromStrip.label(for: $0, currentNotebookID: notebook.id))
+            }
+            next.linkedFrom = LinkedFromStrip.sources(linkingTo: page.id, links: allLinks,
+                                                      pages: pagesLinking(to: page.id).filter { $0.id != hiding }).map(entry)
+            next.linksTo = pagesLinked(from: page.id).filter { $0.id != hiding }
+                .sorted { ($0.notebook?.title ?? "", $0.index) < ($1.notebook?.title ?? "", $1.index) }
+                .map(entry)
+            next.nodes = nodeEntries
+            next.count = next.linkedFrom.count + next.linksTo.count + nodeEntries.count
+        } else {
+            next.count = Self.incomingSourceIDs(to: page.id, links: allLinks).filter { $0 != hiding }.count
+                + Self.outgoingDestinationIDs(from: page.id, links: allLinks).filter { $0 != hiding }.count
+                + nodeEntries.count
+        }
+        if next != connections { connections = next }
     }
 
     /// The node links on `page`, in reading order.
