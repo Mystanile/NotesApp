@@ -209,6 +209,16 @@ struct NotebookDetailView: View {
     #endif
 
     @State var isPresenting = false
+    /// Page audio (`MystNotesDetailView+Audio.swift`). The controller keeps
+    /// recording across page turns; the bar shows on request or while recording.
+    @State var audio = PageAudioController()
+    @State var showAudioBar = false
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    /// The page's strokes for the playback veil; rebuilt, never per frame.
+    @State var timelineStrokes: [InkTimelineStroke] = []
+    /// Replay Page's sheet.
+    @State var replaySource: ReplaySource?
+    #endif
     /// Present mode's laser pointer: a fading trail, nothing drawn or saved.
     @State var laserPointerOn = false
     @State var showingGoToPage = false
@@ -306,7 +316,17 @@ struct NotebookDetailView: View {
             SearchIndexer.shared.notebookClosed()
             commitPendingDeletion()
             commitPendingTrash()
+            audio.stop()
         }
+        #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .onChange(of: currentPage?.id) { _, newID in audioPageChanged(to: newID) }
+        .onChange(of: audio.playingRecording?.id) { _, _ in refreshTimelineStrokes() }
+        .onChange(of: canvasPageID) { _, _ in refreshTimelineStrokes() }
+        .onChange(of: canvasIsDirty) { _, dirty in
+            if !dirty, audio.playingRecording != nil { refreshTimelineStrokes() }
+        }
+        .sheet(item: $replaySource) { StrokeReplayView(source: $0) }
+        #endif
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .onChange(of: toolState) { _, _ in applyToolState() }
         // Lines up a "[spin]" or "[mode]" freeze in the log with what led to it.
@@ -390,6 +410,16 @@ struct NotebookDetailView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if currentPage != nil, !isPresenting {
+                    Button { withAnimation(Motion.snappy) { showAudioBar.toggle() } } label: {
+                        Image(systemName: "waveform")
+                            .foregroundStyle(audio.isRecording ? Color.red : Color.accentColor)
+                    }
+                    .accessibilityLabel("Record")
+                    .accessibilityValue(audio.isRecording ? "Recording" : (showAudioBar ? "Bar shown" : "Off"))
+                    .help("Record or play audio for this page")
+                }
+
                 if let page = currentPage, page.type != "whiteboard", !isPresenting {
                     Button { withAnimation(Motion.snappy) { toggleZoomWindow() } } label: {
                         Image(systemName: "rectangle.and.text.magnifyingglass")
@@ -467,6 +497,12 @@ struct NotebookDetailView: View {
                     } label: {
                         Label("Present", systemImage: "play.rectangle")
                     }
+                    Button {
+                        if let page = currentPage { openReplay(for: page) }
+                    } label: {
+                        Label("Replay Page", systemImage: "play.circle")
+                    }
+                    .disabled(isPresenting || currentPage == nil)
                     Button {
                         promptGoToPage()
                     } label: {
@@ -769,7 +805,7 @@ struct NotebookDetailView: View {
                             }
                         }
                         // Last, so it sits over the rest of the bottom edge.
-                        .overlay(alignment: .bottom) { zoomWindowPanel }
+                        .overlay(alignment: .bottom) { bottomOverlays }
                         #endif
                 } else {
                     ProgressView("Loading…")
@@ -839,6 +875,8 @@ struct NotebookDetailView: View {
                 }
                 .allowsHitTesting(false)
             }
+            timelineLayer(for: page, pageSize: CGSize(width: WhiteboardCanvasView.boardSize,
+                                                      height: WhiteboardCanvasView.boardSize))
             if toolState.activeKind == .lasso && !isPresenting {
                 // Same overlay as a paged page, drawn in board coordinates.
                 let board = CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize)
@@ -946,6 +984,8 @@ struct NotebookDetailView: View {
                 isRulerActive: toolState.rulerActive
             )
 
+            timelineLayer(for: page, pageSize: CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize))
+
             if toolState.activeKind == .lasso && !isPresenting {
                 // The loop and the selection box, in page space like the
                 // ink they're around.
@@ -991,6 +1031,8 @@ struct NotebookDetailView: View {
                     onDeleteNode: { deleteNode($0, on: page) }
                 )
             }
+
+            timelineLayer(for: page, pageSize: pageSize)
 
             if zoomWindowVisible {
                 // The area the Zoom Window shows, in page space; its grip
