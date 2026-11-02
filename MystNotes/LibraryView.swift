@@ -33,6 +33,9 @@ struct LibraryView: View {
     /// map's sheet is gone, as with `createdNotebook`.
     @State private var showingMap = false
     @State private var mapPick: Notebook?
+    /// Set when the Library Map's Open Page Map was used: the notebook
+    /// opens straight onto its Page Map.
+    @State private var openWithPageMap = false
 
     @State private var itemToRename: LibraryItem?
     @State private var renameText = ""
@@ -448,14 +451,27 @@ struct LibraryView: View {
             notebookToOpen = mapPick
             mapPick = nil
         }) {
-            LibraryGraphView(notebooks: storedNotebooks) { notebook in
-                mapPick = notebook
-                showingMap = false
-            }
+            LibraryGraphView(notebooks: storedNotebooks,
+                             onOpenNotebook: { notebook in
+                                 openWithPageMap = false
+                                 mapPick = notebook
+                                 showingMap = false
+                             },
+                             onOpenPageMap: { notebook in
+                                 openWithPageMap = true
+                                 mapPick = notebook
+                                 showingMap = false
+                             })
             .presentationSizing(.page)
         }
         .navigationDestination(item: $notebookToOpen) { notebook in
-            LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }
+            LockedNotebookGate(notebook: notebook) {
+                NotebookDetailView(notebook: notebook, initialShowsPageMap: openWithPageMap)
+            }
+        }
+        .onChange(of: notebookToOpen) { _, opened in
+            // One-shot: only the open that came from the map's button.
+            if opened == nil { openWithPageMap = false }
         }
         .alert("Rename", isPresented: renameAlertBinding) {
             TextField("Name", text: $renameText)
