@@ -9,6 +9,17 @@ Every item ends with how it was checked:
 - [tests only]: automated tests pass, but nobody used it on a device.
 - [not tested]: no test and no device check.
 
+## Autonomous run: Nov 2, 2026 (cloud session, branch `linework-2026-11-02`)
+
+The user listed 16 items and left Claude to work alone for the day. Decisions:
+
+- **Nothing in this run was built.** The session ran in a Linux container with no Xcode. Every item from today is tagged **[not built]**: it was only syntax-checked with the Linux `swiftc -parse`, which does not type-check UIKit, SwiftUI or PencilKit. Tests were written but not run. First job on the Mac: build, fix the compile errors, run `.claude/hooks/run-tests.sh`.
+- **Branch:** `linework-2026-11-02`, started from `m2-graph` at `4a1b45f`. Pushed to GitHub. `m2-graph` is untouched.
+- **Commit gate:** `guard.sh` lets a commit through without a test log only when `xcodebuild` is missing and the message says `[not built]`. The user approved this exemption.
+- **Name:** the app is now **Linework** (user's pick). Only user-facing names change. The bundle id `com.mozynas.Mystnotes`, the sync folder name `Mystnotes`, the Xcode target and the Swift file names stay, so the existing library and sync folder keep working. The GitHub repo rename is for the user (Settings, rename to `linework`); GitHub redirects the old URL.
+- **AI (reverses the locked "no network AI in v1" and the §5 non-goal, at the user's request):** opt-in, off by default, bring-your-own keys for Featherless (text) and ElevenLabs (voice), kept in the Keychain. Nothing is sent unless the user asks for it. The AI can write on a page in the user's own handwriting, built from an alphabet sheet they write once.
+- **`/design-taste-frontend-v1` was not installed** in this session. UI work followed Apple's HIG instead.
+
 ## Autonomous run: decided by the user on 2026-10-25
 
 The user asked Claude to finish the plan alone. These decisions hold for the whole run:
