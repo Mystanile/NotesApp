@@ -87,7 +87,21 @@ The user listed 16 items and left Claude to work alone for the day. Decisions:
 
 Owed on the iPad, round 2: library Arrange drag (system onDrag in a lazy grid; a cancelled drag may leave the preview order until Done); the sort and layout buttons crowding a narrow toolbar; dark paper ink contrast; the laser overlay blocking the Pencil; Cmd-G; the All Pages sheet and its confirmation dialog; mention pruning on blur; ghost-card navigation across notebooks; the zoom window's pad-to-page mapping at several page zooms, its auto-advance and wrap, and the size clamp on thin pens. Known gap: if the page refuses a pad stroke (the canvas changed under it) and you then turn the page or close the window, that stroke is lost with the pad; it was never on a page.
 
-Not done from the M2 plan: task 9 (transclusion), task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check).
+### Round 3, Nov 2 night (all [not built])
+
+- [x] **Lasso:** the floating toolbar is gone; the system edit menu appears when a loop closes and after a move (Cut, Copy, Paste, Duplicate, Delete, Colour, Copy as Image, Convert to Text, Link This To, Make Node, Tape), a ... button brings it back, right-click on a Mac, Cmd-D and Delete. Root cause of "only Delete and Duplicate work" (from the code, not reproduced): Copy gave no feedback, Cut took the toolbar and its Paste away, and Paste was greyed by a stale flag. Recolour now edits only the selected strokes in one pass.
+- [x] **Audio (M3):** Record while you write; recordings sync with their page (format 5) and export to `Recordings/`; playback veils ink written after the playhead; with the lasso and playback paused, tap a stroke to jump there. A page that loses a merge sends its audio to the trash.
+- [x] **Replay Page (M3):** the page redraws stroke by stroke, gaps shortened, 1x/2x/4x.
+- [x] **Ink transclusion (M2 task 9):** Insert > Node... places a live copy of any node's ink; drag, resize, Open Source, undoable Remove; placeholder when the source ink is erased; in sidebar thumbnails and exports. Not yet in the All Pages grid or library cover previews (they pass no transclusions).
+- [x] **Tape and Review (M4 seed):** Lasso > Tape covers ink; tap to peel. More > Review (N due) runs spaced repetition (SM-2 style) over the notebook's tapes; the schedule syncs per link (`Link.reviewState`, format 5). Due badges in the library.
+- [x] **Search reads photos:** imported images are OCR'd in the background and searchable ("in a photo").
+- [x] **Print and clickable links in text boxes.** (If the last builder's commit is missing from git log, this item was not finished.)
+
+Format 5 now also carries: recordings (with their audio payloads), tape links, `reviewState`. Same rule: same build on every device before syncing.
+
+Owed on the iPad, round 3: the edit menu appearing at the selection and after a drag, its Colour submenu tint, right-click on the Mac, Cmd-D; recolour speed on a dense page; microphone permission, recording across page turns, playback rate, the veil's alignment, tap-to-seek; Replay fitting the page; inserting a node and dragging it, live update when its source changes; tape covering and peeling, Pencil strokes starting on a tape (they hit the tape), Review with real handwriting; photo OCR on real photos.
+
+Not done from the M2 plan: task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check).
 
 ## Autonomous run: decided by the user on 2026-10-25
 

@@ -98,7 +98,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 |---|---|---|---|---|
 | Instant search with highlight | Both highlight the match on the page when you open a result. | Results open the page but do not mark where the match is. Search runs on each keystroke without a ranked list. | M | today |
 | Search inside a notebook | GoodNotes finds text in the open document with next and previous. | Search is library-wide only. | S | today (part of instant search) |
-| Text in photos | OneNote finds text inside pictures. | Imported photos are not OCR'd. Only scans and PDF text layers are. | S | open |
+| Text in photos | OneNote finds text inside pictures. | Imported photos are not OCR'd. Only scans and PDF text layers are. | S | done Nov 2 |
 | Languages | GoodNotes reads handwriting in many languages. | OCR is English only (`en-US`). | S | open |
 | Semantic search | GoodNotes AI finds notes by meaning. | Keyword only. | L | planned (M4) |
 
@@ -111,7 +111,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Comments | GoodNotes attaches comments to objects. | Not present. Comments only mean something with sharing. | M | non-goal (follows collaboration) |
 | Cloud services | GoodNotes opens and saves back to Box and Dropbox. OneNote is on OneDrive. | Folder sync covers any provider the Files app sees. No open-and-save-back. | M | open |
 | Tool settings sync | GoodNotes syncs pen colours and toolbar settings across devices. | Presets and toolbar choices stay on one device. | S | open |
-| Print | Both print. | No print action. `UIPrintInteractionController` is unused. | S | open |
+| Print | Both print. | No print action. `UIPrintInteractionController` is unused. | S | done Nov 2 |
 
 ## AI
 
@@ -139,7 +139,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Animated toolbar | GoodNotes' floating toolbar slides in and out and can be moved and hidden. | Toolbar choices exist, but no animation and no free placement. | M | today (UI polish) |
 | Customisable toolbar | GoodNotes picks which tools sit on the toolbar. | Partly done ("toolbar choices" in Settings). | S | today (UI polish) |
 | Battery | GoodNotes backs up less often to save battery. Reviewers notice drain. | No battery work. Sync, OCR and backup cadence are not tuned for it. | M | today |
-| Clickable links | GoodNotes makes pasted URLs clickable. | Text boxes do not detect web links. | S | open |
+| Clickable links | GoodNotes makes pasted URLs clickable. | Text boxes do not detect web links. | S | done Nov 2 |
 | Highlight typed text | GoodNotes highlights text in text boxes. | Text boxes have colour but no highlight. | S | open |
 | Polished first run | Both ship large template and sticker libraries. | A tutorial notebook and a few stickers. | L | non-goal (marketplace) |
 

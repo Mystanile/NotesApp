@@ -30,9 +30,11 @@ Linework is the answer to "what if a notes app were built like a database engine
 
 **Organize.** Sort the library by date or title, or drag notebooks into your own order. Grid or list. Every page of a notebook in one grid, with multi-select to duplicate, copy, export or delete.
 
-**Find.** Search covers typed text, PDF text layers and your own handwriting, recognised on device. Handwriting is indexed in the background, so a search is instant. Tap a result and the match pops out in a magnifier on the page.
+**Listen and replay.** Record a lecture while you write; playing it back dims the ink you hadn't written yet, and tapping a stroke jumps to that moment. Replay any page stroke by stroke.
 
-**Study.** An optional AI study helper summarises a page, explains it, quizzes you on it, or reads it aloud. It runs on your own Featherless and ElevenLabs keys, is off by default, and sends nothing unless you ask. It can even write its answer on the page in your handwriting, from an alphabet you write once.
+**Find.** Search covers typed text, PDF text layers, text in photos and your own handwriting, recognised on device. Handwriting is indexed in the background, so a search is instant. Tap a result and the match pops out in a magnifier on the page.
+
+**Study.** Tape over any part of your notes and review it with spaced repetition. An optional AI study helper summarises a page, explains it, quizzes you on it, or reads it aloud. It runs on your own Featherless and ElevenLabs keys, is off by default, and sends nothing unless you ask. It can even write its answer on the page in your handwriting, from an alphabet you write once.
 
 **Keep.** Export a page, a notebook, Markdown, or the whole library. A daily backup goes to any folder. Deleted pages sit in a trash for 30 days. Everything works offline with no account.
 
