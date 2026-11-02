@@ -479,6 +479,10 @@ struct NotebookDetailView: View {
                     Section("Export Notebook") {
                         Button("Export All Pages as PDF") { exportNotebookAsPDF() }
                     }
+                    Section("Print") {
+                        Button("Print Page") { printPage() }
+                        Button("Print Notebook") { printNotebook() }
+                    }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }

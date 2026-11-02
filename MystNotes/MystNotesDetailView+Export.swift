@@ -60,6 +60,34 @@ extension NotebookDetailView {
         presentPDF(data, named: notebook.title)
     }
 
+    func printPage() {
+        guard let page = currentPage else { return }
+        saveCurrentPage(blocking: true)
+        printPDF(PageRenderer.pdfData(for: [(page: page, artwork: artwork(for: page))]))
+    }
+
+    func printNotebook() {
+        saveCurrentPage(blocking: true)
+        let entries = sortedPages.map { (page: $0, artwork: artwork(for: $0)) }
+        guard !entries.isEmpty else { return }
+        printPDF(PageRenderer.pdfData(for: entries))
+    }
+
+    /// Hands PDF data to the system print sheet; the job is named for the notebook.
+    private func printPDF(_ data: Data) {
+        guard UIPrintInteractionController.isPrintingAvailable else {
+            exportMessage = "Printing isn't available on this device."
+            return
+        }
+        let info = UIPrintInfo(dictionary: nil)
+        info.outputType = .general
+        info.jobName = notebook.title
+        let controller = UIPrintInteractionController.shared
+        controller.printInfo = info
+        controller.printingItem = data
+        controller.present(animated: true, completionHandler: nil)
+    }
+
     func presentPDF(_ data: Data, named name: String) {
         do {
             pdfExportURL = PDFExport(url: try PageRenderer.writeTemporaryPDF(data, named: name))

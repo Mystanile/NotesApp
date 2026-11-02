@@ -158,6 +158,11 @@ private struct TextBlockView: View {
 
     private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
 
+    /// Not editing and the text holds a URL.
+    private var showsLinks: Bool {
+        !isFocused && !TextLinks.ranges(in: block.content).isEmpty
+    }
+
     @Environment(\.modelContext) private var modelContext
     @FocusState private var isFocused: Bool
     // Plain (Double, Double) rather than CGPoint on purpose: CGPoint's x/y
@@ -220,8 +225,20 @@ private struct TextBlockView: View {
     var body: some View {
         TextField("Type…", text: $block.content, selection: $selection, axis: .vertical)
             .font(font)
-            .foregroundStyle(Color(hex: block.textColorHex))
+            .foregroundStyle(showsLinks ? Color.clear : Color(hex: block.textColorHex))
             .focused($isFocused)
+            // Read-only: the same text again with its URLs tappable. A tap
+            // anywhere else on it starts editing, as on the field beneath.
+            .overlay(alignment: .topLeading) {
+                if showsLinks {
+                    Text(TextLinks.attributed(block.content))
+                        .font(font)
+                        .foregroundStyle(Color(hex: block.textColorHex))
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { isFocused = true }
+                }
+            }
             .padding(6)
             // Width is the wrap width; height is a floor the text can grow
             // past, so a box never clips what's typed into it.

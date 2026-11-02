@@ -95,7 +95,7 @@ Owed on the iPad, round 2: library Arrange drag (system onDrag in a lazy grid; a
 - [x] **Ink transclusion (M2 task 9):** Insert > Node... places a live copy of any node's ink; drag, resize, Open Source, undoable Remove; placeholder when the source ink is erased; in sidebar thumbnails and exports. Not yet in the All Pages grid or library cover previews (they pass no transclusions).
 - [x] **Tape and Review (M4 seed):** Lasso > Tape covers ink; tap to peel. More > Review (N due) runs spaced repetition (SM-2 style) over the notebook's tapes; the schedule syncs per link (`Link.reviewState`, format 5). Due badges in the library.
 - [x] **Search reads photos:** imported images are OCR'd in the background and searchable ("in a photo").
-- [x] **Print and clickable links in text boxes.** (If the last builder's commit is missing from git log, this item was not finished.)
+- [x] **Print and clickable links in text boxes.**
 
 Format 5 now also carries: recordings (with their audio payloads), tape links, `reviewState`. Same rule: same build on every device before syncing.
 
