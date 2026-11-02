@@ -30,10 +30,10 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Line angle freedom | GoodNotes straightens a line at any angle you drew it. | Our recognizer snaps lines near an axis (10 degree tolerance) and users fight it. | S | today |
 | Pen picker | GoodNotes 6 shows chevrons on toolbar buttons for quick access to favourite pen and highlighter settings. | Our presets row works, but the picker is plain and has no recent colours. | S | today |
 | Recent colours and eyedropper | Both keep recently used colours. OneNote has an eyedropper. | We have 8 fixed colours plus the system picker. No history, no eyedropper. | S | today (pen picker polish) |
-| Ruler | GoodNotes has a ruler tool. OneNote has a ruler for straight lines at any angle. | No ruler at all. `PKCanvasView.isRulerActive` is unused. | S | open |
-| Zoom window | GoodNotes has a zoom window: write large in a box at the bottom, ink lands small on the page, and it advances along the line. | Nothing like it. You zoom the whole page instead. | M | open |
+| Ruler | GoodNotes has a ruler tool. OneNote has a ruler for straight lines at any angle. | No ruler at all. `PKCanvasView.isRulerActive` is unused. | S | done Nov 2 |
+| Zoom window | GoodNotes has a zoom window: write large in a box at the bottom, ink lands small on the page, and it advances along the line. | Nothing like it. You zoom the whole page instead. | M | done Nov 2 |
 | Tape | GoodNotes tape covers keywords. Tap to reveal. Used for self-testing. | No tape tool. | S | planned (M4 cloze on ink covers the same need) |
-| Laser pointer | GoodNotes presentation mode has a laser pointer that fades. | Our Present mode only hides chrome. No laser, no pointer. | S | open |
+| Laser pointer | GoodNotes presentation mode has a laser pointer that fades. | Our Present mode only hides chrome. No laser, no pointer. | S | done Nov 2 |
 | Selective eraser | GoodNotes 6 erases only one content type, such as highlights. | Our eraser removes any ink it touches. | M | open |
 | Stroke stabilization | GoodNotes smooths handwriting with separate settings for writing and drawing. | No smoothing. We use raw PencilKit strokes. | M | open |
 | Reduce latency | GoodNotes has a predicted-touches setting to cut ink latency. | We rely on PencilKit's default. No setting. | S | open (PencilKit already predicts; check before building) |
@@ -44,7 +44,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Diagram connectors | GoodNotes 6 adds connected shapes from a dot on a shape's edge, with curved or elbow connectors. | Shapes are ink. No connectors that stay attached. | L | open |
 | Layers | GoodNotes 6 (early access) has layers you can hide and export separately. | No layers. Imported art always sits under the ink. | L | open |
 | Object lock | GoodNotes locks an object so it cannot move by accident. | No lock on images, text boxes or stickers. | S | open |
-| Finger drawing | Both let you draw with a finger. | On iPad the finger never draws (`.pencilOnly` is hard coded). No setting to change it. | S | open |
+| Finger drawing | Both let you draw with a finger. | On iPad the finger never draws (`.pencilOnly` is hard coded). No setting to change it. | S | done Nov 2 |
 | Insert space | OneNote inserts space in ink and pushes content down. GoodNotes Smart Ink adds space between lines on other platforms. | Not present. | M | planned (M5) |
 | Ink replay | OneNote on Windows and GoodNotes with audio replay strokes in order. | No replay. | L | planned (M3) |
 | Math | GoodNotes Math Assist checks handwritten math, solves matrices and draws 2D graphs. OneNote has a math assistant on Windows. | No math recognition. | L | planned (M4) |
@@ -54,10 +54,10 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Gap | What they do | What we lack | Effort | Status |
 |---|---|---|---|---|
 | Sidebar drag reorder | GoodNotes reorders pages in the sidebar by drag, with a grey drop highlight. | A hold-and-drag exists in the sidebar but needs polish and a clear drop target. | S | today |
-| Page grid view | GoodNotes shows every page as a grid of thumbnails to scan, reorder and pick. | Only the narrow sidebar list. No full-screen grid. | M | open |
+| Page grid view | GoodNotes shows every page as a grid of thumbnails to scan, reorder and pick. | Only the narrow sidebar list. No full-screen grid. | M | done Nov 2 |
 | Multi-page select | GoodNotes selects many pages to move, copy, rotate, export or delete at once. | Every page action works on one page. | M | open |
-| Duplicate page | GoodNotes duplicates a page with its ink. | "New Page Like This" copies the paper only. Copy to Notebook works across notebooks. | S | open |
-| Go to page | GoodNotes shows "3 of 20" and lets you jump to a page number. | No page indicator and no jump to a number. | S | open |
+| Duplicate page | GoodNotes duplicates a page with its ink. | "New Page Like This" copies the paper only. Copy to Notebook works across notebooks. | S | done Nov 2 |
+| Go to page | GoodNotes shows "3 of 20" and lets you jump to a page number. | No page indicator and no jump to a number. | S | done Nov 2 |
 | Continuous scroll | GoodNotes scrolls pages vertically or horizontally as one long strip. | One page at a time with a swipe. | L | open |
 | Document tabs | GoodNotes keeps several documents open in tabs. | No tabs. Multi-window covers part of it. | M | open |
 | Two documents side by side | GoodNotes split view shows two notebooks at once in one window. | Only through two system windows. | M | open |
@@ -73,7 +73,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | PDF text select | GoodNotes selects, copies and highlights a PDF's real text. | PDFs are sharp and searchable, but you cannot select their text. | M | open (in `BACKLOG.md`) |
 | PDF links and outline | GoodNotes follows a PDF's internal links and shows its outline. | An imported PDF's own links and bookmarks are ignored. | M | open |
 | Custom templates from a file | GoodNotes imports any PDF or image as a reusable template. | Six built-in papers. "New Page Like This" reuses an imported page, but there is no saved template list. | M | today |
-| Paper colour and spacing | GoodNotes offers white, yellow and dark paper and several line spacings. | Paper is always white. Line spacing is fixed at 32 pt. | S | open |
+| Paper colour and spacing | GoodNotes offers white, yellow and dark paper and several line spacings. | Paper is always white. Line spacing is fixed at 32 pt. | S | done Nov 2 |
 | Flashcards | GoodNotes has study sets with spaced repetition. | Not present. | L | planned (M4) |
 | Quiz Me | GoodNotes generates quizzes from your notes. | Not present. | M | today (AI study helper) |
 | Summaries | GoodNotes AI summarises notes and recordings. | Not present. | M | today (AI study helper) |
@@ -84,8 +84,8 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 
 | Gap | What they do | What we lack | Effort | Status |
 |---|---|---|---|---|
-| Library sort | GoodNotes sorts by name, date created or date modified, ascending or descending. | The library has fixed sorts. No picker. | S | open |
-| List view | GoodNotes switches the library between grid and list. | Grid only. | S | open |
+| Library sort | GoodNotes sorts by name, date created or date modified, ascending or descending. | The library has fixed sorts. No picker. | S | done Nov 2 (plus a custom order) |
+| List view | GoodNotes switches the library between grid and list. | Grid only. | S | done Nov 2 |
 | Folder colours | GoodNotes 6 picks any folder colour by wheel, hex or RGB. | Folders have no colour. | S | open |
 | Multi-select in library | GoodNotes selects many notebooks to move, duplicate or delete. | One notebook at a time. | M | open |
 | Tag summary | OneNote tags lines (To Do, Important) and builds a summary of every tagged item. | Tags are per page. No line-level tags, no summary. | M | open |
@@ -157,6 +157,8 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Price | OneNote is free. GoodNotes is paid for most features. | Not a gap. Linework is free with no limits. | | |
 
 ## Top 8 quick wins not otherwise planned today
+
+**Nov 2, 2026, evening: all eight are built** ([not built] on the branch: written, never compiled). See PLAN.md.
 
 Ranked by value for the effort. Each is small, needs no backend and fits SwiftUI and PencilKit. Each was confirmed missing in the code.
 

@@ -24,9 +24,11 @@ Linework is the answer to "what if a notes app were built like a database engine
 
 ## What it does
 
-**Write.** Five ink types plus a highlighter, both erasers, a fill tool and a lasso that moves, resizes and rotates. The toolbar is custom and drives PencilKit directly, so the Pencil keeps PencilKit's low-latency path. Hold at the end of a stroke and a rough line, arrow, circle or polygon snaps clean. Lines keep exactly the ends you drew.
+**Write.** Five ink types plus a highlighter, both erasers, a fill tool and a lasso that moves, resizes and rotates. The toolbar is custom and drives PencilKit directly, so the Pencil keeps PencilKit's low-latency path. Hold at the end of a stroke and a rough line, arrow, circle or polygon snaps clean. Lines keep exactly the ends you drew. There's a ruler, a zoom window for small handwriting, white, cream or dark paper, and a laser pointer for presenting.
 
 **Connect.** Link any page or lassoed region to another page, even across notebooks. Every page shows what links to it. Type `[[` in a text box to mention a page. Tag pages, and open the Page Map to see a notebook as a graph you can rearrange.
+
+**Organize.** Sort the library by date or title, or drag notebooks into your own order. Grid or list. Every page of a notebook in one grid, with multi-select to duplicate, copy, export or delete.
 
 **Find.** Search covers typed text, PDF text layers and your own handwriting, recognised on device. Handwriting is indexed in the background, so a search is instant. Tap a result and the match pops out in a magnifier on the page.
 

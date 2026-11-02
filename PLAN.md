@@ -72,10 +72,22 @@ The user listed 16 items and left Claude to work alone for the day. Decisions:
 - [x] Instant search, background OCR, Quick Look lens on the match; Draw with Finger (`44018f0`).
 - [x] Custom page templates from a PDF or image (`de10801`).
 - [x] AI study helper: Featherless and ElevenLabs on your own keys, study panel, quizzes, read aloud, write the answer on the page in your own handwriting (`c6e3a83`, `42ddbdb`, `3dbf55d`, `81917ca`).
-- [x] `Docs/COMPETITIVE_GAPS.md`: about 85 gaps against GoodNotes and OneNote, with a top-8 of quick wins. Done from it today: finger drawing. Still open from the top 8: laser pointer in Present, duplicate page and go-to-page, paper colour and line spacing, page grid view, zoom window, library sort and list view.
+- [x] `Docs/COMPETITIVE_GAPS.md`: about 85 gaps against GoodNotes and OneNote, with a top-8 of quick wins. Done from it in round 1: finger drawing and the ruler. The rest of the top 8 were built in round 2 (below).
 - [x] README rewritten as a portfolio piece (`13e74dd`).
 
-Not done from the M2 plan: task 6 (mention integrity, `[[` across notebooks), task 9 (transclusion), task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check). The Page Map has no ghost cards for cross-notebook links yet, and the Library Map can't open a notebook straight into its Page Map.
+### Round 2, Nov 2 evening (all [not built])
+
+- [x] Compile audit of every file written today, in three groups. Fixed: a main-actor call from a nonisolated struct (`LibraryMapData.layoutInput`), a nested `Body` type colliding with `ButtonStyle.Body`, tuple key paths in `ForEach`, main-actor reads inside `Canvas` closures, CGFloat/Double mixes, test thread probes, and stale "Mystnotes Backup" strings in two test files. `GraphForceLayout` and `GraphFilter` typecheck under Swift 6 with the Linux compiler. The project builds as Swift 5 with approachable concurrency, so most isolation issues are warnings, not errors.
+- [x] Library sorting (user request): Date Edited, Date Created, Title or Custom, either direction, Grid or List, remembered per device. Custom: Arrange, then drag. `Notebook.manualOrder` syncs as a notebook setting (format 5, `liftModifiedAt: false` so a reorder doesn't change Edited dates). Folder custom order is per device: folders have no settings clock. Moving a notebook to another folder clears its position.
+- [x] Laser pointer in Present, Duplicate Page (with ink, new stroke ids), Go to Page (Cmd-G, or tap "Page N of M").
+- [x] Paper colour (white, cream, dark) and line spacing (narrow, normal, wide), app-wide. Dark is writing-only: exports and thumbnails stay white.
+- [x] All Pages grid with multi-select: duplicate, copy to notebook, export PDF, delete to trash.
+- [x] Mentions: labels stored, pruned exactly on text-box blur, `[[` suggestions across notebooks (M2 task 6). Page Map ghost cards for cross-notebook neighbours. Library Map's Open Page Map opens a notebook straight onto its map.
+- [x] Zoom window: a magnified writing pad docked at the bottom; strokes land scaled in the target box on the page as one undo step each, and the box advances along the line.
+
+Owed on the iPad, round 2: library Arrange drag (system onDrag in a lazy grid; a cancelled drag may leave the preview order until Done); the sort and layout buttons crowding a narrow toolbar; dark paper ink contrast; the laser overlay blocking the Pencil; Cmd-G; the All Pages sheet and its confirmation dialog; mention pruning on blur; ghost-card navigation across notebooks; the zoom window's pad-to-page mapping at several page zooms, its auto-advance and wrap, and the size clamp on thin pens.
+
+Not done from the M2 plan: task 9 (transclusion), task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check).
 
 ## Autonomous run: decided by the user on 2026-10-25
 
