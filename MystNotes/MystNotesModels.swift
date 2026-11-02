@@ -349,6 +349,15 @@ final class Recording {
     var fileRef: String = ""
     var title: String?
     var createdAt: Date = Date()
+    /// On-device transcript (M3), plain text. Derived data like
+    /// `Page.recognizedTextCache`: writing it does NOT call
+    /// `Page.markModified` (a transcript must never out-rank a real edit on
+    /// another device). It rides along in the `RecordingDTO` the next time
+    /// the page is pushed.
+    var transcript: String?
+    /// JSON `[{"start": s, "end": s, "text": t}]`, seconds into the audio.
+    /// See `TranscriptSegment`.
+    var transcriptSegments: String?
 
     init(page: Page? = nil, startedAt: Date? = nil, duration: Double = 0,
          fileRef: String = "", title: String? = nil) {

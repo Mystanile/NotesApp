@@ -48,6 +48,7 @@ import CryptoKit
 /// Also in 5: `PageDTO.recordings` (audio recorded on a page; each file is a
 /// content-addressed payload in `files/`). A format-4 build would drop them
 /// on its next write of the page. Still one version for the same reason.
+/// Also in 5: `RecordingDTO.transcript` / `transcriptSegments` (optional).
 let librarySnapshotFormatVersion = 5
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
@@ -377,6 +378,12 @@ nonisolated struct RecordingDTO: Codable {
     /// See `PageDTO.drawingHash`.
     var fileHash: String?
     var title: String?
+    /// Format 5: on-device transcript (plain text) and its timed segments
+    /// (JSON string). Absent before and until transcribed. Derived data:
+    /// they never bump `Page.modifiedAt`, so they travel on the next push
+    /// of the page, as the OCR fields do.
+    var transcript: String? = nil
+    var transcriptSegments: String? = nil
 }
 
 nonisolated struct TextBlockDTO: Codable {

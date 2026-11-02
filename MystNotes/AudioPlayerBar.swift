@@ -24,6 +24,7 @@ struct AudioPlayerBar: View {
     @Environment(\.openURL) private var openURL
     @State private var chosenID: UUID?
     @State private var pendingDelete: Recording?
+    @State private var showTranscript = false
 
     private var recordings: [Recording] { Recording.ordered(page.recordings ?? []) }
 
@@ -41,6 +42,7 @@ struct AudioPlayerBar: View {
                 recordingRow
             } else {
                 idleRow
+                if let current = selected { transcriptSection(for: current) }
             }
             if audio.access == .denied || audio.message != nil {
                 notice
@@ -134,6 +136,72 @@ struct AudioPlayerBar: View {
                     .foregroundStyle(.secondary)
                     .padding(.trailing, Space.s)
             }
+        }
+    }
+
+    // MARK: Transcript
+
+    @ViewBuilder
+    private func transcriptSection(for current: Recording) -> some View {
+        DisclosureGroup(isExpanded: $showTranscript) {
+            let segments = current.segments
+            if audio.transcribing.contains(current.id) {
+                HStack(spacing: Space.s) {
+                    ProgressView().controlSize(.small)
+                    Text("Transcribing on this device")
+                        .font(Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if segments.isEmpty {
+                if let plain = current.transcript, !plain.isEmpty {
+                    Text(plain).font(Typography.caption).foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        audio.transcribe(current)
+                    } label: {
+                        Label("Transcribe", systemImage: "text.quote")
+                            .font(Typography.label)
+                    }
+                    .buttonStyle(.plain)
+                    .minimumHitTarget()
+                    .accessibilityLabel("Transcribe this recording")
+                }
+            } else {
+                let loaded = audio.playingRecording?.id == current.id
+                let active = loaded ? TranscriptSegment.index(at: audio.currentTime, in: segments) : nil
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                            Button {
+                                audio.seek(to: segment.start, in: current)
+                                onSeek?(segment.start)
+                            } label: {
+                                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                                    Text(Recording.clock(segment.start))
+                                        .font(Typography.mono)
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                    Text(segment.text)
+                                        .font(Typography.caption)
+                                        .multilineTextAlignment(.leading)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, Space.s)
+                                .background(index == active ? Color.accentColor.opacity(0.18) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(Recording.clock(segment.start)), \(segment.text)")
+                            .accessibilityAddTraits(index == active ? .isSelected : [])
+                        }
+                    }
+                }
+                .frame(maxHeight: 160)
+            }
+        } label: {
+            Text("Transcript")
+                .font(Typography.label)
         }
     }
 

@@ -58,6 +58,11 @@ enum SearchIndex {
         // (O(1) on UTF-8) catches a re-read that lands on the same date.
         hasher.combine(page.recognizedTextCache?.utf8.count ?? -1)
         for doc in importedDocuments { hasher.combine(doc.fileRef); hasher.combine(doc.pdfPageIndex) }
+        // A transcript lands later, without the page's clocks moving.
+        for recording in Recording.ordered(page.recordings ?? []) {
+            hasher.combine(recording.id)
+            hasher.combine(recording.transcript?.count ?? -1)
+        }
         // Photo text arrives later, from the background pass, without the
         // page's clocks moving: key on which photos have text and how much.
         for doc in importedDocuments where isPhoto(doc) {
@@ -73,7 +78,8 @@ enum SearchIndex {
     /// relationship from `Page` to `ImportedDocument`, so callers resolve
     /// them) - every PDF page on it contributes its text.
     static func searchableText(for page: Page, importedDocuments: [ImportedDocument],
-                               imageText: ImageTextCache = .shared) -> String {
+                               imageText: ImageTextCache = .shared,
+                               includeRecordings: Bool = true) -> String {
         var parts: [String] = []
 
         if let title = page.title, !title.isEmpty {
@@ -95,6 +101,7 @@ enum SearchIndex {
         }
 
         parts.append(contentsOf: photoTexts(in: importedDocuments, imageText: imageText))
+        if includeRecordings { parts.append(contentsOf: recordingTranscripts(of: page)) }
 
         return parts.joined(separator: "\n").lowercased()
     }
@@ -130,6 +137,27 @@ enum SearchIndex {
         let withoutPhotos = searchableText(for: page, importedDocuments: importedDocuments.filter { !isPhoto($0) },
                                            imageText: imageText)
         return withoutPhotos.contains(needles) ? nil : "in a photo"
+    }
+
+    // MARK: - Recordings
+
+    /// The transcript of each recording on the page that has one.
+    static func recordingTranscripts(of page: Page) -> [String] {
+        Recording.ordered(page.recordings ?? []).compactMap { recording in
+            guard let text = recording.transcript, !text.isEmpty else { return nil }
+            return text
+        }
+    }
+
+    /// "in a recording" when the (lowercased) `needles` match only a
+    /// recording's transcript, nil otherwise.
+    static func recordingSnippetLabel(for page: Page, importedDocuments: [ImportedDocument], needles: String,
+                                      imageText: ImageTextCache = .shared) -> String? {
+        guard !needles.isEmpty,
+              recordingTranscripts(of: page).contains(where: { $0.lowercased().contains(needles) }) else { return nil }
+        let without = searchableText(for: page, importedDocuments: importedDocuments,
+                                     imageText: imageText, includeRecordings: false)
+        return without.contains(needles) ? nil : "in a recording"
     }
 
     /// `snippet` prefixed with its source label, if it has one.

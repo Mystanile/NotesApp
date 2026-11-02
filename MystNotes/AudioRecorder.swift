@@ -51,6 +51,8 @@ final class PageAudioController: NSObject, AVAudioPlayerDelegate, AVAudioRecorde
     private(set) var access: MicrophoneAccess = .undetermined
     /// A calm, user-facing sentence when something could not happen.
     var message: String?
+    /// Recordings being transcribed right now.
+    private(set) var transcribing: Set<UUID> = []
     /// The page the current recording is being made on.
     private(set) var recordingPageID: UUID?
     /// When the current recording began (wall clock). Strokes written after
@@ -193,6 +195,45 @@ final class PageAudioController: NSObject, AVAudioPlayerDelegate, AVAudioRecorde
         do { try context.save() } catch {
             AppLog.note("audio", "save failed: \(error)")
         }
+        transcribe(recording, announce: false)
+    }
+
+    // MARK: Transcription
+
+    /// Transcribes `recording` on device, off the main thread, and stores the
+    /// result. Derived data: this does not call `Page.markModified`; the
+    /// transcript syncs with the page's next push. A failure or an empty
+    /// result leaves the recording as it was; `announce` decides whether the
+    /// user is told (a manual tap is, the automatic pass is not).
+    func transcribe(_ recording: Recording, announce: Bool = true) {
+        let id = recording.id
+        guard !transcribing.contains(id) else { return }
+        let url = directory().appendingPathComponent(recording.fileRef)
+        guard !recording.fileRef.isEmpty, FileManager.default.fileExists(atPath: url.path) else {
+            if announce { message = "This recording's audio hasn't arrived on this device yet." }
+            return
+        }
+        transcribing.insert(id)
+        let task = RecordingTranscriber.transcribeDetached(fileURL: url, localeIdentifier: Locale.current.identifier)
+        Task { [weak self, weak recording] in
+            let outcome = await task.result
+            guard let self else { return }
+            transcribing.remove(id)
+            switch outcome {
+            case .success(let segments) where !segments.isEmpty:
+                guard let recording, let context = recording.modelContext else { return }
+                recording.transcript = segments.map(\.text).joined(separator: " ")
+                recording.transcriptSegments = TranscriptSegment.encode(segments)
+                do { try context.save() } catch {
+                    AppLog.note("audio", "transcript save failed: \(error)")
+                }
+            case .success:
+                if announce { message = "No speech was found, or transcription isn't available for this language on this device." }
+            case .failure(let error):
+                AppLog.note("audio", "transcribe failed: \(error)")
+                if announce { message = "Couldn't transcribe that recording." }
+            }
+        }
     }
 
     /// Puts a finished temp file into `directory` under `name`, atomically:
@@ -272,6 +313,16 @@ final class PageAudioController: NSObject, AVAudioPlayerDelegate, AVAudioRecorde
         let clamped = min(max(0, time), player.duration)
         player.currentTime = clamped
         currentTime = clamped
+    }
+
+    /// Loads `recording` if it is not the loaded one, then moves the playhead
+    /// to `time` (used by a tap on a transcript segment).
+    func seek(to time: TimeInterval, in recording: Recording) {
+        if playingRecording?.id != recording.id {
+            play(recording: recording)
+            guard playingRecording?.id == recording.id else { return }
+        }
+        seek(to: time)
     }
 
     func setRate(_ newRate: Float) {

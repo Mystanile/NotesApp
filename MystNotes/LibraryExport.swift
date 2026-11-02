@@ -52,6 +52,10 @@ enum LibraryExport {
             }
             for recording in Recording.ordered(page.recordings ?? []) {
                 lines.append("Audio: \(recording.displayTitle) (\(Recording.clock(recording.duration)))")
+                if let transcript = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !transcript.isEmpty {
+                    lines.append("  Transcript: " + transcript.replacingOccurrences(of: "\n", with: " "))
+                }
                 lines.append("")
             }
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }

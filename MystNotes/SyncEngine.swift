@@ -1275,7 +1275,8 @@ nonisolated struct SyncRunner {
                     recordings: (page.recordings ?? []).isEmpty ? nil : Recording.ordered(page.recordings ?? []).map {
                         RecordingDTO(id: $0.id, startedAt: $0.startedAt, duration: $0.duration,
                                      fileRef: $0.fileRef, fileHash: hashes.hash(of: $0.fileRef, in: local),
-                                     title: $0.title)
+                                     title: $0.title,
+                                     transcript: $0.transcript, transcriptSegments: $0.transcriptSegments)
                     }
                 )
             }
@@ -1572,6 +1573,8 @@ nonisolated struct SyncRunner {
             let recording = Recording(page: page, startedAt: recordingDTO.startedAt, duration: recordingDTO.duration,
                                       fileRef: recordingDTO.fileRef, title: recordingDTO.title)
             recording.id = recordingDTO.id
+            recording.transcript = recordingDTO.transcript
+            recording.transcriptSegments = recordingDTO.transcriptSegments
             context.insert(recording)
             recordings.append(recording)
         }
