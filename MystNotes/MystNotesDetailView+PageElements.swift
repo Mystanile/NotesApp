@@ -13,7 +13,10 @@ extension NotebookDetailView {
     // MARK: - Page elements
 
     /// `[[page]]` in a text box: an anchorless "mention" edge, tied to its box.
-    func addMention(from page: Page, to destinationID: UUID, blockID: UUID) {
+    /// `label` is the text inserted between the brackets; it is kept in
+    /// `Link.title` so editing the text can tell which links still have a
+    /// token. nil (a restored legacy box) stays nil.
+    func addMention(from page: Page, to destinationID: UUID, blockID: UUID, label: String?) {
         let key = blockID.uuidString
         let existing = (try? modelContext.fetch(FetchDescriptor<Link>())) ?? []
         guard !existing.contains(where: {
@@ -22,6 +25,7 @@ extension NotebookDetailView {
         let link = Link(sourcePageID: page.id, destinationPageID: destinationID)
         link.kind = "mention"
         link.destinationID = key
+        link.title = label
         link.anchorWidth = 0
         link.anchorHeight = 0
         modelContext.insert(link)
@@ -73,7 +77,7 @@ extension NotebookDetailView {
             (block.isBold, block.isItalic) = (snapshot.isBold, snapshot.isItalic)
             modelContext.insert(block)
             page.textBlocks = (page.textBlocks ?? []) + [block]
-            for destination in snapshot.mentions { addMention(from: page, to: destination, blockID: snapshot.id) }
+            for destination in snapshot.mentions { addMention(from: page, to: destination, blockID: snapshot.id, label: nil) }
         } else if let block = page.textBlocks?.first(where: { $0.id == snapshot.id }) {
             page.textBlocks?.removeAll { $0.id == snapshot.id }
             modelContext.delete(block)
@@ -94,6 +98,34 @@ extension NotebookDetailView {
     func deleteTextBlock(_ block: TypedTextBlock, on page: Page) {
         let mentions = mentionLinks(of: block.id, on: page).map(\.destinationPageID)
         setTextBlock(TextBlockSnapshot(of: block, mentions: mentions), present: false, on: page)
+    }
+
+    /// A text box's text is settled: mention links whose `[[ ]]` token is
+    /// gone go too (they kept showing in "Linked from" and the Page Map).
+    func pruneMentions(of block: TypedTextBlock, on page: Page) {
+        let removed = Links.pruneMentions(forBlock: block.id, text: block.content, on: page, in: modelContext)
+        if removed > 0 { scheduleAutosave() }
+    }
+
+    /// The other notebooks' pages that a link from or to this notebook
+    /// reaches, for the Page Map's ghost cards. Built from the notebooks the
+    /// view already holds, and only when the map opens.
+    func foreignPagesForPageMap() -> [UUID: GraphForeignPage] {
+        let own = Set((notebook.pages ?? []).map(\.id))
+        var wanted = Set<UUID>()
+        for link in allLinks {
+            if own.contains(link.sourcePageID), !own.contains(link.destinationPageID) { wanted.insert(link.destinationPageID) }
+            if own.contains(link.destinationPageID), !own.contains(link.sourcePageID) { wanted.insert(link.sourcePageID) }
+        }
+        guard !wanted.isEmpty else { return [:] }
+        var out: [UUID: GraphForeignPage] = [:]
+        for other in allNotebooks where other.id != notebook.id {
+            for page in other.pages ?? [] where wanted.contains(page.id) {
+                out[page.id] = GraphForeignPage(title: page.title ?? "", notebookTitle: other.title,
+                                                pageNumber: page.index + 1)
+            }
+        }
+        return out
     }
 
     func mentionLinks(of blockID: UUID, on page: Page) -> [Link] {

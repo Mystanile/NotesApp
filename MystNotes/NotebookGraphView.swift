@@ -20,6 +20,9 @@ struct NotebookGraphView: View {
     /// Each page's artwork, for thumbnails (the caller already has it; a
     /// `@Query` here would run once per card).
     var documents: [UUID: [ImportedDocument]]
+    /// Pages of other notebooks that links from or to this notebook reach:
+    /// ghost cards. A tap on one calls `onSelect` with its (foreign) page id.
+    var foreignPages: [UUID: GraphForeignPage]
     let onSelect: (UUID) -> Void
 
     init(pages: [Page], links: [Link],
@@ -27,6 +30,7 @@ struct NotebookGraphView: View {
          onMove: @escaping (UUID, CGPoint) -> Void = { _, _ in },
          goneNodeIDs: Set<UUID> = [],
          documents: [UUID: [ImportedDocument]] = [:],
+         foreignPages: [UUID: GraphForeignPage] = [:],
          onSelect: @escaping (UUID) -> Void) {
         self.pages = pages
         self.links = links
@@ -34,6 +38,7 @@ struct NotebookGraphView: View {
         self.onMove = onMove
         self.goneNodeIDs = goneNodeIDs
         self.documents = documents
+        self.foreignPages = foreignPages
         self.onSelect = onSelect
     }
 
@@ -121,7 +126,7 @@ struct NotebookGraphView: View {
     // MARK: Body
 
     var body: some View {
-        let scene = GraphScene.build(pages: pages, links: links)
+        let scene = GraphScene.build(pages: pages, links: links, foreignPages: foreignPages)
         let input = layoutInput(scene)
         NavigationStack {
             GeometryReader { geo in
@@ -185,6 +190,21 @@ struct NotebookGraphView: View {
                 seeds[.page(id)] = p
             }
         }
+        // A ghost starts outside the card it hangs from, away from the middle.
+        let middle = CGPoint(x: GraphWorld.size / 2, y: GraphWorld.size / 2)
+        for ghost in scene.ghosts {
+            let anchors = scene.edges.compactMap { e -> CGPoint? in
+                if e.from == .page(ghost.id) { if case .page(let o) = e.to { return seeds[.page(o)] } }
+                if e.to == .page(ghost.id) { if case .page(let o) = e.from { return seeds[.page(o)] } }
+                return nil
+            }
+            guard !anchors.isEmpty else { continue }
+            let ax = anchors.map(\.x).reduce(0, +) / CGFloat(anchors.count)
+            let ay = anchors.map(\.y).reduce(0, +) / CGFloat(anchors.count)
+            let dx = ax - middle.x, dy = ay - middle.y
+            let length = max((dx * dx + dy * dy).squareRoot(), 1)
+            seeds[.page(ghost.id)] = CGPoint(x: ax + dx / length * 260, y: ay + dy / length * 260)
+        }
         for tag in scene.tags {
             let pts = tag.pageIDs.compactMap { seeds[.page($0)] }
             guard !pts.isEmpty else { continue }
@@ -210,6 +230,9 @@ struct NotebookGraphView: View {
         let middle = CGPoint(x: GraphWorld.size / 2, y: GraphWorld.size / 2)
         var out: [GraphNodeID: CGPoint] = [:]
         for (id, p) in base { out[.page(id)] = p }
+        for ghost in scene.ghosts {
+            out[.page(ghost.id)] = computed[.page(ghost.id)] ?? input.seeds[.page(ghost.id)] ?? middle
+        }
         if let dragging, out[.page(dragging.id)] != nil { out[.page(dragging.id)] = dragging.world }
         for tag in scene.tags {
             out[.tag(tag.key)] = computed[.tag(tag.key)] ?? input.seeds[.tag(tag.key)] ?? middle
@@ -407,7 +430,8 @@ struct NotebookGraphView: View {
                    let a = centers[edge.from], let b = centers[edge.to],
                    let curve = GraphGeometry.curve(from: a, aHalf: halfSize(edge.from, scene),
                                                    to: b, bHalf: halfSize(edge.to, scene)) {
-                    GraphEdgeView(curve: curve, style: .of(edge.kind))
+                    GraphEdgeView(curve: curve,
+                                  style: scene.isGhostEdge(edge) ? GraphEdgeStyle.of(edge.kind).ghosted : .of(edge.kind))
                         .opacity(edgeOpacity(edge, scene: scene, focus: focus, dimmed: result.dimmedPageIDs))
                         .animation(Motion.quick, value: focus)
                 }
@@ -441,6 +465,20 @@ struct NotebookGraphView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(goneNodeIDs.contains(chip.linkID)
                                             ? "Node \(chip.title), ink removed" : "Node \(chip.title)")
+                        .accessibilityAddTraits(.isButton)
+                }
+            }
+
+            ForEach(scene.ghosts, id: \.id) { ghost in
+                if let p = centers[.page(ghost.id)] {
+                    GraphGhostCard(info: ghost.info)
+                        .frame(width: GraphGeometry.cardSize.width, height: GraphGeometry.cardSize.height)
+                        .onTapGesture { onSelect(ghost.id) }
+                        .position(p)
+                        .zIndex(3)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(ghost.info.label), in another notebook")
+                        .accessibilityHint("Double tap to open")
                         .accessibilityAddTraits(.isButton)
                 }
             }
@@ -525,6 +563,11 @@ private struct GraphEdgeStyle {
             return GraphEdgeStyle(color: Palette.edgeExplicit.opacity(0.75), dash: [12, 4, 2, 4], width: 1.8, hasArrow: true)
         case .tag: return GraphEdgeStyle(color: Palette.edgeTag, dash: [0.5, 6], width: 2.2, hasArrow: false)
         }
+    }
+
+    /// The same edge, dashed, for one that reaches another notebook.
+    var ghosted: GraphEdgeStyle {
+        GraphEdgeStyle(color: color.opacity(0.7), dash: [5, 5], width: width, hasArrow: hasArrow)
     }
 
     /// Page to its node chips.
@@ -676,6 +719,35 @@ private struct GraphPageCard: View {
             }
             .frame(width: 36, height: 48)
         }
+    }
+}
+
+/// A page of another notebook: translucent, dashed border, never saved.
+private struct GraphGhostCard: View {
+    let info: GraphForeignPage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            Text(info.label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(info.title.isEmpty ? "Untitled" : info.title)
+                .font(Typography.label)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.right.square")
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+        }
+        .padding(Space.s)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
+            .strokeBorder(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
+        .opacity(0.75)
     }
 }
 

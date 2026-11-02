@@ -61,6 +61,34 @@ enum Links {
         return true
     }
 
+    /// After a text box's text changes: drops the box's mention links whose
+    /// label is no longer between `[[ ]]` in `text`. A link with no title
+    /// (made before labels were kept) goes only when the text has no
+    /// `[[ ]]` at all. Marks the page and saves when something went; returns
+    /// how many links went.
+    @discardableResult
+    static func pruneMentions(forBlock blockID: UUID, text: String, on page: Page,
+                              in context: ModelContext, now: Date = Date()) -> Int {
+        let key = blockID.uuidString
+        let labels = PageMentions.labels(in: text)
+        let hasTokens = PageMentions.hasTokens(in: text)
+        let links = (try? context.fetch(FetchDescriptor<Link>())) ?? []
+        var removed = 0
+        for link in links where link.kind == "mention" && link.sourcePageID == page.id && link.destinationID == key {
+            let keep: Bool
+            if let title = link.title { keep = labels.contains(title) } else { keep = hasTokens }
+            if !keep {
+                context.delete(link)
+                removed += 1
+            }
+        }
+        if removed > 0 {
+            page.markModified(at: now)
+            try? context.save()
+        }
+        return removed
+    }
+
     /// A node's default name: the first non-empty line of the recognized
     /// handwriting, trimmed, at most 60 characters; else "Node, p. N".
     static func nodeTitle(recognized: String?, pageNumber: Int) -> String {

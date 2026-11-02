@@ -31,11 +31,19 @@ struct NotebookDetailView: View {
     /// match is once the page has opened; see `SearchHighlightLens`.
     let highlight: SearchHighlight?
 
-    init(notebook: Notebook, initialPageID: UUID? = nil, highlight: SearchHighlight? = nil) {
+    /// When true, the Page Map sheet opens once after the notebook appears
+    /// (the Library Map opens a notebook this way).
+    let initialShowsPageMap: Bool
+
+    init(notebook: Notebook, initialPageID: UUID? = nil, highlight: SearchHighlight? = nil,
+         initialShowsPageMap: Bool = false) {
         self.notebook = notebook
         self.initialPageID = initialPageID
         self.highlight = highlight
+        self.initialShowsPageMap = initialShowsPageMap
     }
+
+    @State private var didOpenInitialPageMap = false
 
     @Environment(\.modelContext) var modelContext
     @Environment(\.scenePhase) var scenePhase
@@ -286,6 +294,10 @@ struct NotebookDetailView: View {
             SearchIndexer.shared.notebookOpened()
             openFirstPage()
             applyToolState()
+            if initialShowsPageMap, !didOpenInitialPageMap {
+                didOpenInitialPageMap = true
+                Task { @MainActor in showingPageMap = true }
+            }
         }
         .onDisappear {
             SearchIndexer.shared.notebookClosed()
@@ -510,7 +522,8 @@ struct NotebookDetailView: View {
                                   saveMetadata("Failed to save the Page Map")
                               },
                               goneNodeIDs: goneNodeIDs,
-                              documents: documentsByPageID) { id in
+                              documents: documentsByPageID,
+                              foreignPages: foreignPagesForPageMap()) { id in
                 showingPageMap = false
                 jumpToPage(withID: id)
             }
@@ -974,7 +987,8 @@ struct NotebookDetailView: View {
                     page: page,
                     scale: scale,
                     onNavigateToPage: { id in jumpToPage(withID: id) },
-                    onMention: { dest, blockID in addMention(from: page, to: dest, blockID: blockID) },
+                    onMention: { dest, blockID, label in addMention(from: page, to: dest, blockID: blockID, label: label) },
+                    onTextCommit: { block in pruneMentions(of: block, on: page) },
                     onSave: scheduleAutosave,
                     onRequestLinkDestinationChange: { link in linkNeedingDestination = link },
                     onDeleteTextBlock: { block in deleteTextBlock(block, on: page) },

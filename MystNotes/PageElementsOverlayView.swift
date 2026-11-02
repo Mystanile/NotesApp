@@ -19,7 +19,9 @@ struct PageElementsOverlayView: View {
     @Query private var allLinks: [Link]
 
     var onNavigateToPage: (UUID) -> Void
-    var onMention: (UUID, UUID) -> Void = { _, _ in }
+    var onMention: (UUID, UUID, String) -> Void = { _, _, _ in }
+    /// A text box lost focus: its text is settled.
+    var onTextCommit: (TypedTextBlock) -> Void = { _ in }
     var onSave: () -> Void
     var onRequestLinkDestinationChange: (Link) -> Void
     /// Undoable delete of a text box; without it the box deletes itself.
@@ -38,7 +40,7 @@ struct PageElementsOverlayView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(page.textBlocks ?? [], id: \.id) { block in
-                TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onSave: onSave,
+                TextBlockView(block: block, page: page, scale: scale, onMention: onMention, onTextCommit: onTextCommit, onSave: onSave,
                               onDelete: onDeleteTextBlock)
             }
 
@@ -78,16 +80,22 @@ private struct TextBlockView: View {
     @Bindable var block: TypedTextBlock
     var page: Page
     var scale: CGFloat = 1
-    /// (destination page id, this block's id)
-    var onMention: (UUID, UUID) -> Void = { _, _ in }
+    /// (destination page id, this block's id, the label inserted between the brackets)
+    var onMention: (UUID, UUID, String) -> Void = { _, _, _ in }
+    /// The box lost focus: its text is settled (prunes mentions it no longer holds).
+    var onTextCommit: (TypedTextBlock) -> Void = { _ in }
     var onSave: () -> Void
     var onDelete: ((TypedTextBlock) -> Void)? = nil
 
-    private var suggestions: [Page] {
+    /// Fetches pages only while a `[[` query is pending, never per cell.
+    private var suggestions: [PageMentions.Suggestion] {
         guard isFocused, let q = PageMentions.pendingQuery(in: block.content) else { return [] }
-        let pages = (page.notebook?.pages ?? []).filter { $0.id != page.id }.sorted { $0.index < $1.index }
-        let hits = q.isEmpty ? pages : pages.filter { LinkedFromStrip.label(for: $0).localizedCaseInsensitiveContains(q) }
-        return Array(hits.prefix(6))
+        let all = (try? modelContext.fetch(FetchDescriptor<Page>())) ?? []
+        let candidates: [PageMentions.Candidate] = all.compactMap { other in
+            guard other.id != page.id, let notebook = other.notebook else { return nil }
+            return (other.id, other.title ?? "", notebook.title, notebook.id, other.index + 1)
+        }
+        return PageMentions.suggestions(query: q, current: page.notebook, pages: candidates)
     }
 
     private var zoom: CGFloat { scale > 0.0001 ? scale : 1 }
@@ -135,10 +143,10 @@ private struct TextBlockView: View {
         let hits = suggestions
         if !hits.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(hits, id: \.id) { dest in
-                    Button(LinkedFromStrip.label(for: dest)) {
-                        block.content = PageMentions.completing(block.content, with: LinkedFromStrip.label(for: dest))
-                        onMention(dest.id, block.id)
+                ForEach(hits, id: \.pageID) { hit in
+                    Button(hit.label) {
+                        block.content = PageMentions.completing(block.content, with: hit.label)
+                        onMention(hit.pageID, block.id, hit.label)
                         onSave()
                     }
                     .font(.caption)
@@ -191,6 +199,9 @@ private struct TextBlockView: View {
             // caret, as in GoodNotes and Notability; the box moves by its
             // handle instead. It used to slide the whole box.
             .gesture(dragGesture, isEnabled: !isFocused)
+            .onChange(of: isFocused) { _, focused in
+                if !focused { onTextCommit(block) }
+            }
             .onChange(of: block.content) { old, new in
                 // Return at the end of a list item starts the next one; on
                 // an empty item it ends the list (`TextList`).

@@ -408,4 +408,37 @@ final class NotebookGraphTests: XCTestCase {
                        "Page 3, Optics, 3 links")
         XCTAssertEqual(NotebookGraphView.accessibilityLabel(for: GraphPageInfo(index: 0), degree: 1), "Page 1, 1 link")
     }
+
+    // MARK: Ghost cards
+
+    @MainActor
+    func testGhosts_derivedForCrossNotebookLinksOnly_andNeverSaved() {
+        let nb = Notebook(title: "N")
+        let pages = (0..<2).map { Page(index: $0, notebook: nb) }
+        let foreignOut = UUID(), foreignIn = UUID(), unknown = UUID()
+        let links = [
+            Link(sourcePageID: pages[0].id, destinationPageID: pages[1].id),
+            Link(sourcePageID: pages[0].id, destinationPageID: foreignOut),
+            Link(sourcePageID: foreignIn, destinationPageID: pages[1].id),
+            Link(sourcePageID: pages[1].id, destinationPageID: unknown),   // not described: no ghost
+            Link(sourcePageID: foreignOut, destinationPageID: foreignIn),  // touches nothing here
+        ]
+        let foreign = [
+            foreignOut: GraphForeignPage(title: "Out", notebookTitle: "Other", pageNumber: 3),
+            foreignIn: GraphForeignPage(title: "", notebookTitle: "Third", pageNumber: 1),
+        ]
+        let scene = GraphScene.build(pages: pages, links: links, foreignPages: foreign)
+
+        XCTAssertEqual(Set(scene.ghosts.map(\.id)), [foreignOut, foreignIn])
+        XCTAssertEqual(scene.ghosts.first { $0.id == foreignOut }?.info.label, "Other · p. 3")
+        XCTAssertEqual(scene.linkEdges.count, 3)
+        XCTAssertEqual(scene.linkEdges.filter(scene.isGhostEdge).count, 2)
+        XCTAssertTrue(scene.layoutNodes.contains(.page(foreignOut)))
+        // Without the lookup, cross-notebook links are dropped as before.
+        let plain = GraphScene.build(pages: pages, links: links)
+        XCTAssertTrue(plain.ghosts.isEmpty)
+        XCTAssertEqual(plain.linkEdges.count, 1)
+        // Ghosts are scene-only: no page model was created for them.
+        XCTAssertEqual(scene.pages.count, 2)
+    }
 }

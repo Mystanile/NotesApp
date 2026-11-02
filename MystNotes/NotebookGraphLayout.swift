@@ -93,9 +93,28 @@ nonisolated struct GraphTag: Hashable, Sendable {
     var pageIDs: [UUID]
 }
 
+/// A page of another notebook that this notebook's pages link to or from:
+/// drawn as a translucent ghost card, laid out with the rest and never saved.
+nonisolated struct GraphForeignPage: Hashable, Sendable {
+    var title: String
+    var notebookTitle: String
+    var pageNumber: Int
+
+    /// "Notebook · p. N"
+    var label: String { "\(notebookTitle) · p. \(pageNumber)" }
+}
+
+/// A ghost card in a scene: a foreign page one of this notebook's links touches.
+nonisolated struct GraphGhost: Hashable, Sendable {
+    var id: UUID
+    var info: GraphForeignPage
+}
+
 /// Everything the map draws, derived from pages and links. Pure.
 nonisolated struct GraphScene: Sendable {
     var pages: [GraphPageInfo] = []
+    /// Foreign pages linked to or from this notebook, by id. Derived; never saved.
+    var ghosts: [GraphGhost] = []
     var edges: [GraphEdge] = []
     var chips: [GraphChip] = []
     var tags: [GraphTag] = []
@@ -106,11 +125,14 @@ nonisolated struct GraphScene: Sendable {
     var linkEdges: [GraphEdge] { edges.filter { $0.kind != .tag } }
 
     @MainActor
-    static func build(pages: [Page], links: [Link]) -> GraphScene {
-        build(pages: pages.map(GraphPageInfo.init(page:)), links: links.map(GraphLinkInfo.init(link:)))
+    static func build(pages: [Page], links: [Link],
+                      foreignPages: [UUID: GraphForeignPage] = [:]) -> GraphScene {
+        build(pages: pages.map(GraphPageInfo.init(page:)), links: links.map(GraphLinkInfo.init(link:)),
+              foreignPages: foreignPages)
     }
 
-    static func build(pages: [GraphPageInfo], links: [GraphLinkInfo]) -> GraphScene {
+    static func build(pages: [GraphPageInfo], links: [GraphLinkInfo],
+                      foreignPages: [UUID: GraphForeignPage] = [:]) -> GraphScene {
         let sortedPages = pages.sorted { ($0.index, $0.id.uuidString) < ($1.index, $1.id.uuidString) }
         let pageIDs = Set(sortedPages.map(\.id))
 
@@ -145,6 +167,32 @@ nonisolated struct GraphScene: Sendable {
             if seen.insert(edge).inserted { edges.append(edge) }
         }
 
+        // Ghosts: the other end of a link that crosses a notebook boundary.
+        var ghostIDs = Set<UUID>()
+        if !foreignPages.isEmpty {
+            for l in links {
+                switch l.kind {
+                case nil, "mention", "transclusion": break
+                default: continue
+                }
+                let kind: EdgeKind = l.kind == "mention" ? .mention : (l.kind == "transclusion" ? .transclusion : .explicit)
+                let src = l.sourcePageID, dst = l.destinationPageID
+                let edge: GraphEdge
+                if pageIDs.contains(src), !pageIDs.contains(dst), foreignPages[dst] != nil {
+                    edge = GraphEdge(from: .page(src), to: .page(dst), kind: kind)
+                    ghostIDs.insert(dst)
+                } else if pageIDs.contains(dst), !pageIDs.contains(src), foreignPages[src] != nil {
+                    edge = GraphEdge(from: .page(src), to: .page(dst), kind: kind)
+                    ghostIDs.insert(src)
+                } else {
+                    continue
+                }
+                if seen.insert(edge).inserted { edges.append(edge) }
+            }
+        }
+        let ghosts = ghostIDs.sorted { $0.uuidString < $1.uuidString }
+            .compactMap { id in foreignPages[id].map { GraphGhost(id: id, info: $0) } }
+
         var names: [String: String] = [:]
         var byKey: [String: [UUID]] = [:]
         for page in sortedPages {
@@ -168,7 +216,7 @@ nonisolated struct GraphScene: Sendable {
 
         edges.sort { ($0.from.sortKey, $0.to.sortKey, $0.kind.rawValue) < ($1.from.sortKey, $1.to.sortKey, $1.kind.rawValue) }
         let owners = Dictionary(chips.map { ($0.linkID, $0.pageID) }, uniquingKeysWith: { first, _ in first })
-        return GraphScene(pages: sortedPages, edges: edges, chips: chips, tags: tags, chipOwners: owners)
+        return GraphScene(pages: sortedPages, ghosts: ghosts, edges: edges, chips: chips, tags: tags, chipOwners: owners)
     }
 
     func chips(on pageID: UUID) -> [GraphChip] { chips.filter { $0.pageID == pageID } }
@@ -212,8 +260,17 @@ nonisolated struct GraphScene: Sendable {
         return Set(pages.map(\.id).filter { degree[$0] == nil })
     }
 
-    /// The nodes the force layout places: pages, then tags.
-    var layoutNodes: [GraphNodeID] { pages.map { GraphNodeID.page($0.id) } + tags.map { GraphNodeID.tag($0.key) } }
+    var ghostIDs: Set<UUID> { Set(ghosts.map(\.id)) }
+
+    /// True for an edge that has a ghost card at one end.
+    func isGhostEdge(_ edge: GraphEdge) -> Bool {
+        let ids = ghostIDs
+        for end in [edge.from, edge.to] { if case .page(let id) = end, ids.contains(id) { return true } }
+        return false
+    }
+
+    /// The nodes the force layout places: pages, ghosts, then tags.
+    var layoutNodes: [GraphNodeID] { pages.map { GraphNodeID.page($0.id) } + ghosts.map { GraphNodeID.page($0.id) } + tags.map { GraphNodeID.tag($0.key) } }
 
     /// Edges as the layout sees them: a chip stands for its page.
     var layoutPairs: [GraphForceLayout.Pair] {
