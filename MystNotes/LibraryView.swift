@@ -29,6 +29,10 @@ struct LibraryView: View {
     /// during the sheet's dismissal can be dropped.
     @State private var createdNotebook: Notebook?
     @State private var notebookToOpen: Notebook?
+    /// The Library Map (M2 task 12). A notebook picked on it opens once the
+    /// map's sheet is gone, as with `createdNotebook`.
+    @State private var showingMap = false
+    @State private var mapPick: Notebook?
 
     @State private var itemToRename: LibraryItem?
     @State private var renameText = ""
@@ -357,6 +361,16 @@ struct LibraryView: View {
             if parentFolder == nil {
                 ToolbarItem(placement: .automatic) {
                     Button {
+                        showingMap = true
+                    } label: {
+                        Label("Map", systemImage: "point.3.filled.connected.trianglepath.dotted")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Shows how your notebooks link to each other")
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
                         showingSettings = true
                     } label: {
                         Image(systemName: "gearshape")
@@ -404,6 +418,16 @@ struct LibraryView: View {
             NewNotebookSheet { title, template, cover in
                 createNotebook(title: title, template: template, coverStyle: cover)
             }
+        }
+        .sheet(isPresented: $showingMap, onDismiss: {
+            notebookToOpen = mapPick
+            mapPick = nil
+        }) {
+            LibraryGraphView(notebooks: storedNotebooks) { notebook in
+                mapPick = notebook
+                showingMap = false
+            }
+            .presentationSizing(.page)
         }
         .navigationDestination(item: $notebookToOpen) { notebook in
             LockedNotebookGate(notebook: notebook) { NotebookDetailView(notebook: notebook) }
