@@ -30,7 +30,7 @@ struct InkTimelineOverlay: View {
     /// offset. Identity when the overlay sits in the page's own space.
     var pageToView: CGAffineTransform = .identity
     /// The page's colour, for the veil. Opaque-ish paper white by default.
-    var veilColor: Color = Color(.systemBackground)
+    var veilColor: Color = Color(uiColor: .systemBackground)
     var veilOpacity: Double = 0.78
     var acceptsTaps: Bool = true
     /// Called with the tapped stroke's offset in the recording.

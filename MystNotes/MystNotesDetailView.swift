@@ -752,9 +752,9 @@ struct NotebookDetailView: View {
             onRecolor: { inkSelection.recolor($0) },
             onCopyAsImage: { inkSelection.copySelectionAsImage() },
             onConvertToText: { convertSelectionToText(on: page) },
-            onLinkTo: paged ? { linkSelection() } : nil,
-            onMakeNode: paged ? { beginMakeNode(on: page) } : nil,
-            onTape: paged ? { makeTape(on: page) } : nil
+            onLinkTo: paged ? { linkSelection() } as (() -> Void)? : nil,
+            onMakeNode: paged ? { beginMakeNode(on: page) } as (() -> Void)? : nil,
+            onTape: paged ? { makeTape(on: page) } as (() -> Void)? : nil
         )
     }
 
@@ -1020,7 +1020,6 @@ struct NotebookDetailView: View {
                 isRulerActive: toolState.rulerActive
             )
 
-            timelineLayer(for: page, pageSize: CGSize(width: WhiteboardCanvasView.boardSize, height: WhiteboardCanvasView.boardSize))
 
             if toolState.activeKind == .lasso && !isPresenting {
                 // The loop and the selection box, in page space like the

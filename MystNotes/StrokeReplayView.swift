@@ -19,7 +19,7 @@ import PencilKit
 /// becomes `compressedIdle`: a page written over an hour replays in minutes,
 /// not an hour.
 nonisolated struct ReplayTimeline: Equatable {
-    struct Item: Equatable {
+    nonisolated struct Item: Equatable {
         /// Index into the array the timeline was built from.
         var strokeIndex: Int
         /// Seconds in replay time (gaps already compressed).
@@ -30,7 +30,7 @@ nonisolated struct ReplayTimeline: Equatable {
 
     /// What is on screen at one moment: the first `complete` items in full,
     /// and the next one drawn `partialLocalTime` seconds in (nil between strokes).
-    struct Frame: Equatable {
+    nonisolated struct Frame: Equatable {
         var complete: Int
         var partialLocalTime: Double?
     }

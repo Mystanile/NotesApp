@@ -84,8 +84,8 @@ final class SelectionMenuTests: XCTestCase {
 
         selection.paste()
         XCTAssertEqual(canvas.drawing.strokes.count, 5)
-        let originals = Set(canvas.drawing.strokes.prefix(3).map(StrokeIDMap.Fingerprint.init))
-        let pasted = canvas.drawing.strokes.suffix(2).map(StrokeIDMap.Fingerprint.init)
+        let originals = Set(canvas.drawing.strokes.prefix(3).map { StrokeIDMap.Fingerprint($0) })
+        let pasted = canvas.drawing.strokes.suffix(2).map { StrokeIDMap.Fingerprint($0) }
         XCTAssertTrue(pasted.allSatisfy { !originals.contains($0) }, "a paste gets identities of its own (invariant 6)")
         XCTAssertEqual(selection.selectedStrokes?.strokes.count, 2, "the paste is what's selected")
         XCTAssertEqual(canvas.drawing.strokes[3].path.count, canvas.drawing.strokes[0].path.count)

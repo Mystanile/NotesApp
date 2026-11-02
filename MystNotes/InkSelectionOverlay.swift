@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 #if targetEnvironment(macCatalyst) || canImport(UIKit)
 
 /// What the lasso shows: the loop as it's drawn, and the selection's box
