@@ -241,6 +241,46 @@ extension NotebookDetailView {
         }
     }
 
+    /// Page Grid: delete several pages through the single-page path, which
+    /// commits the previous pending deletion each time (everything but the
+    /// last goes to the trash at once; the last keeps its undo banner). The
+    /// notebook always keeps one page.
+    func deletePages(withIDs ids: [UUID]) {
+        for id in ids {
+            guard sortedPages.count > 1, let page = sortedPages.first(where: { $0.id == id }) else { continue }
+            requestDeletePage(page)
+        }
+    }
+
+    /// Page Grid: duplicate each page right after its source, in order.
+    func duplicatePages(withIDs ids: [UUID]) {
+        commitPendingDeletion()
+        saveCurrentPage(blocking: true)
+        let sources = sortedPages.filter { ids.contains($0.id) }
+        guard !sources.isEmpty else { return }
+        let documents = allImportedDocuments
+        Task {
+            for source in sources {
+                let own = documents.filter { $0.page?.id == source.id }
+                _ = await PageDuplication.duplicate(source, in: notebook, documents: own,
+                                                    context: modelContext, store: drawingStore)
+            }
+            saveMetadata("Failed to duplicate the pages")
+        }
+    }
+
+    #if targetEnvironment(macCatalyst) || canImport(UIKit)
+    /// Page Grid: the chosen pages, in notebook order, as one PDF.
+    func exportPagesAsPDF(withIDs ids: [UUID]) {
+        saveCurrentPage(blocking: true)
+        let entries = sortedPages.filter { ids.contains($0.id) }.map { (page: $0, artwork: artwork(for: $0)) }
+        guard !entries.isEmpty else { return }
+        presentPDF(PageRenderer.pdfData(for: entries), named: "\(notebook.title) - \(entries.count) pages")
+    }
+    #else
+    func exportPagesAsPDF(withIDs ids: [UUID]) {}
+    #endif
+
     /// Go to Page: opens the number prompt.
     func promptGoToPage() {
         goToPageText = ""

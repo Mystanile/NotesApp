@@ -220,6 +220,10 @@ struct NotebookDetailView: View {
     @State var deletionBannerTask: Task<Void, Never>?
     /// The page whose context menu opened the copy sheet; it starts ticked.
     @State var pageToCopy: Page?
+    /// The Page Grid, and the pages it asked to copy (several at once).
+    @State var showingPageGrid = false
+    @State var pagesToCopy: [Page] = []
+    @State var showingCopyPagesFromGrid = false
     @State var showingSaveConfirmation = false
     @State var saveConfirmationTask: Task<Void, Never>?
     @State var pdfExportURL: PDFExport?
@@ -394,6 +398,12 @@ struct NotebookDetailView: View {
                 .accessibilityLabel("Pages")
                 .help(pageSidebarVisible ? "Hide the page sidebar" : "Show the page sidebar")
 
+                Button { showingPageGrid = true } label: {
+                    Image(systemName: "square.grid.2x2")
+                }
+                .accessibilityLabel("All Pages")
+                .help("All Pages")
+
                 Menu {
                     Button("Save Now") {
                         saveCurrentPage(force: true)
@@ -470,6 +480,27 @@ struct NotebookDetailView: View {
                 }
             }
 #endif
+        }
+        .sheet(isPresented: $showingPageGrid) {
+            PageGridView(pages: sortedPages, documentsByPageID: documentsByPageID,
+                         currentPageID: currentPage?.id,
+                         onOpen: { id in jumpToPage(withID: id) },
+                         onDelete: { ids in deletePages(withIDs: ids) },
+                         onDuplicate: { ids in duplicatePages(withIDs: ids) },
+                         onCopyTo: { ids in
+                             pagesToCopy = sortedPages.filter { ids.contains($0.id) }
+                             showingCopyPagesFromGrid = true
+                         },
+                         onExport: { ids in exportPagesAsPDF(withIDs: ids) },
+                         onMove: { id, target in movePage(withID: id, to: target) })
+        }
+        .sheet(isPresented: $showingCopyPagesFromGrid) {
+            if !pagesToCopy.isEmpty {
+                CopyPagesSheet(pages: pagesToCopy, documentsByPageID: documentsByPageID,
+                               initialSelections: Set(pagesToCopy.map(\.id)), currentNotebookID: notebook.id) { pages, destination in
+                    Task { await copyPages(pages, to: destination) }
+                }
+            }
         }
         .sheet(isPresented: $showingPageMap) {
             NotebookGraphView(pages: sortedPages, links: allLinks,
@@ -1050,7 +1081,17 @@ struct NotebookDetailView: View {
     /// time the notebook opens, and a tap on a page closes it again.
     var pageSidebar: some View {
         HStack(spacing: 0) {
-            pageSidebarContent
+            VStack(spacing: 0) {
+                Button { showingPageGrid = true } label: {
+                    Label("All Pages", systemImage: "square.grid.2x2")
+                        .font(Typography.label)
+                        .frame(maxWidth: .infinity, minHeight: Metrics.minHitTarget)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("All Pages")
+                Divider()
+                pageSidebarContent
+            }
             pageSidebarGrabber
         }
         .frame(width: livePageSidebarWidth)

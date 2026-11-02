@@ -20,11 +20,19 @@ struct CopyPagesSheet: View {
     init(pages: [Page], documentsByPageID: [UUID: [ImportedDocument]] = [:],
          initialSelection: UUID, currentNotebookID: UUID,
          onCopy: @escaping ([Page], Notebook) -> Void) {
+        self.init(pages: pages, documentsByPageID: documentsByPageID,
+                  initialSelections: [initialSelection], currentNotebookID: currentNotebookID, onCopy: onCopy)
+    }
+
+    /// Several pages ticked at the start (the page grid's selection).
+    init(pages: [Page], documentsByPageID: [UUID: [ImportedDocument]] = [:],
+         initialSelections: Set<UUID>, currentNotebookID: UUID,
+         onCopy: @escaping ([Page], Notebook) -> Void) {
         self.pages = pages
         self.documentsByPageID = documentsByPageID
         self.currentNotebookID = currentNotebookID
         self.onCopy = onCopy
-        _selected = State(initialValue: [initialSelection])
+        _selected = State(initialValue: initialSelections)
     }
 
     var body: some View {
