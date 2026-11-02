@@ -118,7 +118,7 @@ struct SettingsView: View {
                         Button("Cancel", role: .cancel) {}
                     } message: {
                         Text(syncFolderName.isEmpty
-                             ? "Use this if notebooks or pages look wrong or missing. The library is reconstructed from the copy Mystnotes keeps on this device."
+                             ? "Use this if notebooks or pages look wrong or missing. The library is reconstructed from the copy Linework keeps on this device."
                              : "Use this if notebooks or pages look wrong or missing. The library is reconstructed from what's in the folder. Any edit that never reached the folder is kept in the folder's trash.")
                     }
                 Button(isExportingLibrary ? "Exporting Library…" : "Export Library…") {
@@ -145,7 +145,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sync")
             } footer: {
-                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Mystnotes writes your library and its drawings there about half a minute after you stop editing and whenever it goes to the background, and reads changes back when it opens or you tap Sync Now. Edits merge page by page, so two devices can work on different pages of the same notebook offline. If both change the same page, the more recent version is shown and the other is kept in the folder's trash.")
+                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Linework writes your library and its drawings there about half a minute after you stop editing and whenever it goes to the background, and reads changes back when it opens or you tap Sync Now. Edits merge page by page, so two devices can work on different pages of the same notebook offline. If both change the same page, the more recent version is shown and the other is kept in the folder's trash.")
             }
 
             Section {
@@ -188,7 +188,7 @@ struct SettingsView: View {
             } header: {
                 Text("Backup")
             } footer: {
-                Text("Once a day Mystnotes writes a copy of your whole library to this folder - pick one in Dropbox, Google Drive, OneDrive or on a drive. One file per weekday, so the last week is always there. To restore, unzip a backup and choose it as the sync folder.")
+                Text("Once a day Linework writes a copy of your whole library to this folder - pick one in Dropbox, Google Drive, OneDrive or on a drive. One file per weekday, so the last week is always there. To restore, unzip a backup and choose it as the sync folder.")
             }
 
             Section {
@@ -228,7 +228,7 @@ struct SettingsView: View {
                         AppSettings.signOut()
                     }
                 } else if isGuestMode {
-                    Text("Using Mystnotes without an account.")
+                    Text("Using Linework without an account.")
                         .foregroundStyle(.secondary)
                     Button("Sign In with Apple") {
                         AppSettings.exitGuestMode()

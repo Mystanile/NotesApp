@@ -51,7 +51,7 @@ enum LibraryExport {
     static func makeArchive(of notebooks: [Notebook], documents: [ImportedDocument],
                             in directory: URL) async throws -> (folder: URL, zip: URL) {
         let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
-        let root = directory.appendingPathComponent("Mystnotes Library \(stamp)", isDirectory: true)
+        let root = directory.appendingPathComponent("Linework Library \(stamp)", isDirectory: true)
         let fm = FileManager.default
         try? fm.removeItem(at: root)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)

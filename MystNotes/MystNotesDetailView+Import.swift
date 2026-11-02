@@ -349,7 +349,7 @@ extension NotebookDetailView {
     /// picked from Files.
     func importPDF(data: Data, target: ImportTarget) async {
         guard let document = PDFDocument(data: data) else {
-            exportMessage = "That file isn't a PDF Mystnotes can read."
+            exportMessage = "That file isn't a PDF Linework can read."
             return
         }
         guard let storedFilename = await Self.writeImport(data, extension: "pdf") else {
@@ -399,7 +399,7 @@ extension NotebookDetailView {
     /// thread that has to stay clear for ink (invariant 10).
     func importImage(data: Data, target: ImportTarget) async {
         guard let kind = ImportedFileType.of(data) else {
-            exportMessage = "That file isn't an image Mystnotes can read."
+            exportMessage = "That file isn't an image Linework can read."
             return
         }
         // A pasted or dropped PDF is a document, not a picture: it goes

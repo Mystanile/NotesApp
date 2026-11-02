@@ -131,7 +131,7 @@ enum PageRenderer {
         var errorDescription: String? {
             switch self {
             case .photoLibraryDenied:
-                return "Mystnotes needs permission to add photos. You can grant it in Settings > Privacy > Photos."
+                return "Linework needs permission to add photos. You can grant it in Settings > Privacy > Photos."
             }
         }
     }

@@ -228,7 +228,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MystNotes/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Mystnotes;
+				INFOPLIST_KEY_CFBundleDisplayName = Linework;
 				INFOPLIST_KEY_CFBundleName = Mystnotes;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mystnotes uses the camera to scan documents into your notebooks.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Mystnotes uses Face ID to open notebooks you have locked.";
@@ -279,7 +279,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MystNotes/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Mystnotes;
+				INFOPLIST_KEY_CFBundleDisplayName = Linework;
 				INFOPLIST_KEY_CFBundleName = Mystnotes;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mystnotes uses the camera to scan documents into your notebooks.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Mystnotes uses Face ID to open notebooks you have locked.";

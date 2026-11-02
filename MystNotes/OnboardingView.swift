@@ -4,7 +4,7 @@ import SwiftUI
 /// opened (see `AppSettings.hasSeenOnboarding`, checked in `ContentView`).
 /// This covers the app as a whole at a glance; the deeper, hands-on tour of
 /// the actual notebook interface lives in the auto-generated "Welcome to
-/// Mystnotes" notebook (see `TutorialNotebookFactory`) instead of here.
+/// Linework" notebook (see `TutorialNotebookFactory`) instead of here.
 struct OnboardingView: View {
     var onFinish: () -> Void
 
@@ -17,7 +17,7 @@ struct OnboardingView: View {
     private let slides: [Slide] = [
         Slide(
             symbol: "note.text",
-            title: "Welcome to Mystnotes",
+            title: "Welcome to Linework",
             subtitle: "A fast, native notebook for Apple Pencil — draw, write, and organize, right on your iPad or Mac."
         ),
         Slide(

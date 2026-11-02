@@ -173,7 +173,7 @@ struct LibraryView: View {
     }
     #endif
 
-    /// Creates the "Welcome to Mystnotes" notebook once, the first time the
+    /// Creates the "Welcome to Linework" notebook once, the first time the
     /// root library is opened with nothing in it yet. Gated on a persistent
     /// flag rather than "is the library empty right now" so deleting that
     /// notebook later doesn't bring it back.
@@ -601,7 +601,7 @@ struct LibraryView: View {
     private func importData(_ data: Data, fileName: String) async -> Notebook? {
         guard let notebook = await NotebookImport.makeNotebook(from: data, fileName: fileName,
                                                                 in: parentFolder, context: modelContext) else {
-            exportMessage = "Couldn't import \(fileName). Mystnotes imports PDFs and images."
+            exportMessage = "Couldn't import \(fileName). Linework imports PDFs and images."
             return nil
         }
         return notebook

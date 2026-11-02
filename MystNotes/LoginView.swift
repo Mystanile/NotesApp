@@ -15,12 +15,14 @@ struct LoginView: View {
         VStack(spacing: 28) {
             Spacer()
 
-            Image(systemName: "note.text")
-                .font(.system(size: 64))
-                .foregroundStyle(Color.accentColor)
+            Image("BrandMark")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 112, height: 112)
+                .accessibilityHidden(true)
 
             VStack(spacing: 8) {
-                Text("Mystnotes")
+                Text("Linework")
                     .font(.largeTitle)
                     .fontWeight(.semibold)
                 Text("Sign in with your Apple ID to keep your notebooks yours — private to you, synced through your own iCloud.")

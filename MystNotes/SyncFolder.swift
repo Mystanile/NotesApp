@@ -19,7 +19,7 @@ nonisolated enum SyncFolder {
             switch self {
             case .notConfigured:      return "No sync folder has been chosen yet."
             case .bookmarkUnresolvable: return "The sync folder can't be found any more. Choose it again."
-            case .accessDenied:       return "Mystnotes was denied access to the sync folder."
+            case .accessDenied:       return "Linework was denied access to the sync folder."
             }
         }
     }

@@ -5,7 +5,7 @@ import PencilKit
 import UIKit
 #endif
 
-/// Builds the "Welcome to Mystnotes" notebook shown the first time someone's
+/// Builds the "Welcome to Linework" notebook shown the first time someone's
 /// library is empty — a real notebook, not a static walkthrough image, so
 /// its pen strokes, text boxes, sticker, and link are the actual elements
 /// the notebook interface supports, demonstrated in place. Runs once ever,
@@ -14,7 +14,7 @@ import UIKit
 enum TutorialNotebookFactory {
     @MainActor
     static func makeWelcomeNotebook(in context: ModelContext) {
-        let notebook = Notebook(title: "Welcome to Mystnotes", coverStyle: "default")
+        let notebook = Notebook(title: "Welcome to Linework", coverStyle: "default")
         context.insert(notebook)
 
         let welcomePage = makeWelcomePage(notebook: notebook, context: context)
@@ -40,7 +40,7 @@ enum TutorialNotebookFactory {
         context.insert(page)
 
         addText(
-            "Welcome to Mystnotes",
+            "Welcome to Linework",
             frame: (x: 40, y: 50, w: 520, h: 60),
             to: page, in: context
         )

@@ -8,7 +8,7 @@ import SwiftData
 /// The layout is written by the push path (`SyncRunner`, into an empty
 /// staging folder), so it is exactly what a sync folder holds: unzip a
 /// backup and choose it as the sync folder, and it restores like any other.
-/// One file per weekday - "Mystnotes Backup Monday.zip" - so a week of
+/// One file per weekday - "Linework Backup Monday.zip" - so a week of
 /// backups sits there and nothing is ever deleted, only replaced a week on.
 nonisolated enum Backup {
 
@@ -39,12 +39,12 @@ nonisolated enum Backup {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("Backup-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: work) }
-        let staging = work.appendingPathComponent("Mystnotes Backup", isDirectory: true)
+        let staging = work.appendingPathComponent("Linework Backup", isDirectory: true)
         try stage(container: container, localFiles: localFiles, into: staging)
         let zipped = work.appendingPathComponent("backup.zip")
         try LibraryExport.zipDirectory(staging, to: zipped)
 
-        let target = destination.appendingPathComponent("Mystnotes Backup \(weekday(of: now)).zip")
+        let target = destination.appendingPathComponent("Linework Backup \(weekday(of: now)).zip")
         if fm.fileExists(atPath: target.path) {
             _ = try fm.replaceItemAt(target, withItemAt: zipped)
         } else {
