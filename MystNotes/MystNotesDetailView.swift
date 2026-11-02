@@ -198,6 +198,10 @@ struct NotebookDetailView: View {
     #endif
 
     @State var isPresenting = false
+    /// Present mode's laser pointer: a fading trail, nothing drawn or saved.
+    @State var laserPointerOn = false
+    @State var showingGoToPage = false
+    @State var goToPageText = ""
     /// The drawing toolbar lives in the navigation bar's principal slot, on
     /// the row with Play / Pages / + / Save (GoodNotes' layout). That slot
     /// is squeezed to nothing in compact width (Slide Over, a narrow split),
@@ -428,6 +432,13 @@ struct NotebookDetailView: View {
                     } label: {
                         Label("Present", systemImage: "play.rectangle")
                     }
+                    Button {
+                        promptGoToPage()
+                    } label: {
+                        Label("Go to Page…", systemImage: "arrow.right.doc.on.clipboard")
+                    }
+                    .keyboardShortcut("g", modifiers: .command)
+                    .disabled(isPresenting || sortedPages.count < 2)
                     Menu {
                         Section {
                             ForEach(PageTemplate.options, id: \.id) { option in
@@ -543,6 +554,16 @@ struct NotebookDetailView: View {
             }
             .presentationDetents([.medium])
         }
+        .alert("Go to Page", isPresented: $showingGoToPage) {
+            TextField("Page number", text: $goToPageText)
+                #if targetEnvironment(macCatalyst) || canImport(UIKit)
+                .keyboardType(.numberPad)
+                #endif
+            Button("Cancel", role: .cancel) {}
+            Button("Go") { commitGoToPage() }
+        } message: {
+            Text("Enter a number from 1 to \(sortedPages.count).")
+        }
         .alert("Rename Page", isPresented: Binding(
             get: { pageToRename != nil },
             set: { if !$0 { pageToRename = nil } }
@@ -648,10 +669,15 @@ struct NotebookDetailView: View {
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
                                     .background(.ultraThinMaterial, in: Capsule())
+                                    .contentShape(Capsule())
+                                    // Tap to jump to a page number (Nov 2, 2026).
+                                    .onTapGesture { if sortedPages.count > 1 { promptGoToPage() } }
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityHint("Go to a page")
                                     .padding(10)
-                                    .allowsHitTesting(false)
                             }
                         }
+
                         .overlay(alignment: .bottom) {
                             if pendingDeletion != nil && showingDeletionBanner && !isPresenting {
                                 HStack(spacing: 14) {
@@ -698,14 +724,34 @@ struct NotebookDetailView: View {
             // never returns it on dismiss (the pen/canvas going blank after
             // exiting presentation mode). Toggling visibility in place keeps
             // canvasView mounted exactly once, always.
+            if isPresenting && laserPointerOn {
+                // Above the canvas and taking every touch, so nothing can
+                // be drawn while it is on. Below the buttons.
+                LaserPointerOverlay()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             if isPresenting {
-                Button {
-                    isPresenting = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title)
-                        .foregroundStyle(.secondary)
-                        .padding()
+                HStack(spacing: 0) {
+                    Button {
+                        laserPointerOn.toggle()
+                    } label: {
+                        Label("Laser", systemImage: laserPointerOn ? "circle.fill" : "circle.dotted")
+                            .labelStyle(.iconOnly)
+                            .font(.title)
+                            .foregroundStyle(laserPointerOn ? Color.red : Color.secondary)
+                            .padding(.vertical)
+                            .padding(.horizontal, Space.s)
+                    }
+                    .accessibilityLabel("Laser")
+                    .accessibilityValue(laserPointerOn ? "On" : "Off")
+                    Button {
+                        isPresenting = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    }
                 }
             }
         }
@@ -1152,6 +1198,11 @@ struct NotebookDetailView: View {
                             } label: {
                                 Label("New Page Like This", systemImage: "doc.badge.plus")
                             }
+                        }
+                        Button {
+                            duplicatePage(page)
+                        } label: {
+                            Label("Duplicate Page", systemImage: "plus.square.on.square")
                         }
                         Button {
                             pageToCopy = page

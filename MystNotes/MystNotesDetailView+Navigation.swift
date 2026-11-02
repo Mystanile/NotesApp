@@ -225,6 +225,35 @@ extension NotebookDetailView {
         saveMetadata("Failed to copy pages")
     }
 
+    /// Page menu: Duplicate Page. A copy right after `page` - settings,
+    /// elements and the ink - via `PageDuplication`. The open page's last
+    /// strokes are written first (only if the canvas is dirty, so a canvas
+    /// whose ink hasn't arrived is never saved) so the copy has them.
+    func duplicatePage(_ page: Page) {
+        commitPendingDeletion()
+        saveCurrentPage(blocking: true)
+        let documents = allImportedDocuments.filter { $0.page?.id == page.id }
+        Task {
+            let copy = await PageDuplication.duplicate(page, in: notebook, documents: documents,
+                                                       context: modelContext, store: drawingStore)
+            saveMetadata("Failed to duplicate the page")
+            jumpToPage(withID: copy.id)
+        }
+    }
+
+    /// Go to Page: opens the number prompt.
+    func promptGoToPage() {
+        goToPageText = ""
+        showingGoToPage = true
+    }
+
+    func commitGoToPage() {
+        if let index = PageNavigation.index(forEntered: goToPageText, pageCount: sortedPages.count) {
+            jumpToPage(at: index)
+        }
+        showingGoToPage = false
+    }
+
     /// Delete Page: hides the page now and deletes it for real only once
     /// that can't be undone (`pendingDeletion`). Undo is the banner's
     /// button, or the undo button while you're on the page you landed on.
@@ -276,5 +305,133 @@ extension NotebookDetailView {
         guard let page = notebook.pages?.first(where: { $0.id == pending.pageID }) else { return }
         PageDeletion.delete(page, from: notebook, in: modelContext, drawingStore: drawingStore)
         saveMetadata("Failed to delete page")
+    }
+}
+
+// MARK: - Go to Page, page indicator, Duplicate Page
+
+/// The arithmetic behind Go to Page and the page indicator.
+enum PageNavigation {
+    /// The zero-based index for what was typed (one-based), clamped to the
+    /// notebook; nil for nothing or non-numbers.
+    static func index(forEntered text: String, pageCount: Int) -> Int? {
+        guard pageCount > 0,
+              let number = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return min(max(number, 1), pageCount) - 1
+    }
+
+    /// "3 / 20" for the zero-based `index`.
+    static func indicatorText(index: Int, count: Int) -> String {
+        "\(index + 1) / \(count)"
+    }
+}
+
+/// The copy behind Duplicate Page. Kept off the view so tests can drive it.
+enum PageDuplication {
+    /// Inserts a copy of `source` right after it and renumbers the pages
+    /// behind it (each marked modified, so the order syncs). Copies the page
+    /// settings, text blocks, stickers and `documents` (artwork files are
+    /// shared by name); the ink goes through `DrawingStore.copyDetached`,
+    /// which saves it under the new page's id with fresh stroke ids. Links
+    /// are not copied.
+    static func duplicate(_ source: Page, in notebook: Notebook, documents: [ImportedDocument],
+                          context: ModelContext, store: DrawingStore) async -> Page {
+        // Everything after the source moves up one - before the copy
+        // exists, so it can't be counted among them.
+        for other in notebook.pages ?? [] where other.index > source.index {
+            other.index += 1
+            other.markModified()
+        }
+        let page = Page(index: source.index + 1, type: source.type, template: source.template, notebook: notebook)
+        page.backgroundRef = source.backgroundRef
+        page.aspectRatio = source.aspectRatio
+        page.recognizedTextCache = source.recognizedTextCache
+        page.title = source.title
+        page.tags = source.tags
+        context.insert(page)
+        if !(notebook.pages ?? []).contains(where: { $0.id == page.id }) {
+            notebook.pages = (notebook.pages ?? []) + [page]
+        }
+
+        for block in source.textBlocks ?? [] {
+            let copy = TypedTextBlock(content: block.content, page: page)
+            copy.frameX = block.frameX; copy.frameY = block.frameY
+            copy.frameWidth = block.frameWidth; copy.frameHeight = block.frameHeight
+            copy.textColorHex = block.textColorHex
+            copy.fontSize = block.fontSize; copy.fontDesign = block.fontDesign
+            copy.isBold = block.isBold; copy.isItalic = block.isItalic
+            context.insert(copy)
+        }
+        for sticker in source.stickers ?? [] {
+            let copy = Sticker(assetRef: sticker.assetRef, page: page)
+            copy.frameX = sticker.frameX; copy.frameY = sticker.frameY
+            copy.frameWidth = sticker.frameWidth; copy.frameHeight = sticker.frameHeight
+            copy.rotationDegrees = sticker.rotationDegrees
+            context.insert(copy)
+        }
+        for doc in documents {
+            let copy = ImportedDocument(sourceType: doc.sourceType, fileRef: doc.fileRef,
+                                        pdfPageIndex: doc.pdfPageIndex, page: page)
+            copy.frameX = doc.frameX; copy.frameY = doc.frameY
+            copy.frameWidth = doc.frameWidth; copy.frameHeight = doc.frameHeight
+            copy.rotationDegrees = doc.rotationDegrees
+            copy.cropX = doc.cropX; copy.cropY = doc.cropY
+            copy.cropWidth = doc.cropWidth; copy.cropHeight = doc.cropHeight
+            copy.stackOrder = doc.stackOrder
+            context.insert(copy)
+        }
+
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        switch await DrawingStore.copyDetached(store, from: source.id, to: page.id).value {
+        case .success(let ref): page.drawingFileRef = ref
+        case .failure(let error): AppLog.note("duplicate", "ink of \(source.id): \(error)")
+        }
+#endif
+        page.markModified()
+        return page
+    }
+}
+
+/// "3 / 20" at the bottom of the canvas: appears when the page changes,
+/// fades out two seconds later, and a tap opens Go to Page.
+struct PageIndicatorOverlay: View {
+    var index: Int
+    var count: Int
+    var onTap: () -> Void
+
+    @State private var visible = false
+    @State private var hideTask: Task<Void, Never>?
+
+    var body: some View {
+        Group {
+            if visible {
+                Button(action: onTap) {
+                    Text(PageNavigation.indicatorText(index: index, count: count))
+                        .font(Typography.caption.monospacedDigit())
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, Space.m)
+                        .padding(.vertical, Space.xs)
+                        .minimumHitTarget()
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Palette.separator, lineWidth: Metrics.hairline))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Page \(index + 1) of \(count)")
+                .accessibilityHint("Go to a page")
+                .transition(.opacity)
+            }
+        }
+        .padding(.bottom, 56)
+        .onChange(of: index) { _, _ in show() }
+    }
+
+    private func show() {
+        hideTask?.cancel()
+        withAnimation(Motion.quick) { visible = true }
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.4)) { visible = false }
+        }
     }
 }

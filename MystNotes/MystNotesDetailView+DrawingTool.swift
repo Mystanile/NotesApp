@@ -121,6 +121,7 @@ extension NotebookDetailView {
         if toolState.activeKind == .fill { toolState.activeKind = .pen }
         updateCanvasInteractionEnabled()
 #endif
+        laserPointerOn = false
         isPresenting = true
     }
 }
