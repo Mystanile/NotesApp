@@ -70,6 +70,70 @@ extension NotebookDetailView {
             scheduleAutosave()
         }
     }
+
+    // MARK: - Zoom Window
+
+    /// Paged pages only, and never while presenting.
+    var zoomWindowVisible: Bool {
+        zoomWindow.isOn && !isPresenting && currentPage.map { $0.type != "whiteboard" } == true
+    }
+
+    func toggleZoomWindow() {
+        if zoomWindow.isOn {
+            zoomWindow.isOn = false
+        } else {
+            // Start where the reader is looking: the visible page's top-left.
+            zoomWindow.placedPageID = currentPage?.id
+            zoomWindow.resetPlacement(at: viewport.pagePoint(from: CGPoint(x: 40, y: 40)))
+            zoomWindow.isOn = true
+        }
+    }
+
+    /// Appends strokes written in the pad to the page canvas as ONE undo
+    /// step. Marks the page dirty through `scheduleAutosave()` - never saves
+    /// directly - and only when the canvas on screen is still the one the
+    /// pad was showing and still belongs to `pageID` (a pull or a page turn
+    /// can swap it). Returns where the last stroke ended on the page, or nil
+    /// when nothing was taken, in which case the pad keeps its ink.
+    func forwardZoomStrokes(_ padStrokes: [PKStroke], targetOrigin: CGPoint, magnification: CGFloat,
+                            pageID: UUID, canvas: PKCanvasView) -> CGPoint? {
+        guard canvas === canvasView, canvasPageID == pageID, currentPage?.id == pageID,
+              adjustingImageFrame == nil,
+              let result = ZoomWindowMath.forward(padStrokes, into: canvas.drawing,
+                                                  magnification: magnification, targetOrigin: targetOrigin)
+        else { return nil }
+        canvas.setDrawingUndoably(result.drawing)
+        scheduleAutosave()
+        return result.end
+    }
+
+    /// The docked panel, bottom of the canvas area. A fresh pad per page.
+    @ViewBuilder
+    var zoomWindowPanel: some View {
+        if zoomWindowVisible, let page = currentPage {
+            let canvas = canvasView
+            ZoomWindowPanel(
+                model: zoomWindow,
+                pageID: page.id,
+                pageSize: PageGeometry.contentSize(for: page),
+                template: page.template,
+                toolState: toolState,
+                fingerDrawing: fingerDrawing,
+                canUndo: canUndo,
+                canRedo: canRedo,
+                currentDrawing: { canvas.drawing },
+                onForward: { strokes, origin, magnification in
+                    forwardZoomStrokes(strokes, targetOrigin: origin, magnification: magnification,
+                                       pageID: page.id, canvas: canvas)
+                },
+                onUndo: { canvas.undoManager?.undo(); zoomWindow.inkRevision &+= 1 },
+                onRedo: { canvas.undoManager?.redo(); zoomWindow.inkRevision &+= 1 },
+                onClose: { zoomWindow.isOn = false }
+            )
+            .id(page.id)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
     #endif
 
     // MARK: - Drawing toolbar

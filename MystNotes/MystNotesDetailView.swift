@@ -81,6 +81,9 @@ struct NotebookDetailView: View {
     /// says which strokes it holds, so a pinch could not be put on it.
     /// See `InkSelectionController`.
     @State var inkSelection = InkSelectionController()
+    /// The Zoom Window's target, magnification and reference image
+    /// (`ZoomWindowView.swift`).
+    @State var zoomWindow = ZoomWindowModel()
 #endif
 
     @State var currentPageIndex: Int = 0
@@ -387,6 +390,16 @@ struct NotebookDetailView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if let page = currentPage, page.type != "whiteboard", !isPresenting {
+                    Button { withAnimation(Motion.snappy) { toggleZoomWindow() } } label: {
+                        Image(systemName: "rectangle.and.text.magnifyingglass")
+                            .symbolVariant(zoomWindow.isOn ? .fill : .none)
+                    }
+                    .accessibilityLabel("Zoom Window")
+                    .accessibilityValue(zoomWindow.isOn ? "On" : "Off")
+                    .help("Write in a magnified window")
+                }
+
                 if aiEnabled {
                     Button { showingStudyPanel.toggle() } label: {
                         Image(systemName: "sparkles")
@@ -706,7 +719,7 @@ struct NotebookDetailView: View {
                         .overlay(alignment: .bottomTrailing) {
                             // Page position, moved off the navigation bar
                             // to make room for the drawing toolbar there.
-                            if !isPresenting && !sortedPages.isEmpty {
+                            if !isPresenting && !sortedPages.isEmpty && !zoomWindowVisible {
                                 Text("Page \(currentPageIndex + 1) of \(sortedPages.count)")
                                     .font(.footnote.weight(.medium))
                                     .foregroundStyle(.primary)
@@ -755,6 +768,8 @@ struct NotebookDetailView: View {
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
+                        // Last, so it sits over the rest of the bottom edge.
+                        .overlay(alignment: .bottom) { zoomWindowPanel }
                         #endif
                 } else {
                     ProgressView("Loading…")
@@ -913,7 +928,10 @@ struct NotebookDetailView: View {
                 // does; while artwork is being placed, the page holds still.
                 // Same for selected ink: the pinch resizes it instead.
                 isZoomEnabled: adjustingImageFrame == nil && !inkSelection.hasSelection,
-                onDrawingChanged: scheduleAutosave,
+                onDrawingChanged: {
+                    scheduleAutosave()
+                    if zoomWindow.isOn { zoomWindow.inkRevision &+= 1 }
+                },
                 onLongPress: { location in
                     // Not with the lasso in hand: a Pencil resting mid-loop
                     // over a photo would open its handles.
@@ -997,6 +1015,14 @@ struct NotebookDetailView: View {
                     onShowPageMap: { showingPageMap = true },
                     onDeleteNode: { deleteNode($0, on: page) }
                 )
+            }
+
+            if zoomWindowVisible {
+                // The area the Zoom Window shows, in page space; its grip
+                // is the only part that takes touches.
+                PageViewportLayer(viewport: viewport, pageSize: pageSize) { scale in
+                    ZoomTargetOverlay(model: zoomWindow, scale: scale)
+                }
             }
 
             if adjustingImageFrame != nil {
