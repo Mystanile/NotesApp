@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import CoreSpotlight
 
 @main
 struct NotebookApp: App {
@@ -21,6 +22,10 @@ struct NotebookApp: App {
         // Keeps handwriting search current in the background: first pass a
         // few seconds after launch, then on foreground. See SearchIndexer.
         SearchIndexer.shared.start(container: sharedModelContainer)
+        // Spotlight items for notebooks and pages, and the container the
+        // Shortcuts intents read; see SpotlightIndexer, LineworkIntents.
+        AppNavigationRequests.shared.container = sharedModelContainer
+        SpotlightIndexer.shared.start(container: sharedModelContainer)
         MainThreadWatchdog.checkpoint("App.init")
     }
 
@@ -58,6 +63,14 @@ struct NotebookApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                    guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+                          let target = SpotlightItems.parse(identifier: id) else { return }
+                    switch target {
+                    case .notebook(let notebookID): AppNavigationRequests.shared.request(notebookID: notebookID)
+                    case .page(let pageID): AppNavigationRequests.shared.requestPage(pageID)
+                    }
+                }
         }
         .modelContainer(sharedModelContainer)
         .commands {

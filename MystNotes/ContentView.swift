@@ -19,11 +19,14 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// The last scene phase other than `.inactive`; see `SyncEngine.shouldPullOnActive`.
     @State private var lastSettledPhase: ScenePhase?
+    /// Driven by Spotlight and Shortcuts requests; user taps push onto it too.
+    @State private var path = NavigationPath()
+    @State private var requests = AppNavigationRequests.shared
 
     var body: some View {
         Group {
             if isSignedIn || isGuestMode {
-                NavigationStack {
+                NavigationStack(path: $path) {
                     LibraryView(parentFolder: nil)
                         .navigationDestination(for: Folder.self) { folder in
                             if let query = folder.smartQuery {
@@ -63,6 +66,8 @@ struct ContentView: View {
             Backup.runIfDue(container: modelContext.container)
             SyncEngine.shared.pullOnForeground()
         }
+        .onChange(of: requests.pendingPage, initial: true) { _, _ in consumeNavigationRequest() }
+        .onChange(of: isSignedIn || isGuestMode) { _, _ in consumeNavigationRequest() }
         .onChange(of: scenePhase) { _, phase in
             MainThreadWatchdog.checkpoint("ContentView.scenePhase \(phase)")
             // Watchdog pause, watcher suspend, background push and relock are
@@ -72,6 +77,28 @@ struct ContentView: View {
             }
             if phase != .inactive { lastSettledPhase = phase }
         }
+    }
+
+    /// Opens what Spotlight or a Shortcut asked for, the same way a search
+    /// result opens (`SearchResult`, behind `LockedNotebookGate`). Waits
+    /// while the login screen is up; a missing notebook or page (not synced
+    /// yet) is dropped, or falls back to the notebook.
+    private func consumeNavigationRequest() {
+        guard isSignedIn || isGuestMode, let request = requests.pendingPage else { return }
+        requests.pendingPage = nil
+        let id = request.notebookID
+        var descriptor = FetchDescriptor<Notebook>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        guard let notebook = (try? modelContext.fetch(descriptor))?.first,
+              !PageTemplates.isTemplatesNotebook(notebook) else { return }
+        var stack = NavigationPath()
+        if let pageID = request.pageID,
+           let page = (notebook.pages ?? []).first(where: { $0.id == pageID }) {
+            stack.append(SearchResult(notebook: notebook, pageID: pageID, pageNumber: page.index + 1, snippet: ""))
+        } else {
+            stack.append(notebook)
+        }
+        path = stack
     }
 
     private var scheme: ColorScheme? {
