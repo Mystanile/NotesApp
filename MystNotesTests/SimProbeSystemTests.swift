@@ -288,7 +288,7 @@ final class SimProbeSystemTests: XCTestCase {
         let written = try fm.contentsOfDirectory(atPath: chosen.path)
         XCTAssertEqual(written.count, 1, "\(written)")
         let zipName = try XCTUnwrap(written.first)
-        XCTAssertTrue(zipName.hasPrefix("Mystnotes Backup ") && zipName.hasSuffix(".zip"), zipName)
+        XCTAssertTrue(zipName.hasPrefix("Linework Backup ") && zipName.hasSuffix(".zip"), zipName)
 
         let entries = try Self.unzip(chosen.appendingPathComponent(zipName), into: harness.syncFolder)
         print("[backup] \(zipName): \(entries.count) entries, e.g. \(entries.prefix(6))")
@@ -656,7 +656,7 @@ final class SimProbeSystemTests: XCTestCase {
     }
 
     // A backup zip, unzipped the way Files does: central directory, stored
-    // or deflated entries. The top folder ("Mystnotes Backup/") is what you
+    // or deflated entries. The top folder ("Linework Backup/") is what you
     // would choose as the sync folder, so its contents go into `folder`.
 
     nonisolated private static func unzip(_ zip: URL, into folder: URL) throws -> [String] {
@@ -677,7 +677,7 @@ final class SimProbeSystemTests: XCTestCase {
             entries.append((name: name, method: u16(p + 10), packed: u32(p + 20), size: u32(p + 24), local: u32(p + 42)))
             p += 46 + nameLength + u16(p + 30) + u16(p + 32)
         }
-        let top = "Mystnotes Backup/"
+        let top = "Linework Backup/"
         let dropTop = entries.allSatisfy { $0.name.hasPrefix(top) }
         let fm = FileManager.default
         for entry in entries {

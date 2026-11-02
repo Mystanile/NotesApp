@@ -46,7 +46,7 @@ final class BackupTests: XCTestCase {
         let zip = try Backup.archive(container: ipad.container, localFiles: ipad.filesDirectory,
                                      to: destination, now: monday,
                                      handwritingProfile: absentProfile)
-        XCTAssertTrue(zip.lastPathComponent.hasPrefix("Mystnotes Backup"), zip.lastPathComponent)
+        XCTAssertTrue(zip.lastPathComponent.hasPrefix("Linework Backup"), zip.lastPathComponent)
         XCTAssertEqual(Array(try Data(contentsOf: zip).prefix(4)), [0x50, 0x4B, 0x03, 0x04])
 
         let nextMonday = monday.addingTimeInterval(7 * 24 * 3600)
