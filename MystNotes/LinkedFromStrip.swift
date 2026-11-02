@@ -21,6 +21,12 @@ struct LinkedFromStrip: View {
         return "\(number) · \(title)"
     }
 
+    /// The first `limit` items and the rest, for "and N more". Pure.
+    static func split<T>(_ items: [T], limit: Int = 5) -> (shown: [T], hidden: [T]) {
+        let cut = min(max(limit, 0), items.count)
+        return (Array(items[..<cut]), Array(items[cut...]))
+    }
+
     /// "p. N · title" in the open notebook, "<Notebook> · p. N" elsewhere.
     static func label(for page: Page, currentNotebookID: UUID?) -> String {
         guard let nb = page.notebook, nb.id != currentNotebookID else { return label(for: page) }
@@ -33,10 +39,19 @@ struct LinkedFromStrip: View {
                 Label("Linked from", systemImage: "arrow.turn.down.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                ForEach(sources, id: \.id) { page in
+                let parts = Self.split(sources)
+                ForEach(parts.shown, id: \.id) { page in
                     Button(Self.label(for: page, currentNotebookID: currentNotebookID)) { onSelect(page.id) }
                         .font(.caption)
                         .lineLimit(1)
+                }
+                if !parts.hidden.isEmpty {
+                    Menu("and \(parts.hidden.count) more") {
+                        ForEach(parts.hidden, id: \.id) { page in
+                            Button(Self.label(for: page, currentNotebookID: currentNotebookID)) { onSelect(page.id) }
+                        }
+                    }
+                    .font(.caption)
                 }
             }
             .padding(10)

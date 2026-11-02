@@ -159,11 +159,180 @@ extension NotebookDetailView {
     }
 
     /// Lasso → "Link This To…": a link whose tap area is the selection's
-    /// box, then the same destination picker as a plain link.
+    /// box, then the same destination picker as a plain link. The link also
+    /// records the selection's stroke ids (invariant 6), so its anchor can
+    /// follow the ink; if they can't be read yet it is still made, without.
     func linkSelection() {
-        guard let anchor = Self.linkAnchor(around: inkSelection.display.corners ?? []) else { return }
-        addLink(anchoredTo: anchor)
+        guard let page = currentPage,
+              let anchor = Self.linkAnchor(around: inkSelection.display.corners ?? []) else { return }
+        let strokes = inkSelection.selectedStrokes?.strokes ?? []
+        let canvas = canvasView
         inkSelection.clear()
+        Task {
+            let ids = strokes.isEmpty ? nil : await flushInkAndReadIDs(strokes, on: page)
+            // A page turn in the meantime installed another canvas.
+            guard canvasView === canvas else { return }
+            addLink(anchoredTo: anchor, strokeIDs: ids)
+        }
+    }
+
+    // MARK: - Nodes
+
+    /// A node being named: the alert is up.
+    struct NodeDraft: Equatable {
+        var pageID: UUID
+        var strokeIDs: [String]
+        var anchor: CGRect
+        /// What a blank field falls back to.
+        var suggestion: String
+    }
+
+    /// Everything needed to put a node back (undo of a delete, redo of a make).
+    struct NodeSnapshot {
+        var id: UUID
+        var strokeIDs: [String]
+        var title: String
+        var anchor: CGRect
+
+        init(id: UUID = UUID(), strokeIDs: [String], title: String, anchor: CGRect) {
+            self.id = id
+            self.strokeIDs = strokeIDs
+            self.title = title
+            self.anchor = anchor
+        }
+
+        init(of link: Link) {
+            self.init(id: link.id, strokeIDs: link.strokeIDs ?? [], title: link.title ?? "",
+                      anchor: CGRect(x: link.anchorX, y: link.anchorY, width: link.anchorWidth, height: link.anchorHeight))
+        }
+    }
+
+    /// Writes the canvas if it has unsaved ink, then returns the stable ids
+    /// of `strokes` - or nil if any has none yet. A stroke only has an id
+    /// once a record holding it has been written, so a node made seconds
+    /// after drawing must save first. A clean canvas is never saved: it may
+    /// be blank only because its ink hasn't arrived.
+    func flushInkAndReadIDs(_ strokes: [PKStroke], on page: Page) async -> [String]? {
+        if canvasIsDirty && canvasPageID == page.id {
+            canvasIsDirty = false
+            autosaveTask?.cancel()
+            await save(canvasView.drawing, to: page)
+        }
+        let map = StrokeIDCache.shared.map(for: page.id)
+        var ids: [String] = []
+        for stroke in strokes {
+            guard let id = map.existingID(for: stroke) else { return nil }
+            ids.append(id.uuidString)
+        }
+        return ids.isEmpty ? nil : ids
+    }
+
+    /// Lasso → Make Node: reads the stroke ids (saving first) while the
+    /// handwriting is read for a suggested name, then asks for the name.
+    func beginMakeNode(on page: Page) {
+        guard page.type != "whiteboard", let selection = inkSelection.selectedStrokes else { return }
+        let canvas = canvasView
+        let strokes = selection.strokes
+        let bounds = selection.bounds
+        let ocr = Task { await HandwritingRecognizer.text(in: PKDrawing(strokes: strokes), separator: "\n") }
+        Task {
+            let ids = await flushInkAndReadIDs(strokes, on: page)
+            let recognized = await ocr.value
+            guard canvasView === canvas else { return }
+            guard let ids else {
+                exportMessage = "Couldn't make a node from this ink yet. Try again in a moment."
+                return
+            }
+            let suggestion = Links.nodeTitle(recognized: recognized, pageNumber: page.index + 1)
+            nodeTitleText = suggestion
+            nodeDraft = NodeDraft(pageID: page.id, strokeIDs: ids, anchor: bounds, suggestion: suggestion)
+        }
+    }
+
+    /// The alert's Make button. Cancel just drops the draft.
+    func commitNodeDraft() {
+        guard let draft = nodeDraft else { return }
+        nodeDraft = nil
+        guard let page = sortedPages.first(where: { $0.id == draft.pageID }) else { return }
+        let typed = nodeTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        setNode(NodeSnapshot(strokeIDs: draft.strokeIDs, title: typed.isEmpty ? draft.suggestion : typed,
+                             anchor: draft.anchor),
+                present: true, on: page)
+        inkSelection.clear()
+    }
+
+    /// Adds or removes one node and registers the opposite on the page's
+    /// undo stack, like `setTextBlock`.
+    func setNode(_ snapshot: NodeSnapshot, present: Bool, on page: Page) {
+        Self.applyNode(snapshot, present: present, on: page, in: modelContext)
+        let canvas = canvasView
+        canvas.undoManager?.registerUndo(withTarget: canvas) { _ in
+            setNode(snapshot, present: !present, on: page)
+        }
+        refreshUndoRedoState()
+    }
+
+    /// The model half of `setNode`: puts the node back under its own id, or
+    /// takes it away. Marks the page and saves either way.
+    static func applyNode(_ snapshot: NodeSnapshot, present: Bool, on page: Page, in context: ModelContext) {
+        if present {
+            let link = Links.makeNode(on: page, strokeIDs: snapshot.strokeIDs, title: snapshot.title,
+                                      anchor: snapshot.anchor, in: context)
+            link.id = snapshot.id
+        } else {
+            let id = snapshot.id
+            let found = (try? context.fetch(FetchDescriptor<Link>(predicate: #Predicate { $0.id == id }))) ?? []
+            found.forEach(context.delete)
+            page.markModified()
+        }
+        do { try context.save() } catch { AppLog.note("save", "node: \(error)") }
+    }
+
+    func deleteNode(_ link: Link, on page: Page) {
+        setNode(NodeSnapshot(of: link), present: false, on: page)
+    }
+
+    func beginRenameNode(_ link: Link) {
+        renameNodeText = link.title ?? ""
+        nodeToRename = link
+    }
+
+    func commitRenameNode() {
+        guard let link = nodeToRename else { return }
+        nodeToRename = nil
+        guard link.modelContext != nil else { return }
+        Links.setTitle(link, renameNodeText, in: modelContext)
+    }
+
+    /// Every node on this notebook's pages (the Page Map's chips, greying).
+    var notebookNodes: [Link] {
+        let pageIDs = Set(sortedPages.map(\.id))
+        return allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
+    }
+
+    /// What `.task(id:)` watches to recompute `goneNodeIDs`: a page's ink
+    /// only changes with its `modifiedAt`, and nodes come and go.
+    struct GoneNodesKey: Equatable {
+        var stamps: [Date?]
+        var nodeIDs: [UUID]
+    }
+
+    var goneNodesKey: GoneNodesKey {
+        GoneNodesKey(stamps: sortedPages.map(\.modifiedAt), nodeIDs: notebookNodes.map(\.id).sorted { $0.uuidString < $1.uuidString })
+    }
+
+    /// Which nodes' ink is gone, read from the records off the main thread.
+    func refreshGoneNodes() async {
+        let probes = NodeInk.probes(of: notebookNodes)
+        let gone = probes.isEmpty ? [] : await NodeInk.goneDetached(probes).value
+        guard !Task.isCancelled, gone != goneNodeIDs else { return }
+        goneNodeIDs = gone
+    }
+
+    /// The node links on `page`, in reading order.
+    func nodes(on page: Page) -> [Link] {
+        allLinks.filter { $0.sourcePageID == page.id && Links.isNode($0) }
+            .sorted { ($0.anchorY, $0.anchorX) < ($1.anchorY, $1.anchorX) }
     }
 
     /// The box around a selection's corners (page coordinates, the same
@@ -185,7 +354,7 @@ extension NotebookDetailView {
         saveMetadata("Failed to remove an unfinished link")
     }
 
-    func addLink(anchoredTo anchor: CGRect? = nil) {
+    func addLink(anchoredTo anchor: CGRect? = nil, strokeIDs: [String]? = nil) {
         guard let page = currentPage else { return }
         // Placeholder self-referencing destination — immediately prompting
         // the picker below means the user always ends up choosing a real
@@ -193,6 +362,7 @@ extension NotebookDetailView {
         let link = Link(sourcePageID: page.id, destinationPageID: page.id)
         link.anchorX = anchor.map { Double($0.minX) } ?? 40
         link.anchorY = anchor.map { Double($0.minY) } ?? 40
+        link.strokeIDs = strokeIDs
         if let anchor {
             link.anchorWidth = Double(anchor.width)
             link.anchorHeight = Double(anchor.height)

@@ -160,6 +160,14 @@ struct NotebookDetailView: View {
     /// VisionKit's document camera; the scan arrives as new pages.
     @State var showingScanner = false
     @State var linkNeedingDestination: Link?
+    /// Make Node: the draft the name alert is about, and its text field.
+    @State var nodeDraft: NodeDraft?
+    @State var nodeTitleText = ""
+    /// Rename Node (from a badge).
+    @State var nodeToRename: Link?
+    @State var renameNodeText = ""
+    /// Nodes on this notebook whose ink is gone (derived, never stored).
+    @State var goneNodeIDs: Set<UUID> = []
 
     /// Whether an import lands on the page you're looking at or creates new
     /// page(s) after it. Set by whichever Import menu item was tapped, read
@@ -451,6 +459,7 @@ struct NotebookDetailView: View {
                                   notebook.setGraphPosition(point, forPageID: id)
                                   saveMetadata("Failed to save the Page Map")
                               },
+                              goneNodeIDs: goneNodeIDs,
                               documents: documentsByPageID) { id in
                 showingPageMap = false
                 jumpToPage(withID: id)
@@ -477,8 +486,13 @@ struct NotebookDetailView: View {
         }
         .sheet(item: $linkNeedingDestination, onDismiss: removeUnfinishedLinks) { link in
             LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID,
-                                      notebooks: allNotebooks, currentNotebookID: notebook.id) { destinationID in
-                Links.setDestination(link, toPage: destinationID, in: modelContext)
+                                      notebooks: allNotebooks, links: allLinks,
+                                      currentNotebookID: notebook.id) { destinationID, nodeID in
+                if let nodeID, let node = allLinks.first(where: { $0.id == nodeID }) {
+                    Links.setDestination(link, toNode: node, in: modelContext)
+                } else {
+                    Links.setDestination(link, toPage: destinationID, in: modelContext)
+                }
             }
         }
         // The only `.fileImporter` on this view - see `showingFileImporter`.
@@ -539,6 +553,25 @@ struct NotebookDetailView: View {
         } message: {
             Text("A named page is listed in the notebook's outline.")
         }
+        .alert("Make Node", isPresented: Binding(
+            get: { nodeDraft != nil },
+            set: { if !$0 { nodeDraft = nil } }
+        )) {
+            TextField("Name", text: $nodeTitleText)
+            Button("Cancel", role: .cancel) { nodeDraft = nil }
+            Button("Make") { commitNodeDraft() }
+        } message: {
+            Text("A named piece of ink you can link to from anywhere.")
+        }
+        .alert("Rename Node", isPresented: Binding(
+            get: { nodeToRename != nil },
+            set: { if !$0 { nodeToRename = nil } }
+        )) {
+            TextField("Name", text: $renameNodeText)
+            Button("Cancel", role: .cancel) { nodeToRename = nil }
+            Button("Save") { commitRenameNode() }
+        }
+        .task(id: goneNodesKey) { await refreshGoneNodes() }
         .alert("Export", isPresented: Binding(
             get: { exportMessage != nil },
             set: { if !$0 { exportMessage = nil } }
@@ -625,7 +658,7 @@ struct NotebookDetailView: View {
                                 .padding(.bottom, 12)
                             }
                         }
-                        .overlay(alignment: .topTrailing) { linkedFromStrip }
+                        .overlay(alignment: .bottomLeading) { connectionsPanel }
                         .overlay(alignment: .leading) {
                             if pageSidebarVisible && isCompactWidth && !isPresenting {
                                 pageSidebar.shadow(color: .black.opacity(0.25), radius: 10, x: 2)
@@ -833,6 +866,7 @@ struct NotebookDetailView: View {
                         onCopyAsImage: { inkSelection.copySelectionAsImage() },
                         onConvertToText: { convertSelectionToText(on: page) },
                         onLinkTo: { linkSelection() },
+                        onMakeNode: { beginMakeNode(on: page) },
                         onDone: { inkSelection.clear() }
                     ), corners: inkSelection.display.corners, viewport: viewport)
                 }
@@ -856,7 +890,11 @@ struct NotebookDetailView: View {
                     onMention: { dest, blockID in addMention(from: page, to: dest, blockID: blockID) },
                     onSave: scheduleAutosave,
                     onRequestLinkDestinationChange: { link in linkNeedingDestination = link },
-                    onDeleteTextBlock: { block in deleteTextBlock(block, on: page) }
+                    onDeleteTextBlock: { block in deleteTextBlock(block, on: page) },
+                    goneNodeIDs: goneNodeIDs,
+                    onRenameNode: { beginRenameNode($0) },
+                    onShowPageMap: { showingPageMap = true },
+                    onDeleteNode: { deleteNode($0, on: page) }
                 )
             }
 
@@ -923,15 +961,34 @@ struct NotebookDetailView: View {
         return (try? modelContext.fetch(FetchDescriptor<Page>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
     }
 
-    /// Pages that link here (M2).
+    /// The pages `pageID` links out to (other than itself), fetched by id for
+    /// the same reason as `pagesLinking(to:)`.
+    func pagesLinked(from pageID: UUID) -> [Page] {
+        let ids = Array(Set(allLinks.lazy.filter { $0.sourcePageID == pageID && $0.destinationPageID != pageID }
+            .map(\.destinationPageID)))
+        guard !ids.isEmpty else { return [] }
+        return (try? modelContext.fetch(FetchDescriptor<Page>(predicate: #Predicate { ids.contains($0.id) }))) ?? []
+    }
+
+    /// The open page's connections (M2): who links here, where it links to,
+    /// and its nodes, in one collapsible card.
     @ViewBuilder
-    var linkedFromStrip: some View {
+    var connectionsPanel: some View {
         if !isPresenting, let page = currentPage {
-            LinkedFromStrip(
-                sources: LinkedFromStrip.sources(linkingTo: page.id, links: allLinks,
-                                                 pages: pagesLinking(to: page.id).filter { $0.id != pendingDeletion?.pageID }),
-                currentNotebookID: notebook.id,
-                onSelect: { jumpToPage(withID: $0) })
+            let hiding = pendingDeletion?.pageID
+            let entry: (Page) -> ConnectionsPanel.Entry = {
+                .init(id: $0.id, label: LinkedFromStrip.label(for: $0, currentNotebookID: notebook.id))
+            }
+            let incoming = LinkedFromStrip.sources(linkingTo: page.id, links: allLinks,
+                                                   pages: pagesLinking(to: page.id).filter { $0.id != hiding })
+            let outgoing = pagesLinked(from: page.id).filter { $0.id != hiding }
+                .sorted { ($0.notebook?.title ?? "", $0.index) < ($1.notebook?.title ?? "", $1.index) }
+            ConnectionsPanel(
+                linkedFrom: incoming.map(entry),
+                linksTo: outgoing.map(entry),
+                nodes: nodes(on: page).map { .init(id: $0.id, title: $0.title ?? "Node", isGone: goneNodeIDs.contains($0.id)) },
+                onSelectPage: { jumpToPage(withID: $0) },
+                onOpenPageMap: { showingPageMap = true })
         }
     }
 

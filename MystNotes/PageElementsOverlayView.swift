@@ -24,6 +24,12 @@ struct PageElementsOverlayView: View {
     var onRequestLinkDestinationChange: (Link) -> Void
     /// Undoable delete of a text box; without it the box deletes itself.
     var onDeleteTextBlock: ((TypedTextBlock) -> Void)? = nil
+    /// Nodes on this page whose ink is gone: their badge is grey.
+    var goneNodeIDs: Set<UUID> = []
+    var onRenameNode: (Link) -> Void = { _ in }
+    var onShowPageMap: () -> Void = {}
+    /// Undoable delete; the detail view owns the undo stack.
+    var onDeleteNode: (Link) -> Void = { _ in }
 
     private var links: [Link] {
         allLinks.filter { $0.sourcePageID == page.id }
@@ -48,6 +54,11 @@ struct PageElementsOverlayView: View {
                     onSave: onSave,
                     onRequestDestinationChange: onRequestLinkDestinationChange
                 )
+            }
+
+            ForEach(links.filter(Links.isNode), id: \.id) { node in
+                NodeBadgeView(node: node, isGone: goneNodeIDs.contains(node.id),
+                              onRename: onRenameNode, onShowPageMap: onShowPageMap, onDelete: onDeleteNode)
             }
         }
     }
@@ -558,5 +569,43 @@ private struct LinkAnchorView: View {
                 dragOrigin = nil
                 onSave()
             }
+    }
+}
+
+// MARK: - Node badge
+
+/// A node's amber pill at the top-left of its region. Tap for Rename, Show
+/// in Page Map and Delete Node; grey when the ink it names is gone. Drawn
+/// in page space like every other element, so it scales with the page.
+private struct NodeBadgeView: View {
+    let node: Link
+    let isGone: Bool
+    var onRename: (Link) -> Void
+    var onShowPageMap: () -> Void
+    var onDelete: (Link) -> Void
+
+    var body: some View {
+        Menu {
+            Button { onRename(node) } label: { Label("Rename", systemImage: "pencil") }
+            Button { onShowPageMap() } label: { Label("Show in Page Map", systemImage: "point.3.connected.trianglepath.dotted") }
+            Button(role: .destructive) { onDelete(node) } label: { Label("Delete Node", systemImage: "trash") }
+        } label: {
+            HStack(spacing: Space.xs) {
+                Image(systemName: isGone ? "scribble.variable" : "scribble").imageScale(.small)
+                Text(node.title ?? "Node").lineLimit(1)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isGone ? Color.secondary : Color.black.opacity(0.82))
+            .padding(.horizontal, Space.s)
+            .padding(.vertical, Space.xs)
+            .background(Capsule().fill(isGone ? Color.secondary.opacity(0.18) : Palette.node))
+            .overlay(Capsule().strokeBorder(isGone ? Color.secondary.opacity(0.4) : Color.black.opacity(0.12),
+                                            style: StrokeStyle(lineWidth: 1, dash: isGone ? [3, 3] : [])))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .offset(x: node.anchorX, y: node.anchorY)
+        .accessibilityLabel("Node \(node.title ?? "")")
     }
 }

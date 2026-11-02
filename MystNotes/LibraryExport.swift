@@ -9,15 +9,26 @@ import UIKit
 enum LibraryExport {
     /// The notebook's words: page names, typed text, and recognized
     /// handwriting as a quote under each page.
-    static func markdown(for notebook: Notebook) -> String {
+    /// `links` defaults to the notebook's own context; tests may pass them.
+    static func markdown(for notebook: Notebook, links: [Link]? = nil) -> String {
         var lines = ["# \(notebook.title)", ""]
         let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
+        let pageIDs = Set(pages.map(\.id))
+        let allLinks = links ?? ((try? notebook.modelContext?.fetch(FetchDescriptor<Link>())) ?? [])
+        let nodes = allLinks.filter { Links.isNode($0) && pageIDs.contains($0.sourcePageID) }
         for (offset, page) in pages.enumerated() {
             let name = page.title.map { ": \($0)" } ?? ""
             lines.append("## Page \(offset + 1)\(name)")
             lines.append("")
             if let tags = page.tags, !tags.isEmpty {
                 lines.append("Tags: " + tags.map { "#\($0)" }.joined(separator: " "))
+                lines.append("")
+            }
+            let names = nodes.filter { $0.sourcePageID == page.id }
+                .sorted { ($0.anchorY, $0.anchorX) < ($1.anchorY, $1.anchorX) }
+                .compactMap(\.title)
+            if !names.isEmpty {
+                lines.append("Nodes: " + names.joined(separator: ", "))
                 lines.append("")
             }
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }

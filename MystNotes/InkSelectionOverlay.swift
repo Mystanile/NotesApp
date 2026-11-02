@@ -101,6 +101,8 @@ struct InkSelectionToolbar: View {
     var onConvertToText: () -> Void = {}
     /// Nil hides the button (the whiteboard draws no link anchors yet).
     var onLinkTo: (() -> Void)? = nil
+    /// Nil hides the button (the whiteboard has no nodes).
+    var onMakeNode: (() -> Void)? = nil
     var onDone: () -> Void
 
     private let colors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
@@ -144,6 +146,9 @@ struct InkSelectionToolbar: View {
             if let onLinkTo {
                 iconButton("link", help: "Link This To…", action: onLinkTo)
             }
+            if let onMakeNode {
+                iconButton("scribble", help: "Make Node", action: onMakeNode)
+            }
             Divider().frame(height: 24)
             iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
             Divider().frame(height: 24)
@@ -173,6 +178,9 @@ struct InkSelectionToolbar: View {
                 Button { onConvertToText() } label: { Label("Convert to Text", systemImage: "character.textbox") }
                 if let onLinkTo {
                     Button { onLinkTo() } label: { Label("Link This To…", systemImage: "link") }
+                }
+                if let onMakeNode {
+                    Button { onMakeNode() } label: { Label("Make Node", systemImage: "scribble") }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 17)).frame(width: 36, height: 34)
