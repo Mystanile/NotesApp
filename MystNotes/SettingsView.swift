@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @AppStorage(AppSettings.Keys.toolType) private var toolType = "pen"
     @AppStorage(AppSettings.Keys.inkWidth) private var inkWidth: Double = 4
+    @AppStorage(AppSettings.Keys.fingerDrawing) private var fingerDrawing = false
     @AppStorage(AppSettings.Keys.template) private var defaultTemplate = "blank"
     @AppStorage(AppSettings.Keys.appearance) private var appearance = "system"
     @AppStorage(AppSettings.Keys.signedInDisplayName) private var signedInDisplayName = ""
@@ -53,10 +54,11 @@ struct SettingsView: View {
                 }
                 ColorPicker("Default Ink Color", selection: inkColorBinding)
                 Stepper("Ink Width: \(Int(inkWidth)) pt", value: $inkWidth, in: 1...20)
+                Toggle("Draw with Finger", isOn: $fingerDrawing)
             } header: {
                 Text("Pen")
             } footer: {
-                Text("Applied to a page when you open it.")
+                Text("Default tool, color and width are applied to a page when you open it. When off, Apple Pencil draws and your finger scrolls. Turn on to write with your finger; use two fingers to scroll.")
             }
 
             Section {

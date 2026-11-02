@@ -18,6 +18,9 @@ struct NotebookApp: App {
         // Artwork rows an older build left pointing at deleted pages; see
         // LibraryRebuild.dropOrphanedArtwork.
         LibraryRebuild.dropOrphanedArtworkInBackground(container: sharedModelContainer)
+        // Keeps handwriting search current in the background: first pass a
+        // few seconds after launch, then on foreground. See SearchIndexer.
+        SearchIndexer.shared.start(container: sharedModelContainer)
         MainThreadWatchdog.checkpoint("App.init")
     }
 

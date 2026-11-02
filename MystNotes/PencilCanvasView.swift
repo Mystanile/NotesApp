@@ -55,6 +55,15 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
         setNeedsLayout()
     }
 
+    /// "Draw with finger", as last applied by the representable. Written
+    /// only when it differs; the pan requirement follows it.
+    var fingerDrawing = false {
+        didSet {
+            guard fingerDrawing != oldValue else { return }
+            updatePanTouchRequirement()
+        }
+    }
+
     private var pageSize: CGSize = .zero
     private var pageIdentity: UUID?
     private var lastFittedBounds: CGSize = .zero
@@ -168,10 +177,15 @@ final class PagedCanvasHostView: CanvasHostView, CanvasViewportHost {
     /// wheel, which the host handles itself (`CanvasHostView.handleWheel`),
     /// and with Space + drag. A one-touch pan here is what took the drag
     /// away from the ink.
+    /// Pure, so a test can drive it. A finger that draws can't also pan.
+    nonisolated static func panTouches(zoomedIn: Bool, isMac: Bool, fingerDrawing: Bool) -> Int {
+        (zoomedIn && !isMac && !fingerDrawing) ? 1 : 2
+    }
+
     private func updatePanTouchRequirement() {
         guard let canvas else { return }
         let zoomedIn = canvas.zoomScale > canvas.minimumZoomScale * 1.001
-        let required = (zoomedIn && !CanvasInput.isMac) ? 1 : 2
+        let required = Self.panTouches(zoomedIn: zoomedIn, isMac: CanvasInput.isMac, fingerDrawing: fingerDrawing)
         if canvas.panGestureRecognizer.minimumNumberOfTouches != required {
             canvas.panGestureRecognizer.minimumNumberOfTouches = required
         }
@@ -240,7 +254,7 @@ final class PageSwipeInstaller: NSObject, UIGestureRecognizerDelegate {
     private var onSwipe: ((Int) -> Bool)?
     private weak var host: PagedCanvasHostView?
 
-    func install(on host: PagedCanvasHostView, onSwipe: ((Int) -> Bool)?) {
+    func install(on host: PagedCanvasHostView, onSwipe: ((Int) -> Bool)?, fingerDrawing: Bool) {
         self.onSwipe = onSwipe
         if self.host !== host {
             remove()
@@ -253,8 +267,14 @@ final class PageSwipeInstaller: NSObject, UIGestureRecognizerDelegate {
             }
             self.host = host
         }
-        let enabled = onSwipe != nil && !CanvasInput.isMac
+        let enabled = Self.isEnabled(hasHandler: onSwipe != nil, isMac: CanvasInput.isMac,
+                                     fingerDrawing: fingerDrawing)
         if left.isEnabled != enabled { left.isEnabled = enabled; right.isEnabled = enabled }
+    }
+
+    /// A one-finger swipe turns the page only while a finger can't draw.
+    nonisolated static func isEnabled(hasHandler: Bool, isMac: Bool, fingerDrawing: Bool) -> Bool {
+        hasHandler && !isMac && !fingerDrawing
     }
 
     func remove() {
@@ -373,6 +393,9 @@ struct PencilCanvasView: UIViewRepresentable {
     /// previous; returns false when there's no such page. Nil turns
     /// swiping off.
     var onSwipePage: ((Int) -> Bool)? = nil
+    /// "Draw with finger", handed down by the detail view (which observes
+    /// the setting) so a change reaches an open page at once.
+    var fingerDrawing: Bool = false
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -391,7 +414,8 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.host = host
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installFillTap(on: host, onTap: onFillTap)
-        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage)
+        if host.fingerDrawing != fingerDrawing { host.fingerDrawing = fingerDrawing }
+        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage, fingerDrawing: fingerDrawing)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -427,7 +451,8 @@ struct PencilCanvasView: UIViewRepresentable {
         configure(canvasView, context: context)
         context.coordinator.attachLongPress(to: host)
         context.coordinator.installFillTap(on: host, onTap: onFillTap)
-        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage)
+        if host.fingerDrawing != fingerDrawing { host.fingerDrawing = fingerDrawing }
+        context.coordinator.pageSwipe.install(on: host, onSwipe: onSwipePage, fingerDrawing: fingerDrawing)
         context.coordinator.installShortcuts(on: host)
         context.coordinator.installShapeHold(on: host)
         context.coordinator.shapeSnap.onPreview = onShapePreview
@@ -469,8 +494,9 @@ struct PencilCanvasView: UIViewRepresentable {
     /// recognizers and re-resolve traits, and none of that belongs on the
     /// drawing path.
     private func configure(_ canvas: PKCanvasView, context: Context) {
-        // A finger never draws on an iPad; the mouse does on a Mac.
-        if canvas.drawingPolicy != .mystNotes { canvas.drawingPolicy = .mystNotes }
+        // A finger draws on an iPad only with "Draw with finger"; the mouse does on a Mac.
+        let policy = PKCanvasViewDrawingPolicy.policy(fingerDrawing: fingerDrawing, isMac: CanvasInput.isMac)
+        if canvas.drawingPolicy != policy { canvas.drawingPolicy = policy }
         if canvas.backgroundColor != .clear { canvas.backgroundColor = .clear }
         if canvas.isOpaque { canvas.isOpaque = false }
         if canvas.delegate !== context.coordinator { canvas.delegate = context.coordinator }

@@ -27,9 +27,14 @@ struct NotebookDetailView: View {
     /// page 0.
     let initialPageID: UUID?
 
-    init(notebook: Notebook, initialPageID: UUID? = nil) {
+    /// When non-nil (a search result with a query), a lens shows where the
+    /// match is once the page has opened; see `SearchHighlightLens`.
+    let highlight: SearchHighlight?
+
+    init(notebook: Notebook, initialPageID: UUID? = nil, highlight: SearchHighlight? = nil) {
         self.notebook = notebook
         self.initialPageID = initialPageID
+        self.highlight = highlight
     }
 
     @Environment(\.modelContext) var modelContext
@@ -100,6 +105,8 @@ struct NotebookDetailView: View {
     /// so a strip you hid or dragged bigger stays that way - across page
     /// turns, notebooks, windows and launches.
     @AppStorage(AppSettings.Keys.pageStripVisible) var showingPageStrip = true
+    /// Observed here so toggling "Draw with finger" reaches the open page.
+    @AppStorage(AppSettings.Keys.fingerDrawing) var fingerDrawing = false
     @AppStorage(AppSettings.Keys.pageSidebarWidth) var pageSidebarWidth = PageSidebarMetrics.defaultWidth
     /// In compact width the sidebar overlays the canvas and starts closed
     /// on every open of a notebook, whatever the preference says.
@@ -236,6 +243,7 @@ struct NotebookDetailView: View {
 
     var body: some View {
         mainContent
+        .overlay { searchHighlightOverlay }
         .navigationTitle(notebook.title)
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .navigationBarTitleDisplayMode(.inline)
@@ -247,10 +255,12 @@ struct NotebookDetailView: View {
         .background(ContentPopGate())
         #endif
         .onAppear {
+            SearchIndexer.shared.notebookOpened()
             openFirstPage()
             applyToolState()
         }
         .onDisappear {
+            SearchIndexer.shared.notebookClosed()
             commitPendingDeletion()
             commitPendingTrash()
         }
@@ -646,7 +656,8 @@ struct NotebookDetailView: View {
                 shapeLineStyle: toolState.shapeLineStyle,
                 onShapePreview: { shapePreview = $0 },
                 viewport: viewport,
-                inkSelection: inkSelection
+                inkSelection: inkSelection,
+                fingerDrawing: fingerDrawing
             )
             if let shapePreview {
                 PageViewportLayer(viewport: viewport,
@@ -766,7 +777,8 @@ struct NotebookDetailView: View {
                     guard sortedPages.indices.contains(target) else { return false }
                     jumpToPage(at: target)
                     return true
-                } : nil
+                } : nil,
+                fingerDrawing: fingerDrawing
             )
 
             if toolState.activeKind == .lasso && !isPresenting {

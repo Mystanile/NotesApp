@@ -171,12 +171,21 @@ extension PKCanvasViewDrawingPolicy {
     /// `.pencilOnly` meant nothing could draw at all there (reported Sept
     /// 12, 2026: "can't actually use the pen on Mac"). The page pans with
     /// the scroll wheel and trackpad instead.
+    ///
+    /// "Draw with finger" (`AppSettings.fingerDrawing`, off by default) turns
+    /// an iPad's policy into `.anyInput`: the finger inks and two fingers
+    /// pan and zoom, which PKCanvasView does itself.
     static var mystNotes: PKCanvasViewDrawingPolicy {
         #if targetEnvironment(macCatalyst)
-        return .anyInput
+        return policy(fingerDrawing: AppSettings.fingerDrawing, isMac: true)
         #else
-        return .pencilOnly
+        return policy(fingerDrawing: AppSettings.fingerDrawing, isMac: false)
         #endif
+    }
+
+    /// Pure, so a test can drive both settings. A Mac always gets `.anyInput`.
+    static func policy(fingerDrawing: Bool, isMac: Bool) -> PKCanvasViewDrawingPolicy {
+        (isMac || fingerDrawing) ? .anyInput : .pencilOnly
     }
 }
 

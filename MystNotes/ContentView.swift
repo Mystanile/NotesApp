@@ -38,7 +38,8 @@ struct ContentView: View {
                         }
                         .navigationDestination(for: SearchResult.self) { result in
                             LockedNotebookGate(notebook: result.notebook) {
-                                NotebookDetailView(notebook: result.notebook, initialPageID: result.pageID)
+                                NotebookDetailView(notebook: result.notebook, initialPageID: result.pageID,
+                                                   highlight: result.highlight)
                             }
                         }
                 }

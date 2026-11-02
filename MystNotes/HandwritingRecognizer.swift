@@ -77,19 +77,33 @@ nonisolated enum HandwritingRecognizer {
     /// request off the main actor so the UI never hangs on a search.
     static func ocrText(forPageID pageID: UUID) async -> String? {
 #if canImport(UIKit)
-        guard let drawing = DrawingStore.live.load(pageID: pageID) else {
-            return nil
-        }
-        return await text(in: drawing)
+        guard let lines = await recognizeLines(forPageID: pageID) else { return nil }
+        return lines.map(\.text).joined(separator: " ")
 #else
         return nil
 #endif
     }
 
 #if canImport(UIKit)
+    /// The page's recognized lines with their rects in drawing coordinates.
+    static func recognizeLines(forPageID pageID: UUID) async -> [RecognizedLine]? {
+        guard let drawing = DrawingStore.live.load(pageID: pageID) else { return nil }
+        return await recognizeLines(in: drawing)
+    }
+#endif
+
+#if canImport(UIKit)
     /// The text in some ink - a page's, or a lasso selection's (Convert to
     /// Text). Lines come back in reading order, joined by `separator`.
     static func text(in drawing: PKDrawing, separator: String = " ") async -> String? {
+        guard let lines = await recognizeLines(in: drawing) else { return nil }
+        return lines.map(\.text).joined(separator: separator)
+    }
+
+    /// Recognizes `drawing` and returns each line with its rect in drawing
+    /// coordinates (see `RecognizedGeometry.drawingRect`). Nil when the
+    /// drawing is blank or Vision finds nothing.
+    static func recognizeLines(in drawing: PKDrawing) async -> [RecognizedLine]? {
         // Inset the ink bounds a little so strokes at the very edge aren't
         // clipped. A blank/empty drawing yields an empty (or null) bounds.
         let bounds = drawing.bounds.insetBy(dx: -20, dy: -20)
@@ -131,7 +145,7 @@ nonisolated enum HandwritingRecognizer {
         }
         guard let cgImage = opaqueImage.cgImage else { return nil }
 
-        return await Task.detached(priority: .background) { () -> String? in
+        return await Task.detached(priority: .background) { () -> [RecognizedLine]? in
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -144,13 +158,37 @@ nonisolated enum HandwritingRecognizer {
                 return nil
             }
 
-            // One candidate per text observation, in reading order.
-            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            // One candidate per text observation, in reading order. The
+            // box is normalized to the rendered image, origin bottom-left;
+            // map it back to where the ink is on the page.
+            let lines: [RecognizedLine] = (request.results ?? []).compactMap { observation in
+                guard let string = observation.topCandidates(1).first?.string else { return nil }
+                let rect = RecognizedGeometry.drawingRect(normalized: observation.boundingBox,
+                                                          renderedRect: bounds, scale: 2)
+                return RecognizedLine(text: string, rect: rect)
+            }
             guard !lines.isEmpty else { return nil }
-            return lines.joined(separator: separator)
+            return lines
         }.value
     }
 #endif
+
+    /// Recognizes a page's ink and keeps where the lines are for search
+    /// highlights (derived, local, keyed by the ink it was read from).
+    /// Returns the text; empty, never nil, when recognition finds nothing
+    /// (see `refreshOCR`). The drawing is loaded and decoded here, before
+    /// any render, and the render goes through `InkRenderQueue`. Touches no
+    /// model, so the background indexer can call it from its own context.
+    static func recognizeAndStash(pageID: UUID, inkModified: Date) async -> String {
+#if canImport(UIKit)
+        let lines = await recognizeLines(forPageID: pageID)
+#else
+        let lines: [RecognizedLine]? = nil
+#endif
+        RecognizedLinesStore.saveInBackground(lines ?? [], pageID: pageID,
+                                              stamp: RecognizedLinesStore.stamp(for: inkModified))
+        return lines?.map(\.text).joined(separator: " ") ?? ""
+    }
 
     /// Re-recognizes a page's handwriting only if its drawing changed since the
     /// last OCR, then persists the cache. Safe to call from a background task.
@@ -177,8 +215,10 @@ nonisolated enum HandwritingRecognizer {
         // expensive Vision pass on it every single time search is opened.
         // Pages left nil by the dark-mode render bug still get their one
         // retry, then settle. SearchIndex already ignores empty text.
-        let text = await ocrText(forPageID: page.id)
-        page.recognizedTextCache = text ?? ""
+        let text = await recognizeAndStash(pageID: page.id, inkModified: modDate)
+        // The page can be deleted by a sync pull while Vision runs.
+        guard page.modelContext != nil, !page.isDeleted else { return }
+        page.recognizedTextCache = text
         page.ocrUpdatedAt = Date()
         do {
             try modelContext.save()

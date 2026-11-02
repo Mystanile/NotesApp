@@ -29,6 +29,55 @@ enum SearchIndex {
         return texts.indices.contains(pageIndex) ? texts[pageIndex] : nil
     }
 
+    // MARK: - Blob cache
+
+    /// What a cached blob was built from. A page's blob is rebuilt only when
+    /// one of these changes: its edit clock, its OCR clock, or (for edits
+    /// that don't bump the clock - a title, a tag, a typed block) a hash of
+    /// that text.
+    struct BlobKey: Hashable {
+        let pageID: UUID
+        let modifiedAt: Date?
+        let ocrUpdatedAt: Date?
+        let contentHash: Int
+    }
+
+    private static var blobCache: [UUID: (key: BlobKey, blob: String)] = [:]
+
+    /// The blob for `key`, building it with `build` only when the cache holds
+    /// no blob for exactly this key.
+    static func blob(forKey key: BlobKey, build: () -> String) -> String {
+        if let hit = blobCache[key.pageID], hit.key == key { return hit.blob }
+        let blob = build()
+        blobCache[key.pageID] = (key, blob)
+        return blob
+    }
+
+    static func resetBlobCache() { blobCache.removeAll() }
+
+    /// Drops blobs for pages that no longer exist (deleted, synced away).
+    static func pruneBlobCache(keeping pageIDs: Set<UUID>) {
+        for id in blobCache.keys where !pageIDs.contains(id) { blobCache[id] = nil }
+    }
+
+    static var blobCacheCount: Int { blobCache.count }
+
+    /// `searchableText`, memoized per page so typing a query doesn't rebuild
+    /// and re-lowercase every page's text on every keystroke.
+    static func cachedSearchableText(for page: Page, importedDocuments: [ImportedDocument]) -> String {
+        var hasher = Hasher()
+        hasher.combine(page.title)
+        hasher.combine(page.tags ?? [])
+        for block in page.textBlocks ?? [] { hasher.combine(block.content) }
+        // The recognized text changes without `modifiedAt` moving; its size
+        // (O(1) on UTF-8) catches a re-read that lands on the same date.
+        hasher.combine(page.recognizedTextCache?.utf8.count ?? -1)
+        for doc in importedDocuments { hasher.combine(doc.fileRef); hasher.combine(doc.pdfPageIndex) }
+        let key = BlobKey(pageID: page.id, modifiedAt: page.modifiedAt,
+                          ocrUpdatedAt: page.ocrUpdatedAt, contentHash: hasher.finalize())
+        return blob(forKey: key) { searchableText(for: page, importedDocuments: importedDocuments) }
+    }
+
     /// The combined, lowercased searchable text for a page. `importedDocuments`
     /// are the page's `ImportedDocument`s (the model has no inverse
     /// relationship from `Page` to `ImportedDocument`, so callers resolve

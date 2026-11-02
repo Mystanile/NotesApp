@@ -80,6 +80,9 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     var viewport: CanvasViewport? = nil
     /// The lasso's selection, shared with the paged canvas.
     var inkSelection: InkSelectionController? = nil
+    /// "Draw with finger", handed down by the detail view (which observes
+    /// the setting) so a change reaches an open board at once.
+    var fingerDrawing: Bool = false
 
     static let boardSize: CGFloat = 3000
     private static let contentSize = CGSize(width: boardSize, height: boardSize)
@@ -158,7 +161,9 @@ struct WhiteboardCanvasView: UIViewRepresentable {
     }
 
     private func configure(_ canvas: PKCanvasView, context: Context) {
-        canvas.drawingPolicy = .mystNotes           // finger pans on an iPad; the mouse draws on a Mac
+        // Finger pans on an iPad unless "Draw with finger" is on; the mouse draws on a Mac.
+        let policy = PKCanvasViewDrawingPolicy.policy(fingerDrawing: fingerDrawing, isMac: CanvasInput.isMac)
+        if canvas.drawingPolicy != policy { canvas.drawingPolicy = policy }
         canvas.backgroundColor = .white
         canvas.isOpaque = true
         canvas.delegate = context.coordinator
@@ -187,7 +192,10 @@ struct WhiteboardCanvasView: UIViewRepresentable {
         // One finger pans (a finger never draws on the board); two fingers
         // pinch-zoom. On a Mac the pointer draws, so it never pans - the
         // trackpad and scroll wheel move the board instead.
-        canvas.panGestureRecognizer.minimumNumberOfTouches = CanvasInput.isMac ? 2 : 1
+        let touches = (CanvasInput.isMac || fingerDrawing) ? 2 : 1
+        if canvas.panGestureRecognizer.minimumNumberOfTouches != touches {
+            canvas.panGestureRecognizer.minimumNumberOfTouches = touches
+        }
         canvas.panGestureRecognizer.maximumNumberOfTouches = 2
     }
 

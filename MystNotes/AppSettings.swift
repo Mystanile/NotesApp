@@ -17,6 +17,7 @@ nonisolated enum AppSettings {
         static let inkColorHex = "defaultInkColorHex"
         static let inkWidth = "defaultInkWidth"
         static let shapeLineStyle = "shapeLineStyle"
+        static let fingerDrawing = "fingerDrawing"
         static let penPresets = "penPresets"
         static let hiddenToolbarItems = "hiddenToolbarItems"
         static let template = "defaultTemplate"
@@ -169,6 +170,13 @@ nonisolated enum AppSettings {
     static var defaultInkWidth: Double {
         get { defaults.object(forKey: Keys.inkWidth) as? Double ?? 4 }
         set { defaults.set(newValue, forKey: Keys.inkWidth) }
+    }
+
+    /// "Draw with finger": off (default) means Pencil draws and a finger
+    /// pans; on means any input draws and two fingers pan. Irrelevant on a Mac.
+    static var fingerDrawing: Bool {
+        get { defaults.bool(forKey: Keys.fingerDrawing) }
+        set { defaults.set(newValue, forKey: Keys.fingerDrawing) }
     }
 
     /// Solid, dashed or dotted for snapped shapes: the last one picked.
