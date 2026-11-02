@@ -5,18 +5,63 @@ import SwiftUI
 struct FolderCellView: View {
     let folder: Folder
 
+    private var detail: String {
+        if folder.smartQuery != nil { return "Smart folder" }
+        let count = (folder.notebooks?.count ?? 0) + (folder.subfolders?.count ?? 0)
+        return count == 0 ? "Empty" : "\(count) item\(count == 1 ? "" : "s")"
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Space.s) {
             Image(systemName: folder.smartQuery == nil ? "folder.fill" : "folder.fill.badge.gearshape")
-                .font(.system(size: 44))
-                .foregroundStyle(.blue)
-            Text(folder.name.isEmpty ? "Untitled Folder" : folder.name)
-                .font(.subheadline)
-                .lineLimit(1)
-                .foregroundStyle(.primary)
+                .font(.system(size: 40))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.accentColor)
+            VStack(spacing: Space.xxs) {
+                Text(folder.name.isEmpty ? "Untitled Folder" : folder.name)
+                    .font(Typography.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(.vertical, Space.l)
+        .padding(.horizontal, Space.s)
+        .background(
+            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
+                .strokeBorder(Palette.separator, lineWidth: Metrics.hairline)
+        )
+        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: Radius.l, style: .continuous))
+        .hoverEffect(.highlight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(folder.name.isEmpty ? "Untitled Folder" : folder.name), folder, \(detail)")
+    }
+}
+
+/// Press feedback for library cells. `.plain` gives a `NavigationLink` none,
+/// so a tap looked dead until the push began.
+struct LibraryCellButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Body(configuration: configuration)
+    }
+
+    private struct Body: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .opacity(configuration.isPressed ? 0.8 : 1)
+                .animation(reduceMotion ? nil : Motion.quick, value: configuration.isPressed)
+        }
     }
 }
 
@@ -102,7 +147,9 @@ struct NotebookCoverView: View {
                         .offset(x: spine, y: top)
                 }
             }
-            .shadow(color: .black.opacity(0.18), radius: max(1, w * 0.02), y: max(1, w * 0.015))
+            // Two layers: a tight contact shadow and a soft ambient one.
+            .shadow(color: .black.opacity(0.16), radius: max(1, w * 0.012), y: max(0.5, w * 0.006))
+            .shadow(color: .black.opacity(0.10), radius: max(4, w * 0.07), y: max(2, w * 0.035))
         }
         .aspectRatio(3.0 / 4.0, contentMode: .fit)
     }
@@ -114,14 +161,16 @@ struct RecentNotebookCellView: View {
     let notebook: Notebook
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.s) {
             NotebookCoverView(notebook: notebook)
-                .frame(width: 100)
-            Text(notebook.title)
-                .font(.caption)
+                .frame(width: 112)
+                .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 112 * 0.06, style: .continuous))
+                .hoverEffect(.lift)
+            Text(notebook.title.isEmpty ? "Untitled" : notebook.title)
+                .font(Typography.label)
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-                .frame(width: 100)
+                .frame(width: 112, alignment: .leading)
         }
     }
 }
@@ -137,14 +186,17 @@ struct NotebookCellView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             NotebookCoverView(notebook: notebook, previewArtwork: previewArtwork)
+                .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: Radius.s, style: .continuous))
+                .hoverEffect(.lift)
                 .overlay(alignment: .topLeading) {
                     if notebook.isLocked == true {
                         Image(systemName: "lock.fill")
                             .font(.caption)
                             .foregroundStyle(.white)
-                            .padding(6)
+                            .padding(Space.s)
+                            .shadow(color: .black.opacity(0.35), radius: 1.5)
                             .accessibilityLabel("Locked")
                     }
                 }
@@ -153,17 +205,22 @@ struct NotebookCellView: View {
                         Image(systemName: "star.fill")
                             .font(.caption)
                             .foregroundStyle(.yellow)
-                            .padding(6)
+                            .padding(Space.s)
+                            .shadow(color: .black.opacity(0.35), radius: 1.5)
                             .accessibilityLabel("Favorite")
                     }
                 }
-            Text(notebook.title)
-                .font(.subheadline)
-                .lineLimit(1)
-                .foregroundStyle(.primary)
-            Text(Self.editedText(notebook.modifiedAt))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Text(notebook.title.isEmpty ? "Untitled" : notebook.title)
+                    .font(Typography.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(Self.editedText(notebook.modifiedAt))
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(notebook.title), \(pageCount) page\(pageCount == 1 ? "" : "s"), "

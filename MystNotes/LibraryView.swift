@@ -53,7 +53,9 @@ struct LibraryView: View {
         let url: URL
     }
 
-    private let gridColumns = [GridItem(.adaptive(minimum: 140), spacing: 16)]
+    /// Two columns on a phone, five or six on a 13" iPad. The maximum keeps
+    /// covers from ballooning in a wide window.
+    private let gridColumns = [GridItem(.adaptive(minimum: 148, maximum: 220), spacing: Space.l, alignment: .top)]
 
     private var folders: [Folder] {
         allFolders.filter { $0.parentFolder?.id == parentFolder?.id }
@@ -209,155 +211,81 @@ struct LibraryView: View {
 
     private var libraryContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: Space.xxl) {
                 if parentFolder == nil && !favoriteNotebooks.isEmpty {
-                    sectionHeader("Favorites")
-                    notebookStrip(favoriteNotebooks)
+                    section("Favorites") { notebookStrip(favoriteNotebooks) }
                 }
 
                 if parentFolder == nil && !recentNotebooks.isEmpty {
-                    sectionHeader("Recent")
-                    notebookStrip(recentNotebooks)
+                    section("Recent") { notebookStrip(recentNotebooks) }
                 }
 
                 if parentFolder == nil {
                     let tags = pageTags
                     if !tags.isEmpty {
-                        sectionHeader("Tags")
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                ForEach(tags) { tag in
-                                    NavigationLink(destination: TagPagesView(tag: tag)) {
-                                        Text("#\(tag.name) · \(tag.pages.count)").lineLimit(1).fixedSize()
-                                            .padding(.horizontal, 12).padding(.vertical, 6)
-                                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        section("Tags") {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: Space.s) {
+                                    ForEach(tags) { tag in
+                                        NavigationLink(destination: TagPagesView(tag: tag)) {
+                                            Chip(title: "#\(tag.name) · \(tag.pages.count)")
+                                                .fixedSize()
+                                                .minimumHitTarget()
+                                        }
+                                        .buttonStyle(LibraryCellButtonStyle())
                                     }
-                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .scrollClipDisabled()
+                        }
+                    }
+                }
+
+                if !folders.isEmpty {
+                    section("Folders") {
+                        LazyVGrid(columns: gridColumns, spacing: Space.l) {
+                            ForEach(folders, id: \.id) { folder in
+                                NavigationLink(value: folder) {
+                                    FolderCellView(folder: folder)
+                                }
+                                .buttonStyle(LibraryCellButtonStyle())
+                                .contextMenu { folderMenu(for: folder) }
+                            }
+                        }
+                    }
+                }
+
+                if !notebooks.isEmpty {
+                    section("Notebooks") {
+                        let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
+                        LazyVGrid(columns: gridColumns, spacing: Space.xl) {
+                            ForEach(notebooks, id: \.id) { notebook in
+                                NavigationLink(value: notebook) {
+                                    NotebookCellView(notebook: notebook, previewArtwork: previewArtwork)
+                                }
+                                .buttonStyle(LibraryCellButtonStyle())
+                                .contextMenu {
+                                    notebookMenu(for: notebook)
+                                } preview: {
+                                    NotebookCoverView(notebook: notebook)
+                                        .frame(width: 200)
+                                        .padding(Space.l)
                                 }
                             }
                         }
                     }
                 }
 
-                if !folders.isEmpty {
-                    sectionHeader("Folders")
-                    LazyVGrid(columns: gridColumns, spacing: 16) {
-                        ForEach(folders, id: \.id) { folder in
-                            NavigationLink(value: folder) {
-                                FolderCellView(folder: folder)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu { folderMenu(for: folder) }
-                        }
-                    }
-                }
-
-                if !notebooks.isEmpty {
-                    sectionHeader("Notebooks")
-                    let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
-                    LazyVGrid(columns: gridColumns, spacing: 16) {
-                        ForEach(notebooks, id: \.id) { notebook in
-                            NavigationLink(value: notebook) {
-                                NotebookCellView(notebook: notebook, previewArtwork: previewArtwork)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu { notebookMenu(for: notebook) }
-                        }
-                    }
-                }
-
                 if folders.isEmpty && notebooks.isEmpty {
-                    ContentUnavailableView {
-                        Label("Nothing here yet", systemImage: "tray")
-                    } description: {
-                        Text("Start a notebook, or bring in a PDF or a picture. You can also drop files here.")
-                    } actions: {
-                        Button("New Notebook") { showingNewNotebookSheet = true }
-                            .buttonStyle(.borderedProminent)
-                        Button("Import PDF or Image") { showingImporter = true }
-                            .buttonStyle(.bordered)
-                    }
-                    .padding(.top, 60)
+                    emptyState
                 }
             }
-            .padding()
+            .padding(.horizontal, Space.l)
+            .padding(.top, Space.s)
+            .padding(.bottom, Space.xxl)
         }
         .navigationTitle(parentFolder?.name ?? "My Library")
         .toolbar {
-#if targetEnvironment(macCatalyst) || canImport(UIKit)
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button {
-                        newFolderName = ""
-                        showingNewFolderAlert = true
-                    } label: {
-                        Label("New Folder", systemImage: "folder.badge.plus")
-                    }
-                    Button {
-                        showingNewNotebookSheet = true
-                    } label: {
-                        Label("New Notebook", systemImage: "book.badge.plus")
-                    }
-                    Button {
-                        smartFolderToEdit = nil
-                        newFolderName = ""
-                        smartFolderSearch = ""
-                        showingSmartFolderAlert = true
-                    } label: {
-                        Label("New Smart Folder", systemImage: "folder.badge.gearshape")
-                    }
-                    Button {
-                        showingImporter = true
-                    } label: {
-                        Label("Import PDF or Image", systemImage: "square.and.arrow.down")
-                    }
-                    Button {
-                        showingTemplates = true
-                    } label: {
-                        Label("Page Templates…", systemImage: "doc.on.doc")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-#else
-            // For macOS native, we use automatic placement for toolbar items
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button {
-                        newFolderName = ""
-                        showingNewFolderAlert = true
-                    } label: {
-                        Label("New Folder", systemImage: "folder.badge.plus")
-                    }
-                    Button {
-                        showingNewNotebookSheet = true
-                    } label: {
-                        Label("New Notebook", systemImage: "book.badge.plus")
-                    }
-                    Button {
-                        smartFolderToEdit = nil
-                        newFolderName = ""
-                        smartFolderSearch = ""
-                        showingSmartFolderAlert = true
-                    } label: {
-                        Label("New Smart Folder", systemImage: "folder.badge.gearshape")
-                    }
-                    Button {
-                        showingImporter = true
-                    } label: {
-                        Label("Import PDF or Image", systemImage: "square.and.arrow.down")
-                    }
-                    Button {
-                        showingTemplates = true
-                    } label: {
-                        Label("Page Templates…", systemImage: "doc.on.doc")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-#endif
             if parentFolder == nil {
                 ToolbarItem(placement: .automatic) {
                     Button {
@@ -377,6 +305,10 @@ struct LibraryView: View {
                     }
                     .accessibilityLabel("Settings")
                 }
+            }
+            // Last, so the primary action sits at the trailing edge.
+            ToolbarItem(placement: addPlacement) {
+                addMenu
             }
         }
         .alert("New Folder", isPresented: $showingNewFolderAlert) {
@@ -453,11 +385,94 @@ struct LibraryView: View {
         return nil
     }
 
-    @ViewBuilder
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.headline)
-            .foregroundStyle(.secondary)
+    private var addPlacement: ToolbarItemPlacement {
+#if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .navigationBarTrailing
+#else
+        .automatic
+#endif
+    }
+
+    /// The one "+" menu, prominent: semibold glyph in the accent colour.
+    private var addMenu: some View {
+        Menu {
+            Button {
+                newFolderName = ""
+                showingNewFolderAlert = true
+            } label: {
+                Label("New Folder", systemImage: "folder.badge.plus")
+            }
+            Button {
+                showingNewNotebookSheet = true
+            } label: {
+                Label("New Notebook", systemImage: "book.badge.plus")
+            }
+            Button {
+                smartFolderToEdit = nil
+                newFolderName = ""
+                smartFolderSearch = ""
+                showingSmartFolderAlert = true
+            } label: {
+                Label("New Smart Folder", systemImage: "folder.badge.gearshape")
+            }
+            Button {
+                showingImporter = true
+            } label: {
+                Label("Import PDF or Image", systemImage: "square.and.arrow.down")
+            }
+            Button {
+                showingTemplates = true
+            } label: {
+                Label("Page Templates…", systemImage: "doc.on.doc")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .fontWeight(.semibold)
+        }
+    }
+
+    /// A titled block: a large-title-style header, then its content.
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text(title)
+                .font(Typography.title)
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
+            content()
+        }
+    }
+
+    /// Nothing in this folder: the brand mark, a plain line, two actions.
+    private var emptyState: some View {
+        VStack(spacing: Space.xl) {
+            BrandMarkShape()
+                .frame(width: 72, height: 72)
+                .padding(Space.xl)
+                .background(
+                    RoundedRectangle(cornerRadius: Radius.xl, style: .continuous)
+                        .fill(LinearGradient(colors: [Palette.ink.opacity(0.85), Palette.ink],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                )
+                .shadow(color: Palette.ink.opacity(0.25), radius: 16, y: 8)
+            VStack(spacing: Space.s) {
+                Text("Nothing here yet")
+                    .font(Typography.title)
+                Text("Start a notebook, or bring in a PDF or a picture. You can also drop files here.")
+                    .font(Typography.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+            VStack(spacing: Space.m) {
+                Button("New Notebook") { showingNewNotebookSheet = true }
+                    .buttonStyle(.borderedProminent)
+                Button("Import PDF or Image") { showingImporter = true }
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, Space.xxl * 2)
     }
 
     @ViewBuilder
@@ -502,18 +517,24 @@ struct LibraryView: View {
     /// A horizontal strip of small covers, as Recent shows them.
     private func notebookStrip(_ notebooks: [Notebook]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
+            HStack(alignment: .top, spacing: Space.l) {
                 ForEach(notebooks, id: \.id) { notebook in
                     NavigationLink(value: notebook) {
                         RecentNotebookCellView(notebook: notebook)
                     }
-                    .buttonStyle(.plain)
-                    .contextMenu { notebookMenu(for: notebook) }
+                    .buttonStyle(LibraryCellButtonStyle())
+                    .contextMenu {
+                        notebookMenu(for: notebook)
+                    } preview: {
+                        NotebookCoverView(notebook: notebook)
+                            .frame(width: 200)
+                            .padding(Space.l)
+                    }
                 }
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 4)
+            .padding(.vertical, Space.s)
         }
+        .scrollClipDisabled()
     }
 
     /// A star is a setting, so it syncs on the settings clock - set

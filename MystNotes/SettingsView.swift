@@ -58,7 +58,7 @@ struct SettingsView: View {
             } header: {
                 Text("Pen")
             } footer: {
-                Text("Default tool, color and width are applied to a page when you open it. When off, Apple Pencil draws and your finger scrolls. Turn on to write with your finger; use two fingers to scroll.")
+                Text("These apply when you open a page. With Draw with Finger off, Apple Pencil draws and your finger scrolls. With it on, your finger draws and two fingers scroll.")
             }
 
             Section {
@@ -67,10 +67,15 @@ struct SettingsView: View {
                         Text(option.label).tag(option.id)
                     }
                 }
+                NavigationLink {
+                    PageTemplatesView()
+                } label: {
+                    Label("Page Templates", systemImage: "doc.on.doc")
+                }
             } header: {
-                Text("Paper")
+                Text("Paper & Templates")
             } footer: {
-                Text("Used for the first page of a new notebook.")
+                Text("The default is the first page of a new notebook. Make your own paper from a PDF or a picture, then start new pages from it.")
             }
 
             Section {
@@ -81,6 +86,18 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Appearance")
+            }
+
+            Section {
+                NavigationLink {
+                    AISettingsView()
+                } label: {
+                    Label("AI Study Helper", systemImage: "sparkles")
+                }
+            } header: {
+                Text("AI Study Helper")
+            } footer: {
+                Text("Optional and off by default. Nothing is sent unless you ask.")
             }
 
             Section {
@@ -147,24 +164,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sync")
             } footer: {
-                Text("Pick a folder inside iCloud Drive (or any folder a sync service keeps mirrored). Linework writes your library and its drawings there about half a minute after you stop editing and whenever it goes to the background, and reads changes back when it opens or you tap Sync Now. Edits merge page by page, so two devices can work on different pages of the same notebook offline. If both change the same page, the more recent version is shown and the other is kept in the folder's trash.")
-            }
-
-            Section {
-                ForEach(ToolbarItemChoice.allCases) { item in
-                    Toggle(item.label, isOn: Binding(
-                        get: { !ToolbarItemChoice.hidden(in: hiddenToolbarItems).contains(item) },
-                        set: { shown in
-                            var hidden = ToolbarItemChoice.hidden(in: hiddenToolbarItems)
-                            if shown { hidden.remove(item) } else { hidden.insert(item) }
-                            hiddenToolbarItems = ToolbarItemChoice.stored(hidden)
-                        }
-                    ))
-                }
-            } header: {
-                Text("Toolbar")
-            } footer: {
-                Text("The pen and eraser are always there.")
+                Text("Pick a folder in iCloud Drive, or any folder a sync service keeps up to date. Linework saves your library there shortly after you stop writing, and reads changes back when it opens or when you tap Sync Now. Devices merge page by page. If two devices change the same page, the newer one is shown and the older one goes to the folder's trash.")
             }
 
             Section {
@@ -190,7 +190,7 @@ struct SettingsView: View {
             } header: {
                 Text("Backup")
             } footer: {
-                Text("Once a day Linework writes a copy of your whole library to this folder - pick one in Dropbox, Google Drive, OneDrive or on a drive. One file per weekday, so the last week is always there. To restore, unzip a backup and choose it as the sync folder.")
+                Text("Once a day, Linework saves a copy of your whole library here. Pick a folder in Dropbox, Google Drive, OneDrive or on a drive. You get one file per weekday, so the last week is always there. To restore, unzip a backup and choose it as the sync folder.")
             }
 
             Section {
@@ -218,7 +218,24 @@ struct SettingsView: View {
             } header: {
                 Text("Trash")
             } footer: {
-                Text("Nothing here was deleted outright: deleted pages, the older side of a same-page conflict and files no page uses any more are kept for 30 days first, on this device and in the sync folder, then removed.")
+                Text("Deleted pages, older copies from sync conflicts and unused files wait here for 30 days. After that they are removed, on this device and in the sync folder.")
+            }
+
+            Section {
+                ForEach(ToolbarItemChoice.allCases) { item in
+                    Toggle(item.label, isOn: Binding(
+                        get: { !ToolbarItemChoice.hidden(in: hiddenToolbarItems).contains(item) },
+                        set: { shown in
+                            var hidden = ToolbarItemChoice.hidden(in: hiddenToolbarItems)
+                            if shown { hidden.remove(item) } else { hidden.insert(item) }
+                            hiddenToolbarItems = ToolbarItemChoice.stored(hidden)
+                        }
+                    ))
+                }
+            } header: {
+                Text("Toolbar")
+            } footer: {
+                Text("Choose which tools show in a notebook. The pen and eraser always stay.")
             }
 
             Section {
@@ -230,7 +247,7 @@ struct SettingsView: View {
                         AppSettings.signOut()
                     }
                 } else if isGuestMode {
-                    Text("Using Linework without an account.")
+                    Text("You are using Linework without an account.")
                         .foregroundStyle(.secondary)
                     Button("Sign In with Apple") {
                         AppSettings.exitGuestMode()
@@ -241,27 +258,28 @@ struct SettingsView: View {
             }
 
             Section {
-                NavigationLink {
-                    PageTemplatesView()
-                } label: {
-                    Label("Page Templates", systemImage: "doc.on.doc")
+                VStack(spacing: Space.m) {
+                    Image("BrandMark")
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 72 * 0.2237, style: .continuous))
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+                        .accessibilityHidden(true)
+                    VStack(spacing: Space.xxs) {
+                        Text("Linework")
+                            .font(Typography.title)
+                        Text("Made for Apple Pencil.")
+                            .font(Typography.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            } footer: {
-                Text("Your own paper: make templates from a PDF or a picture, then start new pages from them.")
-            }
-
-            Section {
-                NavigationLink {
-                    AISettingsView()
-                } label: {
-                    Label("AI Study Helper", systemImage: "sparkles")
-                }
-            } footer: {
-                Text("Optional and off by default. Nothing is sent unless you ask.")
-            }
-
-            Section("About") {
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Space.s)
+                .accessibilityElement(children: .combine)
                 LabeledContent("Version", value: versionString)
+            } header: {
+                Text("About")
             }
         }
         .navigationTitle("Settings")

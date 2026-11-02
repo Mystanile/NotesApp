@@ -5,108 +5,178 @@ import SwiftUI
 /// This covers the app as a whole at a glance; the deeper, hands-on tour of
 /// the actual notebook interface lives in the auto-generated "Welcome to
 /// Linework" notebook (see `TutorialNotebookFactory`) instead of here.
+///
+/// Five slides: a brand hero, then one idea each. Short sentences, no jargon.
 struct OnboardingView: View {
     var onFinish: () -> Void
 
     private struct Slide {
         let symbol: String
+        let tint: Color
         let title: String
         let subtitle: String
     }
 
+    /// Slide 0 is the hero and draws the brand mark instead of a symbol.
     private let slides: [Slide] = [
         Slide(
-            symbol: "note.text",
+            symbol: "",
+            tint: .white,
             title: "Welcome to Linework",
-            subtitle: "A fast, native notebook for Apple Pencil — draw, write, and organize, right on your iPad or Mac."
+            subtitle: "Write naturally with Apple Pencil. Five inks, shapes that snap clean, and a lasso to move what you drew."
         ),
         Slide(
-            symbol: "pencil.tip.crop.circle",
-            title: "Draw naturally",
-            subtitle: "Five ink types, custom colors and widths, a shape tool that cleans up rough lines, and a lasso to move, resize and rotate what you've drawn."
+            symbol: "point.3.connected.trianglepath.dotted",
+            tint: Palette.node,
+            title: "Connect your pages",
+            subtitle: "Link any page to any other. Page Map shows your notes as a graph you can draw on."
         ),
         Slide(
-            symbol: "rectangle.stack.badge.plus",
-            title: "Stay organized",
-            subtitle: "Nested folders, page templates, draggable text boxes, stickers, and links between pages — all inside every notebook."
+            symbol: "magnifyingglass",
+            tint: .accentColor,
+            title: "Find anything",
+            subtitle: "Search typed text, PDFs and even your handwriting, all in one place."
         ),
         Slide(
-            symbol: "play.rectangle",
-            title: "Find & present anything",
-            subtitle: "Search across typed text, PDFs, and even your handwriting. Presentation mode hides the chrome for a clean screen share."
+            symbol: "sparkles",
+            tint: .accentColor,
+            title: "Study in your own hand",
+            subtitle: "An optional AI helper can quiz you from your own handwriting. It stays off until you turn it on."
         ),
         Slide(
-            symbol: "icloud",
-            title: "Synced everywhere",
-            subtitle: "Your notebooks follow you between iPad and Mac automatically over iCloud — no setup needed."
+            symbol: "lock.shield",
+            tint: .accentColor,
+            title: "Your notes stay yours",
+            subtitle: "Sync through a folder you choose. Export everything, any time."
         )
     ]
 
     @State private var currentIndex = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isHero: Bool { currentIndex == 0 }
+    private var isLast: Bool { currentIndex == slides.count - 1 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(slides.enumerated()), id: \.offset) { index, slide in
-                        slideView(slide)
-                            .tag(index)
-                    }
+        ZStack {
+            TabView(selection: $currentIndex) {
+                ForEach(Array(slides.enumerated()), id: \.offset) { index, slide in
+                    slideView(slide, index: index)
+                        .tag(index)
                 }
-                #if targetEnvironment(macCatalyst) || canImport(UIKit)
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .indexViewStyle(.page(backgroundDisplayMode: .always))
-                #endif
-                .animation(.easeInOut, value: currentIndex)
+            }
+            #if targetEnvironment(macCatalyst) || canImport(UIKit)
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            #endif
+            .ignoresSafeArea()
 
+            VStack(spacing: 0) {
                 HStack {
                     Spacer()
                     Button("Skip") { onFinish() }
-                        .padding()
-                        .opacity(currentIndex == slides.count - 1 ? 0 : 1)
+                        .font(Typography.label)
+                        .foregroundStyle(isHero ? Color.white.opacity(0.9) : Color.secondary)
+                        .minimumHitTarget()
+                        .opacity(isLast ? 0 : 1)
+                        .disabled(isLast)
                 }
-            }
+                .padding(.horizontal, Space.l)
 
-            Button(currentIndex == slides.count - 1 ? "Get Started" : "Next") {
-                if currentIndex == slides.count - 1 {
-                    onFinish()
-                } else {
-                    withAnimation { currentIndex += 1 }
+                Spacer()
+
+                pageDots
+                    .padding(.bottom, Space.xl)
+
+                Button {
+                    if isLast {
+                        onFinish()
+                    } else {
+                        withAnimation(reduceMotion ? nil : Motion.gentle) { currentIndex += 1 }
+                    }
+                } label: {
+                    Text(isLast ? "Get Started" : "Continue")
+                        .font(Typography.headline)
+                        .foregroundStyle(isHero ? Palette.ink : Color.white)
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(isHero ? Color.white : Color.accentColor)
+                .frame(maxWidth: 420)
+                .padding(.horizontal, Space.xl)
+                .padding(.bottom, Space.xl)
             }
-            .font(.headline)
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color.accentColor)
-            .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal, 40)
-            .padding(.bottom, 24)
+            .padding(.top, Space.s)
         }
+        .background(Color(.systemBackground).ignoresSafeArea())
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
         .persistentSystemOverlays(.hidden)
         #endif
     }
 
-    @ViewBuilder
-    private func slideView(_ slide: Slide) -> some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: slide.symbol)
-                .font(.system(size: 72))
-                .foregroundStyle(Color.accentColor)
-            Text(slide.title)
-                .font(.title)
-                .fontWeight(.semibold)
-                .multilineTextAlignment(.center)
-            Text(slide.subtitle)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 48)
-            Spacer()
-            Spacer()
+    private var pageDots: some View {
+        HStack(spacing: Space.s) {
+            ForEach(0..<slides.count, id: \.self) { index in
+                Capsule()
+                    .fill(dotColor(for: index))
+                    .frame(width: index == currentIndex ? Space.xl : Space.s, height: Space.s)
+            }
         }
-        .padding()
+        .animation(reduceMotion ? nil : Motion.snappy, value: currentIndex)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Page \(currentIndex + 1) of \(slides.count)")
+    }
+
+    private func dotColor(for index: Int) -> Color {
+        if isHero {
+            return index == currentIndex ? Color.white : Color.white.opacity(0.35)
+        }
+        return index == currentIndex ? Color.accentColor : Color.primary.opacity(0.2)
+    }
+
+    @ViewBuilder
+    private func slideView(_ slide: Slide, index: Int) -> some View {
+        let hero = index == 0
+        ZStack {
+            if hero {
+                LinearGradient(colors: [Palette.ink.mix(with: .black, by: 0.12), Palette.ink],
+                               startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+            }
+            VStack(spacing: Space.xl) {
+                Spacer()
+                if hero {
+                    BrandMarkShape()
+                        .frame(width: 168, height: 168)
+                        .shadow(color: .black.opacity(0.25), radius: 20, y: 10)
+                } else {
+                    Image(systemName: slide.symbol)
+                        .font(.system(size: 52, weight: .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(slide.tint)
+                        .frame(width: 128, height: 128)
+                        .background(Circle().fill(slide.tint.opacity(0.14)))
+                        .accessibilityHidden(true)
+                }
+                VStack(spacing: Space.m) {
+                    Text(slide.title)
+                        .font(Typography.display)
+                        .foregroundStyle(hero ? Color.white : Color.primary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(slide.subtitle)
+                        .font(.title3)
+                        .foregroundStyle(hero ? Color.white.opacity(0.85) : Color.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: 520)
+                .padding(.horizontal, Space.xxl)
+                Spacer()
+                // Room for the dots and the button that float above.
+                Spacer().frame(height: 140)
+            }
+            .padding(Space.l)
+        }
     }
 }

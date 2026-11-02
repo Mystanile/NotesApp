@@ -12,58 +12,65 @@ struct LoginView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: Space.xl) {
             Spacer()
 
-            Image("BrandMark")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 112, height: 112)
-                .accessibilityHidden(true)
+            VStack(spacing: Space.l) {
+                Image("BrandMark")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 112, height: 112)
+                    .clipShape(RoundedRectangle(cornerRadius: 112 * 0.2237, style: .continuous))
+                    .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                    .accessibilityHidden(true)
 
-            VStack(spacing: 8) {
-                Text("Linework")
-                    .font(.largeTitle)
-                    .fontWeight(.semibold)
-                Text("Sign in with your Apple ID to keep your notebooks yours — private to you, synced through your own iCloud.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 48)
+                VStack(spacing: Space.s) {
+                    Text("Linework")
+                        .font(Typography.display)
+                    Text("Sign in with your Apple ID to keep your notebooks private and synced through your own iCloud.")
+                        .font(Typography.body)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            VStack(spacing: Space.m) {
+                SignInWithAppleButton(.signIn, onRequest: configure, onCompletion: handle)
+                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                    .frame(maxWidth: 320)
+                    .frame(height: 50)
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(Typography.caption)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 320)
+                }
             }
 
-            SignInWithAppleButton(.signIn, onRequest: configure, onCompletion: handle)
-                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                .frame(width: 280, height: 50)
-                .padding(.top, 8)
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 48)
-            }
-
-            VStack(spacing: 6) {
+            VStack(spacing: Space.xs) {
                 Button("Continue Without an Account") {
                     AppSettings.isGuestMode = true
                 }
-                .font(.subheadline)
-                .fontWeight(.medium)
+                .font(Typography.label)
+                .minimumHitTarget()
 
-                Text("Your notebooks stay on this device only and won't sync to iCloud.")
-                    .font(.caption)
+                Text("Your notebooks stay on this device and won't sync to iCloud.")
+                    .font(Typography.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 60)
+                    .frame(maxWidth: 320)
             }
-            .padding(.top, 12)
 
             Spacer()
             Spacer()
         }
-        .padding()
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.l)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func configure(_ request: ASAuthorizationAppleIDRequest) {
