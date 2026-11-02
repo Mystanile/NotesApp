@@ -1278,14 +1278,15 @@ nonisolated struct SyncRunner {
                             anchorX: $0.anchorX, anchorY: $0.anchorY,
                             anchorWidth: $0.anchorWidth, anchorHeight: $0.anchorHeight,
                             kind: $0.kind, destinationKind: $0.destinationKind,
-                            destinationID: $0.destinationID, strokeIDs: $0.strokeIDs)
+                            destinationID: $0.destinationID, strokeIDs: $0.strokeIDs,
+                            title: $0.title)
                 }
             return NotebookDTO(
                 id: notebook.id, title: notebook.title, coverStyle: notebook.coverStyle,
                 createdAt: notebook.createdAt, modifiedAt: notebook.modifiedAt,
                 settingsModifiedAt: notebook.settingsModifiedAt,
                 folderID: notebook.folder?.id, isFavorite: notebook.isFavorite,
-                isLocked: notebook.isLocked, graphLayout: notebook.graphLayout, pages: pageDTOs, links: links
+                isLocked: notebook.isLocked, graphLayout: notebook.graphLayout, role: notebook.role, pages: pageDTOs, links: links
             )
         }
 
@@ -1370,6 +1371,7 @@ nonisolated struct SyncRunner {
                     existing.isFavorite = entry.isFavorite
                     existing.isLocked = entry.isLocked
                     existing.graphLayout = entry.graphLayout
+                    existing.role = entry.role
                     existing.settingsModifiedAt = entry.settingsModifiedAt
                 }
                 lift(existing, to: entry.modifiedAt)
@@ -1384,6 +1386,7 @@ nonisolated struct SyncRunner {
                 notebook.isFavorite = entry.isFavorite
                 notebook.isLocked = entry.isLocked
                 notebook.graphLayout = entry.graphLayout
+                notebook.role = entry.role
                 context.insert(notebook)
                 notebookByID[entry.id] = notebook
             }
@@ -1528,6 +1531,7 @@ nonisolated struct SyncRunner {
             link.destinationKind = linkDTO.destinationKind
             link.destinationID = linkDTO.destinationID
             link.strokeIDs = linkDTO.strokeIDs
+            link.title = linkDTO.title
             context.insert(link)
         }
     }

@@ -240,7 +240,7 @@ final class SyncTestDevice {
         var folders: [String]           // "name<parent name or ->"
         var notebooks: [String]         // "title@folder:<page ids in index order>"
         var textBlocks: [String]        // "pageID:content"
-        var links: [String]             // "source->destination"
+        var links: [String]             // "source->destination|kind|destKind|destID|strokeIDs|title"
     }
 
     func shape() throws -> Shape {
@@ -253,7 +253,10 @@ final class SyncTestDevice {
         let blocks = try context.fetch(FetchDescriptor<TypedTextBlock>())
             .map { "\($0.page?.id.uuidString ?? "-"):\($0.content)" }.sorted()
         let links = try context.fetch(FetchDescriptor<Link>())
-            .map { "\($0.sourcePageID)->\($0.destinationPageID)" }.sorted()
+            .map {
+                "\($0.sourcePageID)->\($0.destinationPageID)|\($0.kind ?? "-")|\($0.destinationKind ?? "-")"
+                    + "|\($0.destinationID ?? "-")|\(($0.strokeIDs ?? []).joined(separator: ","))|\($0.title ?? "-")"
+            }.sorted()
         return Shape(folders: folders, notebooks: notebooks, textBlocks: blocks, links: links)
     }
 

@@ -178,9 +178,7 @@ extension NotebookDetailView {
     /// picked. Cancelling the picker used to leave it there: an anchor that
     /// went nowhere, and a self-edge in the Page Map that synced.
     func removeUnfinishedLinks() {
-        let unfinished = allLinks.filter {
-            $0.sourcePageID == $0.destinationPageID && $0.kind != "mention" && $0.destinationID == nil
-        }
+        let unfinished = allLinks.filter(Links.isUnfinished)
         guard !unfinished.isEmpty else { return }
         unfinished.forEach(modelContext.delete)
         currentPage?.markModified()

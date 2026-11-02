@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import SwiftData
 
 /// The one place that changes a `Link`. A link syncs with its source page,
@@ -10,6 +11,75 @@ enum Links {
         link.destinationPageID = pageID
         markSources([link.sourcePageID], in: context, now: now)
         try? context.save()
+    }
+
+    /// A picked node as the destination: an explicit link to a region.
+    /// `destinationPageID` stays the node's page so page-level readers
+    /// still navigate. Saves.
+    static func setDestination(_ link: Link, toNode node: Link, in context: ModelContext, now: Date = Date()) {
+        link.destinationKind = "region"
+        link.destinationID = node.id.uuidString
+        link.destinationPageID = node.sourcePageID
+        markSources([link.sourcePageID], in: context, now: now)
+        try? context.save()
+    }
+
+    /// A named region of strokes on `page`: a self-link of kind "node".
+    /// A blank title falls back to a generic one, so a node is never nameless.
+    /// Marks the page and saves.
+    @discardableResult
+    static func makeNode(on page: Page, strokeIDs: [String], title: String, anchor: CGRect,
+                         in context: ModelContext, now: Date = Date()) -> Link {
+        let link = Link(sourcePageID: page.id, destinationPageID: page.id)
+        link.kind = "node"
+        link.destinationKind = "region"
+        link.strokeIDs = strokeIDs
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        link.title = trimmed.isEmpty ? nodeTitle(recognized: nil, pageNumber: page.index + 1) : trimmed
+        link.anchorX = Double(anchor.minX)
+        link.anchorY = Double(anchor.minY)
+        link.anchorWidth = Double(anchor.width)
+        link.anchorHeight = Double(anchor.height)
+        context.insert(link)
+        page.markModified(at: now)
+        try? context.save()
+        return link
+    }
+
+    /// Renames a link's title. Empty or whitespace-only is refused (false,
+    /// nothing changed). Saves.
+    @discardableResult
+    static func setTitle(_ link: Link, _ title: String, in context: ModelContext, now: Date = Date()) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        link.title = trimmed
+        markSources([link.sourcePageID], in: context, now: now)
+        try? context.save()
+        return true
+    }
+
+    /// A node's default name: the first non-empty line of the recognized
+    /// handwriting, trimmed, at most 60 characters; else "Node, p. N".
+    static func nodeTitle(recognized: String?, pageNumber: Int) -> String {
+        let line = (recognized ?? "")
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        guard let line else { return "Node, p. \(pageNumber)" }
+        return String(line.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A plain anchor link (draws an anchor, navigates to a page or node).
+    static func isPlainLink(_ link: Link) -> Bool { link.kind == nil }
+
+    static func isNode(_ link: Link) -> Bool { link.kind == "node" }
+
+    /// A link still pointing at its own page with nothing picked: what
+    /// `addLink` creates before the destination picker answers. A node is
+    /// also a self-link but has a kind and a destinationKind, so it is kept.
+    static func isUnfinished(_ link: Link) -> Bool {
+        link.kind == nil && link.destinationKind == nil && link.destinationID == nil
+            && link.sourcePageID == link.destinationPageID
     }
 
     /// Deletes every link into or out of `pageIDs` and marks the surviving

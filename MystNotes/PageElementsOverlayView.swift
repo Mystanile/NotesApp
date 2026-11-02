@@ -40,7 +40,7 @@ struct PageElementsOverlayView: View {
                 StickerElementView(sticker: sticker, scale: scale, onSave: onSave)
             }
 
-            ForEach(links.filter { $0.kind != "mention" }, id: \.id) { link in
+            ForEach(links.filter { $0.kind == nil }, id: \.id) { link in
                 LinkAnchorView(
                     link: link,
                     scale: scale,

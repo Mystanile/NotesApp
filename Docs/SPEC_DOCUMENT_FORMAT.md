@@ -260,6 +260,26 @@ Periodic snapshots (every N events) keep replay fast. Snapshots go in `timeline/
 
 Cross-document links use a fully qualified `documentID:nodeID`. Dangling links are kept, not deleted, and rendered as broken — so a link survives a document being temporarily unavailable during sync.
 
+### 7.1 Sync snapshot, format 5 (Nov 2, 2026)
+
+The folder's `librarySnapshotFormatVersion` is 5. A build that reads a newer folder refuses it rather than guessing; a format-4 build would strip the fields below on its next write. History: 3 added the M2 link fields, 4 `FolderDTO.smartQuery`, 5 the following.
+
+**Link kinds** (`LinkDTO.kind`; all optional, nil is a plain page link):
+
+| `kind` | Meaning | Draws on the page | Key fields |
+|---|---|---|---|
+| nil | Explicit link / anchor | A tappable anchor | `destinationPageID`; with `destinationKind = "region"`, `destinationID` is the node's id; optional `strokeIDs` of the anchor |
+| `node` | A named region of strokes (self-link on its page) | Nothing (badge in the graph UI) | `destinationKind = "region"`, `strokeIDs`, `title` (never empty), anchor = region bounds when last seen |
+| `mention` | `[[ ]]` reference from a text block | Nothing | `destinationID` = text block key, `title` = inserted label (nil until M2 task 6 writes it) |
+| `transclusion` | A node's ink shown on another page | The node's ink | `destinationKind = "region"`, `destinationID` = node id; no `strokeIDs` of its own |
+
+Tags are never stored as links; the graph derives them from `Page.tags`.
+
+**`LinkDTO.title`** (new, optional, absent in format 4): a node's name or a mention's label.
+
+**`Notebook.role`** (new, optional, absent in format 4; in `NotebookIndexEntry` and `NotebookDTO`): marks a notebook the app itself uses. `"templates"` is the custom page-templates notebook; nil is an ordinary notebook. It is a notebook setting and merges on `settingsModifiedAt` like the title and cover.
+
+
 ---
 
 ## 8. Write protocol

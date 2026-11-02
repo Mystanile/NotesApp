@@ -1535,11 +1535,56 @@ final class SyncTests: XCTestCase {
         XCTAssertNil(dto.strokeIDs)
     }
 
-    /// Format 3 carries the M2 link fields and format 4 the smart folder
-    /// search. A build that predates a field would drop it on its next
+    /// Format 3 carries the M2 link fields, 4 the smart folder search, 5 link
+    /// titles and the notebook role. A build that predates a field would drop it on its next
     /// write, so it must refuse the folder.
-    func testFormatVersion_isFour_forSmartFolders() {
-        XCTAssertEqual(librarySnapshotFormatVersion, 4)
+    func testFormatVersion_isFive() {
+        XCTAssertEqual(librarySnapshotFormatVersion, 5)
+    }
+
+    /// Format 5: a node's title travels with its source page.
+    func testLinkTitle_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Nodes", pageCount: 1)
+        let page = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id)).first!
+        harness.clock.advance()
+        let node = Links.makeNode(on: page, strokeIDs: ["S1"], title: "Chain rule",
+                                  anchor: CGRect(x: 1, y: 2, width: 30, height: 40), in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Link>()).first { $0.id == node.id })
+        XCTAssertEqual(arrived.title, "Chain rule")
+        XCTAssertEqual(arrived.kind, "node")
+        XCTAssertEqual(arrived.strokeIDs, ["S1"])
+    }
+
+    /// A format-4 link has no title key and still decodes.
+    func testLinkDTO_fromFormat4_decodesWithNilTitle() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","sourcePageID":"\(UUID().uuidString)","destinationPageID":"\(UUID().uuidString)",
+         "anchorX":1,"anchorY":2,"anchorWidth":44,"anchorHeight":44,"kind":"mention","destinationID":"k"}
+        """
+        let dto = try JSONDecoder().decode(LinkDTO.self, from: Data(json.utf8))
+        XCTAssertNil(dto.title)
+        XCTAssertEqual(dto.kind, "mention")
+    }
+
+    /// `Notebook.role` is a notebook setting: it rides the settings clock.
+    func testNotebookRole_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Templates", pageCount: 1)
+        harness.clock.advance()
+        notebook.role = "templates"
+        notebook.markSettingsModified(at: harness.clock.now)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Notebook>()).first { $0.id == notebook.id })
+        XCTAssertEqual(arrived.role, "templates")
     }
 
     /// M2 link integrity: deleting a page deletes the links that point at

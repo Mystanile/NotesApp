@@ -57,6 +57,10 @@ final class Notebook {
     /// so moving a card merges on `settingsModifiedAt` and never competes
     /// with a page's ink. Use `graphPositions` / `setGraphPosition`.
     var graphLayout: String?
+    /// Marks a notebook the app itself uses: "templates" is the custom
+    /// page-templates notebook. nil is an ordinary notebook. A setting, on
+    /// the settings clock like the cover (format 5).
+    var role: String?
 
     var folder: Folder?
 
@@ -328,19 +332,31 @@ final class Link {
     var anchorWidth: Double = 44
     var anchorHeight: Double = 44
 
-    // M2: a link is a graph edge (BACKLOG, "M2 design"). All optional; nil
-    // means what every link before M2 was - an explicit link to a page,
-    // which `destinationPageID` names. `destinationPageID` stays filled for
-    // every kind that lives on a page, so older code keeps navigating.
-    /// "explicit" (nil), later "tag" and "transclusion".
+    // M2: a link is a graph edge. All optional; nil means what every link
+    // before M2 was - an explicit link to a page, which `destinationPageID`
+    // names. `destinationPageID` stays filled for every kind that lives on a
+    // page, so older code keeps navigating. Change links only through `Links`.
+    /// nil: a plain anchor on the source page (draws a tappable anchor).
+    /// "node": a named region of strokes on the source page (a self-link;
+    /// `strokeIDs` are its strokes, `title` its name; draws nothing).
+    /// "mention": a `[[ ]]` reference from a text block (`destinationID` is
+    /// the block's key, `title` reserved for the inserted label, nil until M2 task 6 writes it; draws nothing).
+    /// "transclusion": a node's ink shown on the source page (draws ink;
+    /// `destinationID` is the node's id; no `strokeIDs` of its own).
     var kind: String?
-    /// "page" (nil), "region", "textBlock", "notebook".
+    /// nil/"page": the destination is the page. "region": a node (see
+    /// `destinationID`). Later "textBlock", "notebook".
     var destinationKind: String?
-    /// The target's own id when it isn't the page: a text block's or a
-    /// notebook's UUID string.
+    /// The target's own id when it isn't the page. For kind nil with
+    /// destinationKind "region", and for "transclusion": the node Link's
+    /// UUID string. For "mention": the source text block's key.
     var destinationID: String?
-    /// A region's strokes, by their stable ids (invariant 6).
+    /// kind "node": the node's strokes. kind nil: the strokes the anchor was
+    /// made around (optional). Always stable stroke ids (invariant 6).
+    /// A transclusion has none; it reads the node's.
     var strokeIDs: [String]?
+    /// A node's name (never empty). Reserved for a mention's inserted label; nil on mentions until M2 task 6 writes it.
+    var title: String?
 
     init(sourcePageID: UUID = UUID(), destinationPageID: UUID = UUID()) {
         self.id = UUID()

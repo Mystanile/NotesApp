@@ -6,7 +6,7 @@ import CryptoKit
 /// and serializing SwiftData directly is fragile, so `SyncEngine`
 /// translates between these DTOs and the model graph.
 ///
-/// On disk (format 2):
+/// On disk (index.json and notebooks/ since format 2; see the version history below):
 ///
 ///     Mystnotes/
 ///       index.json              LibraryIndex - folders and one
@@ -34,7 +34,11 @@ import CryptoKit
 /// 4 (Oct 22, 2026): `FolderDTO.smartQuery`. A format-3 build would push
 /// its folders back without it and turn every smart folder into an empty
 /// plain one, on every device.
-let librarySnapshotFormatVersion = 4
+/// 5 (Nov 2, 2026): `LinkDTO.title` (a node's name, a mention's label) and
+/// `Notebook.role` (marks the templates notebook). A format-4 build would
+/// strip titles and roles on its next write, show transclusions as plain
+/// anchors and delete nodes as unfinished links, so it must refuse.
+let librarySnapshotFormatVersion = 5
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
 /// `.iso8601` strategy) made two edits inside one second compare equal
@@ -137,6 +141,8 @@ nonisolated struct NotebookIndexEntry: Codable {
     var isLocked: Bool?
     /// M2, format 3. See `Notebook.graphLayout`.
     var graphLayout: String?
+    /// Format 5. See `Notebook.role`.
+    var role: String?
     /// See `NotebookDTO.contentSignature`.
     var contentSignature: String
 
@@ -151,6 +157,7 @@ nonisolated struct NotebookIndexEntry: Codable {
         isFavorite = notebook.isFavorite
         isLocked = notebook.isLocked
         graphLayout = notebook.graphLayout
+        role = notebook.role
         contentSignature = notebook.contentSignature
     }
 }
@@ -284,6 +291,8 @@ nonisolated struct NotebookDTO: Codable {
     var isLocked: Bool? = nil
     /// M2, format 3: Page Map positions. Merges with the other settings.
     var graphLayout: String? = nil
+    /// Format 5: see `Notebook.role`. Merges with the other settings.
+    var role: String? = nil
     var pages: [PageDTO]
     var links: [LinkDTO]
 
@@ -396,4 +405,6 @@ nonisolated struct LinkDTO: Codable {
     var destinationKind: String?
     var destinationID: String?
     var strokeIDs: [String]?
+    /// Format 5: a node's name or a mention's label. Absent before.
+    var title: String? = nil
 }
