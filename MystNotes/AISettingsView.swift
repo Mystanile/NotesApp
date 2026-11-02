@@ -15,6 +15,8 @@ struct AISettingsView: View {
     @State private var isTesting = false
     @State private var testResult: (ok: Bool, text: String)?
     @State private var player = ReadAloudPlayer()
+    @State private var showingCapture = false
+    @State private var hasHandwriting = FileManager.default.fileExists(atPath: HandwritingProfileStore.fileURL.path)
 
     private static let suggestions = [
         "Qwen/Qwen2.5-7B-Instruct",
@@ -127,6 +129,22 @@ struct AISettingsView: View {
             }
 
             Section {
+                Button { showingCapture = true } label: {
+                    HStack {
+                        Label("Your handwriting", systemImage: "signature")
+                        Spacer()
+                        Text(hasHandwriting ? "Taught" : "Not yet")
+                            .font(Typography.caption).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                }
+                .foregroundStyle(.primary)
+            } footer: {
+                Text("Write on Page puts an answer onto your page in your own handwriting. Without a sample it uses a built-in hand. The sample stays on this device and is included in exports and backups.")
+            }
+
+            Section {
                 EmptyView()
             } footer: {
                 Text("What is sent: only the text of the page or notebook you choose, when you tap an AI action. Ink images are never sent, and nothing is sent automatically. Your keys stay in this device's Keychain; they are not synced or exported.")
@@ -137,6 +155,11 @@ struct AISettingsView: View {
             }
         }
         .navigationTitle("AI Study Helper")
+        .sheet(isPresented: $showingCapture, onDismiss: {
+            hasHandwriting = FileManager.default.fileExists(atPath: HandwritingProfileStore.fileURL.path)
+        }) {
+            HandwritingCaptureSheet()
+        }
         .onAppear {
             featherlessSaved = Keychain.get(Keychain.Account.featherless) != nil
             elevenSaved = Keychain.get(Keychain.Account.elevenlabs) != nil

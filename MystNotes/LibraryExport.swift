@@ -49,7 +49,8 @@ enum LibraryExport {
     /// reads the models, so it runs here on the main actor, yielding
     /// between notebooks so the app stays responsive.
     static func makeArchive(of notebooks: [Notebook], documents: [ImportedDocument],
-                            in directory: URL) async throws -> (folder: URL, zip: URL) {
+                            in directory: URL,
+                            handwritingProfile: URL = HandwritingProfileStore.fileURL) async throws -> (folder: URL, zip: URL) {
         let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
         let root = directory.appendingPathComponent("Linework Library \(stamp)", isDirectory: true)
         let fm = FileManager.default
@@ -84,10 +85,29 @@ enum LibraryExport {
             await Task.yield()
         }
 
+        addHandwritingProfile(from: handwritingProfile, to: root)
+
         let zip = directory.appendingPathComponent("\(root.lastPathComponent).zip")
         try? fm.removeItem(at: zip)
         try zipDirectory(root, to: zip)
         return (root, zip)
+    }
+
+    /// Copies the taught handwriting (`Handwriting/profile.json`) into an
+    /// export or backup folder, if there is one (invariant 9). A missing
+    /// profile is not an error; a failed copy is logged, not fatal.
+    nonisolated static func addHandwritingProfile(from source: URL, to root: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: source.path) else { return }
+        let folder = root.appendingPathComponent("Handwriting", isDirectory: true)
+        let target = folder.appendingPathComponent("profile.json")
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: target.path) { return }
+            try fm.copyItem(at: source, to: target)
+        } catch {
+            AppLog.note("export", "handwriting profile not copied: \(error)")
+        }
     }
 
     /// A coordinated read with `.forUploading` hands back a zipped copy of

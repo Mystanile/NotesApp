@@ -153,6 +153,10 @@ struct NotebookDetailView: View {
     @State var pendingTrash: Set<String> = []
     @State var showingStickerPicker = false
     @State var showingPageMap = false
+    /// The Study panel (AI helper): an inspector in regular width, a sheet
+    /// in compact. The button is only there while the helper is switched on.
+    @State var showingStudyPanel = false
+    @AppStorage(AppSettings.Keys.aiEnabled) var aiEnabled = false
     /// VisionKit's document camera; the scan arrives as new pages.
     @State var showingScanner = false
     @State var linkNeedingDestination: Link?
@@ -347,6 +351,14 @@ struct NotebookDetailView: View {
             }
 
             ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if aiEnabled {
+                    Button { showingStudyPanel.toggle() } label: {
+                        Image(systemName: "sparkles")
+                    }
+                    .accessibilityLabel("Study")
+                    .help("Study this page or notebook with AI")
+                }
+
                 Button { showingPageMap = true } label: {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                 }
@@ -438,12 +450,25 @@ struct NotebookDetailView: View {
                               onMove: { id, point in
                                   notebook.setGraphPosition(point, forPageID: id)
                                   saveMetadata("Failed to save the Page Map")
-                              }) { id in
+                              },
+                              documents: documentsByPageID) { id in
                 showingPageMap = false
                 jumpToPage(withID: id)
             }
         }
         #if targetEnvironment(macCatalyst) || canImport(UIKit)
+        .inspector(isPresented: Binding(
+            get: { showingStudyPanel && aiEnabled && !isCompactWidth },
+            set: { showingStudyPanel = $0 }
+        )) {
+            studyPanel.inspectorColumnWidth(min: 320, ideal: 380, max: 480)
+        }
+        .sheet(isPresented: Binding(
+            get: { showingStudyPanel && aiEnabled && isCompactWidth },
+            set: { showingStudyPanel = $0 }
+        )) {
+            studyPanel.presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $showingStickerPicker) {
             StickerPickerView { symbol in addSticker(symbol) }
         }
@@ -1107,7 +1132,7 @@ struct NotebookDetailView: View {
                         .disabled(sortedPages.count <= 1)
                     }
             },
-            footer: { addPageButton })
+            footer: { addPageMenu })
     }
 
     /// Keeps the open page in view in the sidebar (deferred a tick so the

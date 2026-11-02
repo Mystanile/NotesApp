@@ -35,12 +35,14 @@ nonisolated enum Backup {
     /// weekday's file from a week ago. Returns the zip.
     @discardableResult
     static func archive(container: ModelContainer, localFiles: URL, to destination: URL,
-                        now: Date = Date()) throws -> URL {
+                        now: Date = Date(),
+                        handwritingProfile: URL = HandwritingProfileStore.fileURL) throws -> URL {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("Backup-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: work) }
         let staging = work.appendingPathComponent("Linework Backup", isDirectory: true)
         try stage(container: container, localFiles: localFiles, into: staging)
+        LibraryExport.addHandwritingProfile(from: handwritingProfile, to: staging)
         let zipped = work.appendingPathComponent("backup.zip")
         try LibraryExport.zipDirectory(staging, to: zipped)
 
