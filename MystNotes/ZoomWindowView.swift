@@ -322,21 +322,28 @@ struct ZoomPadCanvas: UIViewRepresentable {
         var lastTool: DrawingToolState?
         init(onStrokes: @escaping ([PKStroke]) -> Bool) { self.onStrokes = onStrokes }
 
+        /// Strokes already handed to the page whose removal from the pad is
+        /// still queued. A second stroke ending before that clear runs must
+        /// not hand the first one over again (review, Nov 2, 2026).
+        private var pendingDrop = 0
+
         func canvasViewDrawingDidChange(_ canvas: PKCanvasView) {
-            // The pad is cleared after every stroke, so any stroke in it is
-            // a new one; the clear's own callback sees an empty drawing.
-            let strokes = canvas.drawing.strokes
+            // Only strokes not already handed over are new.
+            let strokes = Array(canvas.drawing.strokes.dropFirst(pendingDrop))
             guard !strokes.isEmpty else { return }
             // Not taken (the page changed under the pad): keep the ink in
             // the pad rather than lose it.
             guard onStrokes(strokes) else { return }
-            let handed = strokes.count
+            pendingDrop += strokes.count
             // Next turn of the run loop, not inside PencilKit's callback.
             // Only what was handed over is dropped, so a stroke begun in the
             // meantime survives. Assigning `drawing` is not an undo step.
-            DispatchQueue.main.async { [weak canvas] in
+            DispatchQueue.main.async { [weak self, weak canvas] in
+                guard let self else { return }
+                let drop = self.pendingDrop
+                self.pendingDrop = 0
                 guard let canvas else { return }
-                canvas.drawing = PKDrawing(strokes: Array(canvas.drawing.strokes.dropFirst(handed)))
+                canvas.drawing = PKDrawing(strokes: Array(canvas.drawing.strokes.dropFirst(drop)))
                 canvas.undoManager?.removeAllActions()
             }
         }
