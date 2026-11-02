@@ -507,6 +507,18 @@ final class ShapeRecognizerTests: XCTestCase {
         }
     }
 
+    /// A dashed shape is several strokes made in one instant. Each needs its
+    /// own creation date, or `StrokeIDMap` could not tell them apart later.
+    func testDashedShape_hasStrokesWithDistinctCreationDates() throws {
+        let shape = try XCTUnwrap(ShapeRecognizer.recognize(ellipsePoints(center: CGPoint(x: 200, y: 200), rx: 80, ry: 80)))
+        let spec = ShapeRecognizer.InkSpec(ink: PKInk(.pen, color: .black), size: 3, force: 1, style: .dashed)
+        let strokes = ShapeRecognizer.strokes(for: shape, spec: spec)
+        XCTAssertGreaterThan(strokes.count, 1)
+        let dates = strokes.map { $0.path.creationDate.timeIntervalSinceReferenceDate }
+        XCTAssertEqual(Set(dates).count, strokes.count, "distinct dates")
+        XCTAssertEqual(Set(strokes.map(StrokeIDMap.Fingerprint.init)).count, strokes.count)
+    }
+
     /// One undo after a snap takes the shape away and does not bring the
     /// freehand stroke back (decided Oct 22, 2026). PencilKit's own undo for
     /// the stroke is stood in for here by a snapshot restore, in the same

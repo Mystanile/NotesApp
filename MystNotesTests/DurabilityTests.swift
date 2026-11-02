@@ -51,6 +51,53 @@ final class DurabilityTests: XCTestCase {
         XCTAssertNil(none)
     }
 
+    // MARK: Region ink
+
+    /// Every file under `root` with its modification date and size.
+    private func snapshot(of root: URL) -> [String: String] {
+        var result: [String: String] = [:]
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return result }
+        for case let url as URL in files {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            result[url.path] = "\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)/\(values?.fileSize ?? -1)"
+        }
+        return result
+    }
+
+    /// Reading another page's ink for a graph, a transclusion or an export
+    /// must change nothing: no cache written, no legacy page migrated, no
+    /// damaged record trashed, no ids stored.
+    func testRegionInk_writesNothing_andLeavesTheCacheAlone() throws {
+        let good = UUID(), legacy = UUID(), damaged = UUID()
+        let goodDrawing = makeDrawing(strokes: 3)
+        try store.save(goodDrawing, pageID: good)
+        let goodMap = store.ids.map(for: good)
+        let wanted = Set(goodDrawing.strokes.prefix(2).compactMap { goodMap.existingID(for: $0) })
+        XCTAssertEqual(wanted.count, 2)
+
+        try makeDrawing(strokes: 2).dataRepresentation()
+            .write(to: directory.appendingPathComponent(DrawingStore.legacyFileName(for: legacy)))
+        try Data("not ink".utf8).write(to: store.fileURL(for: damaged))
+
+        let before = snapshot(of: directory)
+        let cacheBefore = store.ids.map(for: good)
+
+        let region = try XCTUnwrap(store.readRegionInk(pageID: good, ids: wanted))
+        XCTAssertEqual(region.strokes.count, 2)
+        XCTAssertEqual(region.bounds, goodDrawing.strokes[0].renderBounds.union(goodDrawing.strokes[1].renderBounds))
+        XCTAssertNil(store.readRegionInk(pageID: good, ids: [UUID()]), "ids that are gone")
+        XCTAssertNil(store.readRegionInk(pageID: legacy, ids: wanted), "a legacy page has no record to read")
+        XCTAssertNil(store.readRegionInk(pageID: damaged, ids: wanted), "a damaged record")
+        XCTAssertNil(store.readRegionInk(pageID: UUID(), ids: wanted), "no page")
+
+        XCTAssertEqual(snapshot(of: directory), before, "no file created, changed or moved")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("trash").path))
+        XCTAssertEqual(store.ids.map(for: good), cacheBefore)
+        XCTAssertEqual(store.ids.map(for: legacy).count, 0)
+        XCTAssertEqual(store.ids.map(for: damaged).count, 0)
+    }
+
     // MARK: Mid-stroke
 
     /// A stroke in progress lives only in `PKCanvasView`; autosave fires a

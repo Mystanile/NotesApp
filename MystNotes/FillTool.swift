@@ -212,6 +212,8 @@ enum FillTool {
         var used = bands.map { [Bool](repeating: false, count: $0.runs.count) }
 
         var result: [PKStroke] = []
+        // A millisecond apart, so no two fill strokes share an identity.
+        let base = Date()
         for (startBand, band) in bands.enumerated() {
             for startRun in band.runs.indices where !used[startBand][startRun] {
                 var passes: [(y: CGFloat, run: Run)] = []
@@ -227,7 +229,7 @@ enum FillTool {
                         return !used[bandIndex][next] && candidate.minX <= run.maxX && candidate.maxX >= run.minX
                     }
                 }
-                result.append(zigzagStroke(passes, color: color))
+                result.append(zigzagStroke(passes, color: color, date: base.addingTimeInterval(Double(result.count) * 0.001)))
             }
         }
         return result
@@ -250,7 +252,7 @@ enum FillTool {
     /// through a control point repeated three times (as in
     /// `ShapeRecognizer`), and between two such points it is a straight
     /// line - so each pass is straight and each turn is exact.
-    private static func zigzagStroke(_ passes: [(y: CGFloat, run: (minX: Int, maxX: Int))], color: UIColor) -> PKStroke {
+    private static func zigzagStroke(_ passes: [(y: CGFloat, run: (minX: Int, maxX: Int))], color: UIColor, date: Date) -> PKStroke {
         var points: [PKStrokePoint] = []
         func add(_ location: CGPoint) {
             for _ in 0..<3 {
@@ -268,7 +270,7 @@ enum FillTool {
             let ends = index.isMultiple(of: 2) ? [left, right] : [right, left]
             for x in ends { add(CGPoint(x: x, y: pass.y)) }
         }
-        let path = PKStrokePath(controlPoints: points, creationDate: Date())
+        let path = PKStrokePath(controlPoints: points, creationDate: date)
         return PKStroke(ink: PKInk(.monoline, color: color), path: path)
     }
 }

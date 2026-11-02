@@ -236,7 +236,8 @@ enum TutorialNotebookFactory {
     #if targetEnvironment(macCatalyst) || canImport(UIKit)
     private static func writeDrawing(_ strokes: [PKStroke], to page: Page) {
         do {
-            page.drawingFileRef = try DrawingStore.live.save(PKDrawing(strokes: strokes), pageID: page.id)
+            // Each stroke gets a creation date of its own, a millisecond apart.
+            page.drawingFileRef = try DrawingStore.live.save(PKDrawing(strokes: InkSelection.reidentified(strokes)), pageID: page.id)
         } catch {
             print("Failed to write tutorial drawing: \(error)")
         }

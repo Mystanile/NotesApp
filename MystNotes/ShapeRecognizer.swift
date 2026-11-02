@@ -216,17 +216,22 @@ nonisolated enum ShapeRecognizer {
     static func strokes(for shape: RecognizedShape, spec: InkSpec) -> [PKStroke] {
         let corners = Set(shape.cornerIndices)
         let flags = shape.outline.indices.map { corners.contains($0) }
+        // One shape, several strokes: each needs a creation date of its own
+        // (a millisecond apart) or their ids would collide in `StrokeIDMap`.
+        let base = Date()
 
         switch spec.style {
         case .solid:
             let padded = padded(shape.outline, isCorner: flags, closed: shape.isClosed)
-            return [buildStroke(padded.points, isCorner: padded.flags, spec: spec)]
+            return [buildStroke(padded.points, isCorner: padded.flags, spec: spec, date: base)]
         case .dashed, .dotted:
             let dash = dashLengths(for: spec)
             return dashes(along: shape.outline, isCorner: flags, dash: dash.on, gap: dash.off)
-                .map { segment in
+                .enumerated()
+                .map { index, segment in
                     let padded = padded(segment.points, isCorner: segment.flags, closed: false)
-                    return buildStroke(padded.points, isCorner: padded.flags, spec: spec)
+                    return buildStroke(padded.points, isCorner: padded.flags, spec: spec,
+                                       date: base.addingTimeInterval(Double(index) * 0.001))
                 }
         }
     }
@@ -328,7 +333,7 @@ nonisolated enum ShapeRecognizer {
         return (result, flags)
     }
 
-    private static func buildStroke(_ points: [CGPoint], isCorner: [Bool], spec: InkSpec) -> PKStroke {
+    private static func buildStroke(_ points: [CGPoint], isCorner: [Bool], spec: InkSpec, date: Date) -> PKStroke {
         var controlPoints: [CGPoint] = []
         controlPoints.reserveCapacity(points.count * 3)
         for (index, point) in points.enumerated() {
@@ -357,7 +362,7 @@ nonisolated enum ShapeRecognizer {
                 altitude: spec.altitude
             ))
         }
-        let path = PKStrokePath(controlPoints: strokePoints, creationDate: Date())
+        let path = PKStrokePath(controlPoints: strokePoints, creationDate: date)
         return PKStroke(ink: spec.ink, path: path)
     }
 

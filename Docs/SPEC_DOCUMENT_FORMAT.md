@@ -349,3 +349,7 @@ Every one of these must exist before v1.0.
 | Audio | Original `.m4a` files plus transcript |
 
 "Export everything" produces a single zip of all packages plus a `README.txt` explaining the format. Ship this in M0 or M1. It is the cheapest trust a free app can buy.
+
+### 7.2 Stroke ids after erasing (Nov 2, 2026)
+
+A stroke id is stable, but it is not always one stroke. When the vector eraser splits a stroke, every piece keeps the original's id, matched on `creationDate` and `randomSeed` once the original is gone. So one id can name several strokes, and anything that points at ids (links, nodes, transclusions) must expect one-to-many. Two strokes that both exist with the same date and seed always keep different ids. An erased stroke's id is remembered for the session (in memory only, never in the file) so an undo brings it back with the same id.

@@ -60,16 +60,23 @@ nonisolated enum StrokeCodec {
     // MARK: Encode
 
     /// Writes `drawing`. `ids` is consulted for every stroke - a stroke seen
-    /// before keeps its id, a new one is assigned - and updated to exactly
-    /// the strokes in `drawing`, so the map never accumulates ids for
-    /// strokes that no longer exist.
+    /// before keeps its id, a stroke that comes back keeps the id it had
+    /// (`departed`), the pieces of a split stroke share the original's id,
+    /// and anything else is assigned a new one - and its live entries are
+    /// updated to exactly the strokes in `drawing`. The ids of strokes that
+    /// disappeared move into the map's in-memory `departed` table, so an
+    /// erase followed by an undo gets the same ids back (invariant 6).
+    /// "The map is exactly the drawing" holds for the live entries only.
     static func encode(_ drawing: PKDrawing, ids: inout StrokeIDMap, compress: Bool = true) -> Data {
         var body = ByteWriter()
         var next = StrokeIDMap()
+        next.departed = ids.departed
+        let present = Set(drawing.strokes.map(StrokeIDMap.Fingerprint.init))
         for stroke in drawing.strokes {
-            let w = encodeStroke(stroke, ids: &ids, next: &next)
+            let w = encodeStroke(stroke, present: present, ids: &ids, next: &next)
             body.bytes(Array(w.data))
         }
+        ids.retire(absentFrom: present, into: &next)
         ids = next
 
         var flags: UInt32 = 0
@@ -88,9 +95,10 @@ nonisolated enum StrokeCodec {
         return w.data
     }
 
-    private static func encodeStroke(_ stroke: PKStroke, ids: inout StrokeIDMap, next: inout StrokeIDMap) -> ByteWriter {
+    private static func encodeStroke(_ stroke: PKStroke, present: Set<StrokeIDMap.Fingerprint>,
+                                     ids: inout StrokeIDMap, next: inout StrokeIDMap) -> ByteWriter {
         var w = ByteWriter()
-        let id = ids.id(for: stroke)
+        let id = ids.resolveID(for: stroke, present: present, departed: &next.departed)
         next.assign(id, to: stroke)
         w.uuid(id)
         w.string(stroke.ink.inkType.rawValue)
@@ -232,7 +240,25 @@ nonisolated enum StrokeCodec {
 /// points it has, and where it starts and ends. Deliberately *not* its
 /// transform (a lasso move) or its mask (a partial erase) - those change
 /// without the stroke becoming a different stroke. Strokes a shape tool
-/// creates in the same instant differ by their points.
+/// creates in the same instant differ by their points (and, since M2, by
+/// their creation dates, a millisecond apart).
+///
+/// The exact `Fingerprint` is the primary key. Two fallbacks keep an id
+/// through edits that change the fingerprint:
+///
+/// - A secondary index on `(creationDate, randomSeed)`: when a stroke's
+///   fingerprint is unknown, it takes the id of an entry with the same
+///   date and seed whose original stroke is no longer in the drawing. The
+///   vector eraser splits a stroke into pieces with different points; all
+///   pieces share the original's id. Two strokes that are both present
+///   never share one.
+/// - `departed`: fingerprint to id for strokes that left the drawing,
+///   kept in memory for the session and never encoded. An erase that is
+///   autosaved and then undone brings the original fingerprint back, and
+///   it gets its id back.
+///
+/// "The map is exactly the drawing" holds for the live entries only
+/// (`count`, equality, `existingID`); `departed` is extra memory.
 nonisolated struct StrokeIDMap: Equatable {
     struct Fingerprint: Hashable {
         var creationDate: TimeInterval
@@ -250,11 +276,34 @@ nonisolated struct StrokeIDMap: Equatable {
         }
     }
 
+    /// The fallback key: what a split piece still shares with its original.
+    struct SeedKey: Hashable {
+        var creationDate: TimeInterval
+        var randomSeed: UInt32
+
+        init(_ fingerprint: Fingerprint) {
+            creationDate = fingerprint.creationDate
+            randomSeed = fingerprint.randomSeed
+        }
+    }
+
     private var byFingerprint: [Fingerprint: UUID] = [:]
+    /// (date, seed) to the live fingerprints that have it, in insertion
+    /// order. Fingerprints rather than ids, so a candidate's own stroke
+    /// can be checked for presence.
+    private var bySeed: [SeedKey: [Fingerprint]] = [:]
+    /// Ids of strokes that left the drawing this session. Never encoded.
+    /// ponytail: no cap until it shows up in memory
+    fileprivate(set) var departed: [Fingerprint: UUID] = [:]
 
     init() {}
 
     var count: Int { byFingerprint.count }
+
+    /// Live entries only; `departed` is session memory, not identity.
+    static func == (lhs: StrokeIDMap, rhs: StrokeIDMap) -> Bool {
+        lhs.byFingerprint == rhs.byFingerprint
+    }
 
     /// The id this map already holds for `stroke`, if any.
     func existingID(for stroke: PKStroke) -> UUID? {
@@ -266,12 +315,88 @@ nonisolated struct StrokeIDMap: Equatable {
         let key = Fingerprint(stroke)
         if let id = byFingerprint[key] { return id }
         let id = UUID()
-        byFingerprint[key] = id
+        assign(id, to: stroke)
         return id
     }
 
     mutating func assign(_ id: UUID, to stroke: PKStroke) {
-        byFingerprint[Fingerprint(stroke)] = id
+        let key = Fingerprint(stroke)
+        if byFingerprint.updateValue(id, forKey: key) == nil {
+            bySeed[SeedKey(key), default: []].append(key)
+        }
+    }
+
+    /// The id `stroke` should be written with: its exact entry, else the id
+    /// it left with (`departed`, consumed), else that of an entry with the
+    /// same (date, seed) whose own stroke is not in `present`, else new.
+    /// Reads this (the previous) map; `departed` is the next map's table.
+    fileprivate func resolveID(for stroke: PKStroke, present: Set<Fingerprint>,
+                               departed: inout [Fingerprint: UUID]) -> UUID {
+        let key = Fingerprint(stroke)
+        if let id = byFingerprint[key] { return id }
+        if let id = departed.removeValue(forKey: key) { return id }
+        if let candidates = bySeed[SeedKey(key)] {
+            for candidate in candidates where !present.contains(candidate) {
+                if let id = byFingerprint[candidate] { return id }
+            }
+        }
+        return UUID()
+    }
+
+    /// Moves the ids of this map's strokes that are not in `present` into
+    /// `next.departed`, and drops anything now live from it.
+    fileprivate func retire(absentFrom present: Set<Fingerprint>, into next: inout StrokeIDMap) {
+        for (key, id) in byFingerprint where !present.contains(key) {
+            next.departed[key] = id
+        }
+        if !next.departed.isEmpty {
+            for key in present { next.departed[key] = nil }
+        }
+        // ponytail: a crude cap. Past this many, a very long session forgets
+        // the oldest erased strokes' ids; an undo of those gets a fresh id.
+        if next.departed.count > Self.departedCap { next.departed.removeAll() }
+    }
+
+    static let departedCap = 5_000
+
+    /// Keeps `previous`'s erased-stroke memory when this map replaces it
+    /// for the same page (a reload or a pull), minus anything this map holds
+    /// live. Without it, erase, reload, undo would mint a new id.
+    mutating func inheritDeparted(from previous: StrokeIDMap) {
+        guard !previous.departed.isEmpty || !previous.byFingerprint.isEmpty else { return }
+        for (key, id) in previous.departed where byFingerprint[key] == nil && departed[key] == nil {
+            departed[key] = id
+        }
+        // Strokes the previous map held live that this one doesn't are
+        // departed too: the page was reloaded without them.
+        for (key, id) in previous.byFingerprint where byFingerprint[key] == nil && departed[key] == nil {
+            departed[key] = id
+        }
+        if departed.count > Self.departedCap { departed.removeAll() }
+    }
+
+    // MARK: Resolver
+
+    /// Indices in `drawing` of the strokes carrying any of `ids`. A split
+    /// stroke can return several; none means the ink is gone. `drawing`
+    /// must be the one this map was built for (decoded with it, or last
+    /// encoded with it).
+    func indices(of ids: Set<UUID>, in drawing: PKDrawing) -> [Int] {
+        guard !ids.isEmpty else { return [] }
+        return drawing.strokes.indices.filter { index in
+            existingID(for: drawing.strokes[index]).map(ids.contains) ?? false
+        }
+    }
+
+    /// The union of the render bounds of the strokes carrying `ids`, or
+    /// nil if none of them is in `drawing` any more.
+    static func bounds(of ids: Set<UUID>, in drawing: PKDrawing, map: StrokeIDMap) -> CGRect? {
+        var union: CGRect?
+        for index in map.indices(of: ids, in: drawing) {
+            let box = drawing.strokes[index].renderBounds
+            union = union.map { $0.union(box) } ?? box
+        }
+        return union
     }
 }
 

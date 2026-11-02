@@ -133,6 +133,29 @@ nonisolated struct DrawingStore {
         return drawing
     }
 
+    /// The ink of the strokes carrying `ids` on `pageID`, read from the
+    /// record alone, with their union bounds. For anything that only
+    /// looks at another page's ink (graph greying, transclusion, export).
+    ///
+    /// Side-effect free: never touches `StrokeIDCache`, never writes the
+    /// `.drawing` cache or its key, never migrates a legacy page, never
+    /// moves a damaged record to `trash/`. A missing, legacy-only or
+    /// damaged record, or ids that are all gone, return nil.
+    nonisolated static func regionInk(pageID: UUID, ids: Set<UUID>) -> (strokes: [PKStroke], bounds: CGRect)? {
+        DrawingStore.live.readRegionInk(pageID: pageID, ids: ids)
+    }
+
+    /// `regionInk(pageID:ids:)` against this store's directory.
+    func readRegionInk(pageID: UUID, ids wanted: Set<UUID>) -> (strokes: [PKStroke], bounds: CGRect)? {
+        guard !wanted.isEmpty,
+              let data = try? Data(contentsOf: fileURL(for: pageID)),
+              let (drawing, map) = try? StrokeCodec.decode(data) else { return nil }
+        let indices = map.indices(of: wanted, in: drawing)
+        guard !indices.isEmpty,
+              let bounds = StrokeIDMap.bounds(of: wanted, in: drawing, map: map) else { return nil }
+        return (indices.map { drawing.strokes[$0] }, bounds)
+    }
+
     /// The same save, off the caller's thread.
     ///
     /// `nonisolated static` and capture-free by construction, exactly like
@@ -328,6 +351,8 @@ nonisolated final class StrokeIDCache {
 
     func set(_ map: StrokeIDMap, for pageID: UUID) {
         lock.lock(); defer { lock.unlock() }
+        var map = map
+        if let previous = maps[pageID] { map.inheritDeparted(from: previous) }
         maps[pageID] = map
     }
 

@@ -114,6 +114,111 @@ final class StrokeCodecTests: XCTestCase {
                        "ids from the file are kept through the next save")
     }
 
+    // MARK: Fallbacks: departed, split pieces, same date and seed
+
+    /// A piece of `stroke` as the vector eraser leaves it: same date and
+    /// seed, different points.
+    private func piece(of stroke: PKStroke, _ range: Range<Int>) -> PKStroke {
+        let path = PKStrokePath(controlPoints: Array(Array(stroke.path)[range]), creationDate: stroke.path.creationDate)
+        return PKStroke(ink: stroke.ink, path: path, transform: stroke.transform, mask: stroke.mask, randomSeed: stroke.randomSeed)
+    }
+
+    /// Erase, autosave, undo: the stroke comes back with its id.
+    func testIDs_comeBackWithAnErasedStroke() {
+        let drawing = InkFixtures.drawing(inkType: .pen, strokes: 3)
+        var ids = StrokeIDMap()
+        _ = StrokeCodec.encode(drawing, ids: &ids)
+        let erasedID = ids.existingID(for: drawing.strokes[1])!
+
+        _ = StrokeCodec.encode(PKDrawing(strokes: [drawing.strokes[0], drawing.strokes[2]]), ids: &ids)
+        XCTAssertEqual(ids.count, 2, "the live map is exactly the drawing")
+        XCTAssertNil(ids.existingID(for: drawing.strokes[1]))
+
+        _ = StrokeCodec.encode(drawing, ids: &ids)
+        XCTAssertEqual(ids.existingID(for: drawing.strokes[1]), erasedID)
+        XCTAssertEqual(ids.count, 3)
+    }
+
+    /// The departed table is session memory: not equality, not the file.
+    func testDeparted_isNotPartOfEqualityOrTheFile() throws {
+        let drawing = InkFixtures.drawing(inkType: .pen, strokes: 2)
+        var ids = StrokeIDMap()
+        _ = StrokeCodec.encode(drawing, ids: &ids)
+        let live = ids
+        _ = StrokeCodec.encode(PKDrawing(strokes: [drawing.strokes[0]]), ids: &ids)
+        XCTAssertFalse(ids.departed.isEmpty)
+        let data = StrokeCodec.encode(PKDrawing(strokes: [drawing.strokes[0]]), ids: &ids)
+        let decoded = try StrokeCodec.decode(data).ids
+        XCTAssertTrue(decoded.departed.isEmpty)
+        XCTAssertEqual(decoded, ids)
+        XCTAssertNotEqual(live, ids)
+    }
+
+    /// Both pieces of a split stroke carry the original's id, and so does
+    /// the original if it comes back.
+    func testIDs_splitPiecesShareTheOriginalsID() {
+        let original = InkFixtures.stroke(inkType: .pen, index: 0)
+        let other = InkFixtures.stroke(inkType: .pen, index: 1)
+        var ids = StrokeIDMap()
+        _ = StrokeCodec.encode(PKDrawing(strokes: [original, other]), ids: &ids)
+        let originalID = ids.existingID(for: original)!
+
+        let first = piece(of: original, 0..<10), second = piece(of: original, 20..<32)
+        XCTAssertNotEqual(StrokeIDMap.Fingerprint(first), StrokeIDMap.Fingerprint(second))
+        _ = StrokeCodec.encode(PKDrawing(strokes: [first, second, other]), ids: &ids)
+        XCTAssertEqual(ids.existingID(for: first), originalID)
+        XCTAssertEqual(ids.existingID(for: second), originalID)
+        XCTAssertNotEqual(ids.existingID(for: other), originalID)
+
+        _ = StrokeCodec.encode(PKDrawing(strokes: [original, other]), ids: &ids)
+        XCTAssertEqual(ids.existingID(for: original), originalID)
+    }
+
+    /// Two strokes that are both on the page never share an id, even with
+    /// the same date and seed.
+    func testIDs_twoLiveStrokesWithTheSameDateAndSeed_keepDifferentIDs() {
+        let base = InkFixtures.stroke(inkType: .pen, index: 0)
+        let twin = piece(of: base, 5..<25)
+        var ids = StrokeIDMap()
+        _ = StrokeCodec.encode(PKDrawing(strokes: [base]), ids: &ids)
+        // The twin arrives while the base is still present.
+        _ = StrokeCodec.encode(PKDrawing(strokes: [base, twin]), ids: &ids)
+        XCTAssertNotEqual(ids.existingID(for: base), ids.existingID(for: twin))
+        _ = StrokeCodec.encode(PKDrawing(strokes: [base, twin]), ids: &ids)
+        XCTAssertNotEqual(ids.existingID(for: base), ids.existingID(for: twin))
+        XCTAssertEqual(ids.count, 2)
+    }
+
+    // MARK: Resolver
+
+    func testIndicesAndBounds_forPresentPartlyErasedAndAbsentIDs() {
+        let drawing = InkFixtures.drawing(inkType: .pen, strokes: 3)
+        var ids = StrokeIDMap()
+        _ = StrokeCodec.encode(drawing, ids: &ids)
+        let all = drawing.strokes.map { ids.existingID(for: $0)! }
+
+        // Present.
+        XCTAssertEqual(ids.indices(of: [all[2], all[0]], in: drawing), [0, 2])
+        let expected = drawing.strokes[0].renderBounds.union(drawing.strokes[2].renderBounds)
+        XCTAssertEqual(StrokeIDMap.bounds(of: [all[2], all[0]], in: drawing, map: ids), expected)
+        XCTAssertEqual(ids.indices(of: [], in: drawing), [])
+
+        // Partly erased: the stroke 1 became two pieces; both resolve.
+        let first = piece(of: drawing.strokes[1], 0..<10), second = piece(of: drawing.strokes[1], 20..<32)
+        let erased = PKDrawing(strokes: [drawing.strokes[0], first, second, drawing.strokes[2]])
+        _ = StrokeCodec.encode(erased, ids: &ids)
+        XCTAssertEqual(ids.indices(of: [all[1]], in: erased), [1, 2])
+        let bounds = StrokeIDMap.bounds(of: [all[1]], in: erased, map: ids)
+        XCTAssertEqual(bounds, first.renderBounds.union(second.renderBounds))
+
+        // Absent: the ink is gone.
+        let gone = PKDrawing(strokes: [drawing.strokes[0]])
+        _ = StrokeCodec.encode(gone, ids: &ids)
+        XCTAssertEqual(ids.indices(of: [all[1], all[2]], in: gone), [])
+        XCTAssertNil(StrokeIDMap.bounds(of: [all[1], all[2]], in: gone, map: ids))
+        XCTAssertNil(StrokeIDMap.bounds(of: [UUID()], in: gone, map: ids))
+    }
+
     // MARK: Compression
 
     func testBody_isCompressedByDefault_andAnUncompressedFileReadsTheSame() throws {
