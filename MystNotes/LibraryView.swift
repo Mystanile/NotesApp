@@ -1014,6 +1014,9 @@ struct LibraryView: View {
             folder.parentFolder = destination
         case .notebook(let notebook):
             notebook.folder = destination
+            // Its old Custom position means nothing in the new folder: it
+            // sorts after the ordered notebooks there until moved.
+            notebook.manualOrder = nil
             notebook.markSettingsModified()
         }
         save()
