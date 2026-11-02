@@ -48,7 +48,8 @@ enum SearchIndex {
 
     /// `searchableText`, memoized per page so typing a query doesn't rebuild
     /// and re-lowercase every page's text on every keystroke.
-    static func cachedSearchableText(for page: Page, importedDocuments: [ImportedDocument]) -> String {
+    static func cachedSearchableText(for page: Page, importedDocuments: [ImportedDocument],
+                                     imageText: ImageTextCache = .shared) -> String {
         var hasher = Hasher()
         hasher.combine(page.title)
         hasher.combine(page.tags ?? [])
@@ -57,16 +58,22 @@ enum SearchIndex {
         // (O(1) on UTF-8) catches a re-read that lands on the same date.
         hasher.combine(page.recognizedTextCache?.utf8.count ?? -1)
         for doc in importedDocuments { hasher.combine(doc.fileRef); hasher.combine(doc.pdfPageIndex) }
+        // Photo text arrives later, from the background pass, without the
+        // page's clocks moving: key on which photos have text and how much.
+        for doc in importedDocuments where isPhoto(doc) {
+            hasher.combine(imageText.text(forFileRef: doc.fileRef)?.utf8.count ?? -1)
+        }
         let key = BlobKey(pageID: page.id, modifiedAt: page.modifiedAt,
                           ocrUpdatedAt: page.ocrUpdatedAt, contentHash: hasher.finalize())
-        return blob(forKey: key) { searchableText(for: page, importedDocuments: importedDocuments) }
+        return blob(forKey: key) { searchableText(for: page, importedDocuments: importedDocuments, imageText: imageText) }
     }
 
     /// The combined, lowercased searchable text for a page. `importedDocuments`
     /// are the page's `ImportedDocument`s (the model has no inverse
     /// relationship from `Page` to `ImportedDocument`, so callers resolve
     /// them) - every PDF page on it contributes its text.
-    static func searchableText(for page: Page, importedDocuments: [ImportedDocument]) -> String {
+    static func searchableText(for page: Page, importedDocuments: [ImportedDocument],
+                               imageText: ImageTextCache = .shared) -> String {
         var parts: [String] = []
 
         if let title = page.title, !title.isEmpty {
@@ -87,7 +94,48 @@ enum SearchIndex {
             }
         }
 
+        parts.append(contentsOf: photoTexts(in: importedDocuments, imageText: imageText))
+
         return parts.joined(separator: "\n").lowercased()
+    }
+
+    // MARK: - Photos
+
+    /// An imported picture (not a PDF, whose text layer is read directly).
+    static func isPhoto(_ doc: ImportedDocument) -> Bool {
+        isPhoto(sourceType: doc.sourceType, fileRef: doc.fileRef)
+    }
+
+    nonisolated static func isPhoto(sourceType: String, fileRef: String) -> Bool {
+        sourceType == "image" && !fileRef.isEmpty && !fileRef.lowercased().hasSuffix(".pdf")
+    }
+
+    /// The recognized text of each photo on the page that has been read.
+    static func photoTexts(in documents: [ImportedDocument], imageText: ImageTextCache = .shared) -> [String] {
+        documents.compactMap { doc in
+            guard isPhoto(doc), let text = imageText.text(forFileRef: doc.fileRef), !text.isEmpty else { return nil }
+            return text
+        }
+    }
+
+    /// What the result row's snippet should say about its source: "in a
+    /// photo" when the (lowercased) `needles` match only text read from a
+    /// photo, nil otherwise.
+    static func photoSnippetLabel(for page: Page, importedDocuments: [ImportedDocument], needles: String,
+                                  imageText: ImageTextCache = .shared) -> String? {
+        guard !needles.isEmpty,
+              photoTexts(in: importedDocuments, imageText: imageText)
+                .contains(where: { $0.lowercased().contains(needles) }) else { return nil }
+        // Without the photos, does the page still match?
+        let withoutPhotos = searchableText(for: page, importedDocuments: importedDocuments.filter { !isPhoto($0) },
+                                           imageText: imageText)
+        return withoutPhotos.contains(needles) ? nil : "in a photo"
+    }
+
+    /// `snippet` prefixed with its source label, if it has one.
+    static func labeledSnippet(_ snippet: String, label: String?) -> String {
+        guard let label else { return snippet }
+        return snippet.isEmpty ? label : "\(label): \(snippet)"
     }
 }
 /// Memoized PDF text so a (potentially large) PDF is not re-read on every

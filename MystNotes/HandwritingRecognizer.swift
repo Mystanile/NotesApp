@@ -4,6 +4,8 @@ import SwiftData
 import UIKit
 import PencilKit
 import Vision
+import ImageIO
+import CoreGraphics
 #endif
 
 /// On-device handwriting recognition for search (plan Phase 6).
@@ -170,6 +172,78 @@ nonisolated enum HandwritingRecognizer {
             guard !lines.isEmpty else { return nil }
             return lines
         }.value
+    }
+#endif
+
+    /// Longest side Vision is given for a photo.
+    static let maxPhotoPixels = 2048
+
+    /// Reads one imported photo (by file name) and stores the result in
+    /// `cache`. True when an entry was written (empty text included);
+    /// false when the file is missing or unreadable, so a later pass tries
+    /// again. Capture-free by construction (a `String` in, `Bool` out) so the
+    /// detached task does its work off the main actor, as `saveDetached` does.
+    static func recognizeAndCachePhoto(fileRef: String, cache: ImageTextCache = .shared) async -> Bool {
+        await Task.detached(priority: .background) {
+            recognizePhotoSync(fileRef: fileRef, cache: cache)
+        }.value
+    }
+
+    /// Synchronous body of `recognizeAndCachePhoto`; call off the main thread.
+    static func recognizePhotoSync(fileRef: String, cache: ImageTextCache) -> Bool {
+#if canImport(UIKit)
+        let url = FileStore.url(for: fileRef)
+        guard FileManager.default.fileExists(atPath: url.path),
+              let lines = recognizeLines(inImageAt: url) else { return false }
+        let entry = ImageTextEntry(fileRef: fileRef,
+                                   text: lines.map(\.text).joined(separator: "\n"),
+                                   lines: lines)
+        return cache.store(entry)
+#else
+        return false
+#endif
+    }
+
+#if canImport(UIKit)
+    /// Vision over an image file: downscaled to `maxPhotoPixels`, composited
+    /// onto opaque white (transparent images read as empty), same request
+    /// configuration as handwriting. Nil when the file can't be decoded or
+    /// Vision throws; an empty array when it simply finds no text.
+    static func recognizeLines(inImageAt url: URL) -> [ImageTextLine]? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,   // honour EXIF orientation
+            kCGImageSourceThumbnailMaxPixelSize: maxPhotoPixels,
+        ]
+        guard let scaled = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+
+        let width = scaled.width, height = scaled.height
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(rect)
+        context.draw(scaled, in: rect)
+        guard let opaque = context.makeImage() else { return nil }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.recognitionLanguages = ["en-US"]
+        do {
+            try VNImageRequestHandler(cgImage: opaque, options: [:]).perform([request])
+        } catch {
+            return nil
+        }
+        return (request.results ?? []).compactMap { observation in
+            guard let string = observation.topCandidates(1).first?.string, !string.isEmpty else { return nil }
+            let box = observation.boundingBox   // normalized, origin bottom-left
+            return ImageTextLine(text: string, x: Double(box.minX), y: Double(1 - box.maxY),
+                                 width: Double(box.width), height: Double(box.height))
+        }
     }
 #endif
 

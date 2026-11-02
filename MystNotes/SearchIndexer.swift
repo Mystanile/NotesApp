@@ -54,6 +54,13 @@ actor SearchOCRStore {
         return true
     }
 
+    /// File names of every imported picture in the library (narrow fetch).
+    func photoFileRefs() -> [String] {
+        let descriptor = FetchDescriptor<ImportedDocument>(predicate: #Predicate<ImportedDocument> { $0.sourceType == "image" })
+        let docs = (try? modelContext.fetch(descriptor)) ?? []
+        return docs.map(\.fileRef)
+    }
+
     func save() {
         guard modelContext.hasChanges else { return }
         do { try modelContext.save() } catch { print("Failed to persist OCR cache: \(error)") }
@@ -222,6 +229,28 @@ final class SearchIndexer {
         }
         // Saved however the loop ended (done, stopped, cancelled).
         await flush()
+
+        // Then the photos, one at a time, under the same rules.
+        guard isCurrent(mine) else { return }
+        let cache = ImageTextCache.shared
+        let allRefs = await store.photoFileRefs()
+        let photos = await Task.detached(priority: .utility) {
+            Self.photosNeedingText(fileRefs: allRefs, hasEntry: { cache.hasEntry(forFileRef: $0) })
+        }.value
+        pendingCount += photos.count
+        for ref in photos {
+            guard isCurrent(mine) else { break }
+            if openNotebookCount > 0 || Self.isInkActive {
+                guard await waitUntilQuiet(mine) else { break }
+            }
+            let wrote = await HandwritingRecognizer.recognizeAndCachePhoto(fileRef: ref)
+            guard isCurrent(mine) else { break }
+            pendingCount = max(0, pendingCount - 1)
+            if wrote {
+                completedCount += 1
+                try? await Task.sleep(for: Self.pageGap)
+            }
+        }
         if isCurrent(mine) { pendingCount = 0 }
     }
 
@@ -247,6 +276,16 @@ final class SearchIndexer {
         guard let inkModified else { return false }
         guard let ocrUpdatedAt, hasCache else { return true }
         return inkModified > ocrUpdatedAt
+    }
+
+    /// Photo files that still need reading: unique, non-empty, not PDFs, with
+    /// no cache entry (an empty entry counts: it was read and had no text).
+    nonisolated static func photosNeedingText(fileRefs: [String], hasEntry: (String) -> Bool) -> [String] {
+        var seen = Set<String>()
+        return fileRefs.filter { ref in
+            guard SearchIndex.isPhoto(sourceType: "image", fileRef: ref), seen.insert(ref).inserted else { return false }
+            return !hasEntry(ref)
+        }
     }
 
     /// The ids among `states` whose ink needs recognition, skipping pages

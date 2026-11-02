@@ -152,7 +152,8 @@ struct SearchResultsView: View {
                     notebook: notebook,
                     pageID: page.id,
                     pageNumber: index + 1,
-                    snippet: snippet(in: blob, needles: needles),
+                    snippet: SearchIndex.labeledSnippet(snippet(in: blob, needles: needles),
+                                                     label: SearchIndex.photoSnippetLabel(for: page, importedDocuments: docsByPageID[page.id] ?? [], needles: needles)),
                     query: query.trimmingCharacters(in: .whitespacesAndNewlines),
                     matchRect: typedTextRect(in: page, needles: needles)
                 ))
