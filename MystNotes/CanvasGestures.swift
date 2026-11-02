@@ -308,6 +308,7 @@ class CanvasHostView: UIView {
     func embed(_ canvas: PKCanvasView) {
         guard canvas.superview !== self else { return }
         if let previous = self.canvas, previous !== canvas, previous.superview === self {
+            cancelInFlightGestures(outgoing: previous)
             previous.removeFromSuperview()
         }
         canvas.translatesAutoresizingMaskIntoConstraints = false
@@ -325,6 +326,41 @@ class CanvasHostView: UIView {
         if let wheel { canvas.panGestureRecognizer.require(toFail: wheel) }
         // The overlay must stay on top of a newly embedded canvas.
         if let dragPanOverlay { bringSubviewToFront(dragPanOverlay) }
+    }
+
+    /// Before the outgoing canvas leaves, stand down anything mid-touch. A
+    /// recognizer whose touch ended while its view was being torn down never
+    /// hears about it and keeps ignoring (or holding) every later touch.
+    /// Toggling `isEnabled` cancels a gesture in flight and resets it.
+    private func cancelInFlightGestures(outgoing: PKCanvasView) {
+        var stuck: [String] = []
+        let drawing = outgoing.drawingGestureRecognizer
+        if drawing.state != .possible {
+            stuck.append("drawing(\(drawing.state.rawValue))")
+        }
+        let drawingWasEnabled = drawing.isEnabled
+        if drawingWasEnabled {
+            drawing.isEnabled = false
+            drawing.isEnabled = drawingWasEnabled
+        }
+        for recognizer in gestureRecognizers ?? [] {
+            let tracked: Bool
+            switch recognizer {
+            case let r as ShapeHoldRecognizer: tracked = r.hasTrackedTouch
+            case let r as InkLassoRecognizer: tracked = r.hasTrackedTouch
+            case let r as MultiFingerTapRecognizer: tracked = r.hasTrackedTouch
+            default: continue
+            }
+            guard tracked || recognizer.state != .possible else { continue }
+            stuck.append("\(type(of: recognizer))(\(recognizer.state.rawValue))")
+            // Disabling resets it; re-enable only if it was enabled.
+            let wasEnabled = recognizer.isEnabled
+            recognizer.isEnabled = false
+            recognizer.isEnabled = wasEnabled
+        }
+        if !stuck.isEmpty {
+            AppLog.note("touch", "page change found gestures mid-touch: \(stuck.joined(separator: ", "))")
+        }
     }
 
     // MARK: Paste and drop
@@ -700,6 +736,7 @@ final class MultiFingerTapRecognizer: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        dropStaleTouches()
         for touch in touches {
             // The Pencil draws; it never drives these shortcuts.
             guard touch.type != .pencil else {
@@ -763,6 +800,14 @@ final class MultiFingerTapRecognizer: UIGestureRecognizer {
 
     override func reset() {
         super.reset()
+        clearTrackedState()
+    }
+
+    /// True while any finger is being tracked.
+    var hasTrackedTouch: Bool { !activeTouches.isEmpty }
+
+    /// Drops everything tracked (and any repeat timer).
+    func clearTrackedState() {
         stopRepeating()
         activeTouches.removeAll()
         startLocations.removeAll()
@@ -770,6 +815,28 @@ final class MultiFingerTapRecognizer: UIGestureRecognizer {
         startTimestamp = nil
         strayed = false
         didRepeat = false
+    }
+
+    /// Fingers whose end never reached us (host torn down mid-touch) would
+    /// make the finger count wrong for every later tap.
+    private func dropStaleTouches() {
+        guard !activeTouches.isEmpty else { return }
+        let hostHasWindow = view?.window != nil
+        let stale = activeTouches.filter {
+            ShapeHoldRecognizer.isStale(phase: $0.phase, hasWindow: hostHasWindow && $0.window != nil)
+        }
+        guard !stale.isEmpty else { return }
+        for touch in stale {
+            activeTouches.remove(touch)
+            startLocations[ObjectIdentifier(touch)] = nil
+        }
+        // A dropped touch means the old gesture is over; whatever lands next
+        // is a fresh one.
+        peakTouchCount = 0
+        startTimestamp = nil
+        strayed = false
+        stopRepeating()
+        if activeTouches.isEmpty { clearTrackedState() }
     }
 
     private func restartHoldTimerIfNeeded() {
@@ -858,8 +925,8 @@ final class CanvasShortcutInstaller: NSObject, UIGestureRecognizerDelegate, UIPe
 
     func removeAll() {
         if let host = hostView {
-            if let undoTap = twoFingerUndo { host.removeGestureRecognizer(undoTap) }
-            if let redoTap = threeFingerRedo { host.removeGestureRecognizer(redoTap) }
+            if let undoTap = twoFingerUndo { undoTap.clearTrackedState(); host.removeGestureRecognizer(undoTap) }
+            if let redoTap = threeFingerRedo { redoTap.clearTrackedState(); host.removeGestureRecognizer(redoTap) }
             if let pencil = pencilInteraction { host.removeInteraction(pencil) }
         }
         twoFingerUndo = nil

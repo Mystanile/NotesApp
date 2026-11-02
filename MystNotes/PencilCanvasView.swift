@@ -541,6 +541,8 @@ struct PencilCanvasView: UIViewRepresentable {
         func installShapeHold(on host: UIView) {
             shapeHold.canvas = canvas
             guard shapeHold.view !== host else { return }
+            // Moving between hosts mid-touch would strand the tracked touch.
+            shapeHold.clearTrackedState()
             shapeHold.view?.removeGestureRecognizer(shapeHold)
             shapeHold.delegate = self
             host.addGestureRecognizer(shapeHold)

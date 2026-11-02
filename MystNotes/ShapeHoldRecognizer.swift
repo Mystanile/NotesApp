@@ -84,6 +84,13 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
     // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        // A touch whose end or cancel never reached us (the canvas was torn
+        // down mid-stroke on a page change) would otherwise make every new
+        // touch look like a "second" one, forever.
+        if let stale = activeTouch,
+           Self.isStale(phase: stale.phase, hasWindow: stale.window != nil && view?.window != nil) {
+            abandonStaleTouch()
+        }
         guard activeTouch == nil else {
             // A second touch (the other hand steadying the iPad, a pinch)
             // is not a shape; the first one carries on alone.
@@ -145,8 +152,36 @@ final class ShapeHoldRecognizer: UIGestureRecognizer {
 
     override func reset() {
         super.reset()
+        let wasTracking = activeTouch != nil
         stopTimer()
         clearTouchState()
+        // Reset with a touch still tracked means we were disabled or removed
+        // mid-stroke: let the owner drop any pending snap / preview.
+        if wasTracking { onEnd(false) }
+    }
+
+    // MARK: Touch recovery
+
+    /// True while a touch is being tracked.
+    var hasTrackedTouch: Bool { activeTouch != nil }
+
+    /// Drops everything tracked, without callbacks.
+    func clearTrackedState() {
+        stopTimer()
+        clearTouchState()
+    }
+
+    /// A tracked touch is stale when UIKit has finished with it, or when it
+    /// (or this recognizer) is no longer in a window.
+    static func isStale(phase: UITouch.Phase, hasWindow: Bool) -> Bool {
+        phase == .ended || phase == .cancelled || !hasWindow
+    }
+
+    private func abandonStaleTouch() {
+        let held = didHold
+        stopTimer()
+        clearTouchState()
+        onEnd(held)
     }
 
     private func clearTouchState() {

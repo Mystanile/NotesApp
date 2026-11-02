@@ -566,6 +566,12 @@ final class InkLassoRecognizer: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        // An end/cancel that never arrived (host torn down mid-touch) must
+        // not leave every later touch ignored.
+        if let stale = activeTouch,
+           ShapeHoldRecognizer.isStale(phase: stale.phase, hasWindow: stale.window != nil && view?.window != nil) {
+            abandonStaleTouch()
+        }
         guard activeTouch == nil, let controller else {
             for touch in touches { ignore(touch, for: event) }
             return
@@ -611,22 +617,48 @@ final class InkLassoRecognizer: UIGestureRecognizer {
     private func finish(_ touches: Set<UITouch>, cancelled: Bool) {
         guard let touch = activeTouch, touches.contains(touch) else { return }
         activeTouch = nil
+        let moving = isMoving
+        isMoving = false
+        // Always reach a terminal state, whatever happens to the controller.
+        state = .failed
         guard let controller else { return }
-        if isMoving {
+        if moving {
             controller.endGesture()
         } else if cancelled {
             controller.clear()
         } else {
             controller.select(lasso: controller.display.lasso)
         }
-        isMoving = false
-        state = .failed
     }
 
     override func reset() {
         super.reset()
+        let wasTracking = activeTouch != nil
+        let moving = isMoving
         activeTouch = nil
         isMoving = false
+        // Reset with a touch tracked: disabled or removed mid-gesture. Close
+        // out what the controller was told had begun.
+        if wasTracking, let controller {
+            if moving { controller.endGesture() } else { controller.clear() }
+        }
+    }
+
+    /// True while a touch is being tracked.
+    var hasTrackedTouch: Bool { activeTouch != nil }
+
+    /// Drops everything tracked, without telling the controller.
+    func clearTrackedState() {
+        activeTouch = nil
+        isMoving = false
+    }
+
+    private func abandonStaleTouch() {
+        let moving = isMoving
+        activeTouch = nil
+        isMoving = false
+        guard let controller else { return }
+        if moving { controller.endGesture() } else { controller.clear() }
     }
 }
 #endif
