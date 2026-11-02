@@ -970,51 +970,57 @@ struct NotebookDetailView: View {
         // Lazy, emphatically: a plain VStack builds every page's thumbnail
         // the moment the notebook opens, and each one decodes that page's
         // ink record and rasterizes its background. A 200-page notebook did
-        // all 200 before showing anything.
-        ScrollViewReader { proxy in
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 12) {
-                let documents = documentsByPageID
-                // Mid-drag the cells scale the bitmap they have; the
-                // re-render at the new size happens once, on release.
-                let liveWidth = livePageSidebarWidth
-                let storedWidth = PageSidebarMetrics.clamped(pageSidebarWidth)
-                ForEach(Array(sortedPages.enumerated()), id: \.element.id) { index, page in
-                    let aspect = PageGeometry.aspectRatio(page.aspectRatio)
-                    Button {
-                        jumpToPage(at: index)
-                        if isCompactWidth { withAnimation(.snappy) { compactSidebarOpen = false } }
-                    } label: {
-                        VStack(spacing: 4) {
-                            PageThumbnailView(page: page,
-                                              importedDocuments: documents[page.id] ?? [],
-                                              isSelected: index == currentPageIndex,
-                                              height: PageSidebarMetrics.thumbnailHeight(sidebarWidth: liveWidth, aspect: aspect),
-                                              renderHeight: PageSidebarMetrics.thumbnailHeight(sidebarWidth: storedWidth, aspect: aspect))
-                                .overlay(alignment: .topTrailing) {
-                                    if page.isBookmarked == true {
-                                        Image(systemName: "bookmark.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(.red)
-                                            .offset(x: -4, y: -2)
-                                            .accessibilityLabel("Bookmarked")
-                                    }
+        // all 200 before showing anything. `PageSidebarReorderList` keeps the
+        // LazyVStack and owns reordering (see PageSidebarReorder.swift).
+        let documents = documentsByPageID
+        // Mid-drag the cells scale the bitmap they have; the
+        // re-render at the new size happens once, on release.
+        let liveWidth = livePageSidebarWidth
+        let storedWidth = PageSidebarMetrics.clamped(pageSidebarWidth)
+        return PageSidebarReorderList(
+            pages: sortedPages,
+            currentIndex: currentPageIndex,
+            onMove: { id, target in movePage(withID: id, to: target) },
+            onInsertAfter: { page in addPage(like: page) },
+            scrollToCurrent: { proxy in scrollSidebarToCurrentPage(proxy) },
+            cell: { index, page, reordering in
+                let aspect = PageGeometry.aspectRatio(page.aspectRatio)
+                Button {
+                    jumpToPage(at: index)
+                    if isCompactWidth { withAnimation(.snappy) { compactSidebarOpen = false } }
+                } label: {
+                    VStack(spacing: 4) {
+                        PageThumbnailView(page: page,
+                                          importedDocuments: documents[page.id] ?? [],
+                                          isSelected: index == currentPageIndex,
+                                          height: PageSidebarMetrics.thumbnailHeight(sidebarWidth: liveWidth, aspect: aspect),
+                                          renderHeight: PageSidebarMetrics.thumbnailHeight(sidebarWidth: storedWidth, aspect: aspect))
+                            .overlay(alignment: .topTrailing) {
+                                if page.isBookmarked == true {
+                                    Image(systemName: "bookmark.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .offset(x: -4, y: -2)
+                                        .accessibilityLabel("Bookmarked")
                                 }
-                            Text("\(index + 1)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                            }
+                        Text("\(index + 1)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .overlay(alignment: .trailing) {
+                                // The reorder handle (Reorder mode only).
+                                if reordering {
+                                    Image(systemName: "line.3.horizontal")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.trailing, 4)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                     }
-                    .buttonStyle(.plain)
-                    // Hold and drag to reorder; hold and release still
-                    // opens the menu. The payload is the page id as text,
-                    // which nothing else in the app accepts on a drop.
-                    .draggable(page.id.uuidString)
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let raw = items.first, let id = UUID(uuidString: raw) else { return false }
-                        movePage(withID: id, to: index)
-                        return true
-                    }
+                }
+                .buttonStyle(.plain)
                     .contextMenu {
                         Button {
                             page.isBookmarked = !(page.isBookmarked ?? false)
@@ -1088,16 +1094,8 @@ struct NotebookDetailView: View {
                         }
                         .disabled(sortedPages.count <= 1)
                     }
-                    .id(page.id)
-                }
-                addPageButton
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-        }
-        .onAppear { scrollSidebarToCurrentPage(proxy) }
-        .onChange(of: currentPageIndex) { _, _ in scrollSidebarToCurrentPage(proxy) }
-        }
+            },
+            footer: { addPageButton })
     }
 
     /// Keeps the open page in view in the sidebar (deferred a tick so the
