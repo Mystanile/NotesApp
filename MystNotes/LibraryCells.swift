@@ -82,6 +82,9 @@ struct NotebookCoverView: View {
     /// per cell would fetch the whole table once per cell). `nil` means this
     /// cover shows no page preview (the small "Recent" covers).
     var previewArtwork: [UUID: [ImportedDocument]]? = nil
+    /// Transcluded ink on the preview page, by host page id (resolved once
+    /// by the library, never per cell).
+    var previewTransclusions: [UUID: [PageElements.Transclusion]] = [:]
 
     /// The most recently modified page that has ink; `nil` for a notebook
     /// with none, and always `nil` for a locked one.
@@ -149,7 +152,8 @@ struct NotebookCoverView: View {
                 if let artwork = previewArtwork, let page = Self.previewPage(of: notebook) {
                     let top = w * 0.52
                     let height = min(w * 0.6 / PageGeometry.aspectRatio(page.aspectRatio), geo.size.height - top - w * 0.07)
-                    PageThumbnailView(page: page, importedDocuments: artwork[page.id] ?? [], height: height)
+                    PageThumbnailView(page: page, importedDocuments: artwork[page.id] ?? [], height: height,
+                                      transclusions: previewTransclusions[page.id] ?? [])
                         .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
                         .accessibilityHidden(true)
                         .frame(width: geo.size.width - spine)
@@ -189,6 +193,7 @@ struct RecentNotebookCellView: View {
 struct NotebookCellView: View {
     let notebook: Notebook
     var previewArtwork: [UUID: [ImportedDocument]] = [:]
+    var previewTransclusions: [UUID: [PageElements.Transclusion]] = [:]
     /// Tapes due for review in this notebook (counted once by the library).
     var dueCount = 0
     /// Arrange mode: a grip says the cell can be dragged.
@@ -200,7 +205,7 @@ struct NotebookCellView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            NotebookCoverView(notebook: notebook, previewArtwork: previewArtwork)
+            NotebookCoverView(notebook: notebook, previewArtwork: previewArtwork, previewTransclusions: previewTransclusions)
                 .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: Radius.s, style: .continuous))
                 .hoverEffect(.lift)
                 .overlay(alignment: .topLeading) {

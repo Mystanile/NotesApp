@@ -43,6 +43,8 @@ nonisolated struct PageGridSelection: Equatable {
 struct PageGridView: View {
     let pages: [Page]
     var documentsByPageID: [UUID: [ImportedDocument]] = [:]
+    /// Transcluded ink by host page id, resolved once by the parent.
+    var transclusionsByPageID: [UUID: [PageElements.Transclusion]] = [:]
     var currentPageID: UUID?
     var onOpen: (UUID) -> Void
     var onDelete: ([UUID]) -> Void
@@ -119,7 +121,8 @@ struct PageGridView: View {
                 PageThumbnailView(page: page,
                                   importedDocuments: documentsByPageID[page.id] ?? [],
                                   isSelected: isCurrent,
-                                  height: thumbnailHeight)
+                                  height: thumbnailHeight,
+                                  transclusions: transclusionsByPageID[page.id] ?? [])
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(Palette.selectionRing, lineWidth: isCurrent || isPicked ? 3 : 0)

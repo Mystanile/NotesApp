@@ -21,6 +21,10 @@ struct LibraryView: View {
     /// library, never one per cell.
     @Query(filter: #Predicate<Link> { $0.kind == "tape" }) private var tapeLinks: [Link]
 
+    /// Transclusions and the nodes they show (`resolveTransclusions` needs
+    /// both), for the cover previews. One query for the library.
+    @Query(filter: #Predicate<Link> { $0.kind == "transclusion" || $0.kind == "node" }) private var transclusionLinks: [Link]
+
     @State private var showingNewFolderAlert = false
     @State private var newFolderName = ""
     /// The New Smart Folder / Edit Search alert. `smartFolderToEdit` is nil
@@ -65,6 +69,12 @@ struct LibraryView: View {
     /// Custom sort only: cells can be dragged. A mode, not a bare long
     /// press, so dragging can't fight the context menu (see `libraryItem`).
     @State private var isArranging = false
+    /// Multi-select: tapping ticks instead of navigating; the bottom bar acts
+    /// on the ticked notebooks and folders.
+    @State private var isSelecting = false
+    @State private var selection = LibrarySelection()
+    @State private var showingBulkMovePicker = false
+    @State private var confirmingBulkDelete = false
     @State private var draggingNotebookID: UUID?
     @State private var liveNotebookOrder: [UUID]?
     @State private var draggingFolderID: UUID?
@@ -342,10 +352,12 @@ struct LibraryView: View {
                     section("Notebooks") {
                         let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
                         let dueCounts = notebookDueCounts(for: notebooks)
+                        let transclusions = previewTransclusions(for: notebooks)
                         let context = notebookReorder
                         itemLayout(gridSpacing: Space.xl) {
                             ForEach(notebooks, id: \.id) { notebook in
-                                notebookItem(notebook, previewArtwork: previewArtwork, dueCounts: dueCounts, context: context)
+                                notebookItem(notebook, previewArtwork: previewArtwork, transclusions: transclusions,
+                                             dueCounts: dueCounts, context: context)
                             }
                         }
                         .libraryReorderContainer(enabled: arrangeActive, context: context)
@@ -360,7 +372,19 @@ struct LibraryView: View {
             .padding(.top, Space.s)
             .padding(.bottom, Space.xxl)
         }
-        .navigationTitle(parentFolder?.name ?? "My Library")
+        .navigationTitle(isSelecting ? selectionTitle : (parentFolder?.name ?? "My Library"))
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting { selectionBar }
+        }
+        .confirmationDialog(LibrarySelection.deleteTitle(count: selection.count),
+                            isPresented: $confirmingBulkDelete, titleVisibility: .visible) {
+            Button("Delete \(selection.count) \(selection.count == 1 ? "Item" : "Items")", role: .destructive) {
+                deleteSelection()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(LibrarySelection.deleteTitle(count: selection.count)) They go to the trash and can be restored for 30 days.")
+        }
         .onChange(of: sortKeyRaw) { _, newValue in
             if newValue != LibrarySortKey.custom.rawValue { endArranging() }
         }
@@ -388,7 +412,16 @@ struct LibraryView: View {
                 }
                 .accessibilityLabel(isList ? "Show as Grid" : "Show as List")
             }
-            if isCustom && !(folders.isEmpty && notebooks.isEmpty) {
+            if !isArranging && !(folders.isEmpty && notebooks.isEmpty) {
+                ToolbarItem(placement: .automatic) {
+                    Button(isSelecting ? "Done" : "Select") {
+                        if isSelecting { endSelecting() } else { isSelecting = true }
+                    }
+                    .fontWeight(isSelecting ? .semibold : .regular)
+                    .accessibilityHint(isSelecting ? "Stops selecting" : "Lets you pick several notebooks and folders to move or delete")
+                }
+            }
+            if isCustom && !isSelecting && !(folders.isEmpty && notebooks.isEmpty) {
                 ToolbarItem(placement: .automatic) {
                     Button(isArranging ? "Done" : "Arrange") {
                         if isArranging { endArranging() } else { isArranging = true }
@@ -483,6 +516,11 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
             Button("Save") { applyRename() }
         }
+        .sheet(isPresented: $showingBulkMovePicker) {
+            FolderPickerView(excludingFolder: nil) { destination in
+                moveSelection(to: destination)
+            }
+        }
         .sheet(isPresented: $showingMovePicker) {
             FolderPickerView(excludingFolder: excludingFolderForMove) { destination in
                 applyMove(to: destination)
@@ -538,7 +576,16 @@ struct LibraryView: View {
     /// iPad is not verified, which is why dragging is a mode.)
     @ViewBuilder
     private func folderItem(_ folder: Folder, context: LibraryReorderContext) -> some View {
-        if arrangeActive {
+        if isSelecting {
+            Button {
+                selection.toggleFolder(folder.id)
+            } label: {
+                folderCell(folder, showsGrip: false)
+                    .selectionMark(selection.containsFolder(folder.id))
+            }
+            .buttonStyle(LibraryCellButtonStyle())
+            .accessibilityAddTraits(selection.containsFolder(folder.id) ? .isSelected : [])
+        } else if arrangeActive {
             folderCell(folder, showsGrip: true)
                 .libraryReorderable(id: folder.id, context: context)
                 .libraryMoveActions(enabled: true, earlier: { moveFolder(folder, by: -1) }, later: { moveFolder(folder, by: 1) })
@@ -563,14 +610,25 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func notebookItem(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
+                              transclusions: [UUID: [PageElements.Transclusion]],
                               dueCounts: [UUID: Int], context: LibraryReorderContext) -> some View {
-        if arrangeActive {
-            notebookCell(notebook, previewArtwork: previewArtwork, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: true)
+        if isSelecting {
+            Button {
+                selection.toggleNotebook(notebook.id)
+            } label: {
+                notebookCell(notebook, previewArtwork: previewArtwork, transclusions: transclusions,
+                             dueCount: dueCounts[notebook.id] ?? 0, showsGrip: false)
+                    .selectionMark(selection.containsNotebook(notebook.id))
+            }
+            .buttonStyle(LibraryCellButtonStyle())
+            .accessibilityAddTraits(selection.containsNotebook(notebook.id) ? .isSelected : [])
+        } else if arrangeActive {
+            notebookCell(notebook, previewArtwork: previewArtwork, transclusions: transclusions, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: true)
                 .libraryReorderable(id: notebook.id, context: context)
                 .libraryMoveActions(enabled: true, earlier: { moveNotebook(notebook, by: -1) }, later: { moveNotebook(notebook, by: 1) })
         } else {
             NavigationLink(value: notebook) {
-                notebookCell(notebook, previewArtwork: previewArtwork, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: false)
+                notebookCell(notebook, previewArtwork: previewArtwork, transclusions: transclusions, dueCount: dueCounts[notebook.id] ?? 0, showsGrip: false)
             }
             .buttonStyle(LibraryCellButtonStyle())
             .contextMenu {
@@ -586,11 +644,13 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func notebookCell(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
+                              transclusions: [UUID: [PageElements.Transclusion]],
                               dueCount: Int, showsGrip: Bool) -> some View {
         if isList {
             NotebookRowView(notebook: notebook, dueCount: dueCount, showsGrip: showsGrip)
         } else {
-            NotebookCellView(notebook: notebook, previewArtwork: previewArtwork, dueCount: dueCount, showsGrip: showsGrip)
+            NotebookCellView(notebook: notebook, previewArtwork: previewArtwork, previewTransclusions: transclusions,
+                             dueCount: dueCount, showsGrip: showsGrip)
         }
     }
 
@@ -603,6 +663,111 @@ struct LibraryView: View {
             for page in notebook.pages ?? [] { notebookByPage[page.id] = notebook.id }
         }
         return Links.dueCounts(links: tapeLinks, notebookByPage: notebookByPage, now: Date())
+    }
+
+    // MARK: Multi-select
+
+    private var selectionTitle: String {
+        selection.isEmpty ? "Select Items" : "\(selection.count) Selected"
+    }
+
+    private var selectionBar: some View {
+        HStack {
+            Button(selection.isAll(notebooks: notebooks.map(\.id), folders: folders.map(\.id)) ? "Deselect All" : "Select All") {
+                if selection.isAll(notebooks: notebooks.map(\.id), folders: folders.map(\.id)) {
+                    selection.clear()
+                } else {
+                    selection.selectAll(notebooks: notebooks.map(\.id), folders: folders.map(\.id))
+                }
+            }
+            Spacer()
+            Button {
+                showingBulkMovePicker = true
+            } label: {
+                Label("Move to Folder\u{2026}", systemImage: "folder")
+            }
+            .disabled(selection.isEmpty)
+            Spacer()
+            Button(role: .destructive) {
+                confirmingBulkDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .disabled(selection.isEmpty)
+        }
+        .padding(.horizontal, Space.l)
+        .padding(.vertical, Space.m)
+        .background(.bar)
+    }
+
+    private func endSelecting() {
+        isSelecting = false
+        selection.clear()
+    }
+
+    private var folderParents: [UUID: UUID] {
+        var map: [UUID: UUID] = [:]
+        for folder in allFolders {
+            if let parent = folder.parentFolder { map[folder.id] = parent.id }
+        }
+        return map
+    }
+
+    /// Moves every ticked notebook and folder into `destination`. A folder
+    /// can't go into itself or one of its own subfolders; those are skipped.
+    private func moveSelection(to destination: Folder?) {
+        let parents = folderParents
+        for folder in allFolders where selection.containsFolder(folder.id) {
+            guard selection.canMoveFolder(folder.id, into: destination?.id, parents: parents) else { continue }
+            folder.parentFolder = destination
+        }
+        for notebook in allNotebooks where selection.containsNotebook(notebook.id) {
+            notebook.folder = destination
+            // Its old Custom position means nothing in the new folder.
+            notebook.manualOrder = nil
+            notebook.markSettingsModified()
+        }
+        save()
+        SyncEngine.shared.pushOnBackground()
+        endSelecting()
+    }
+
+    /// Deletes through the single-item paths (links cleaned, files to trash,
+    /// tombstones). A notebook inside a ticked folder, and a ticked folder
+    /// inside another, are left to the cascade of the outer folder.
+    private func deleteSelection() {
+        let parents = folderParents
+        var notebookFolders: [UUID: UUID] = [:]
+        for notebook in allNotebooks {
+            if let folder = notebook.folder { notebookFolders[notebook.id] = folder.id }
+        }
+        let folderIDs = selection.outermostFolderIDs(parents: parents)
+        let notebookIDs = selection.notebookIDsOutsideSelectedFolders(notebookFolders: notebookFolders, parents: parents)
+        let folderTargets = allFolders.filter { folderIDs.contains($0.id) }
+        let notebookTargets = allNotebooks.filter { notebookIDs.contains($0.id) }
+        for notebook in notebookTargets { deleteNotebook(notebook) }
+        for folder in folderTargets { deleteFolder(folder) }
+        endSelecting()
+    }
+
+    /// Transclusions to draw on each notebook's cover preview page, resolved
+    /// once per body for the preview pages only.
+    private func previewTransclusions(for notebooks: [Notebook]) -> [UUID: [PageElements.Transclusion]] {
+        guard transclusionLinks.contains(where: { Links.isTransclusion($0) }) else { return [:] }
+        let hosts = Set(notebooks.compactMap { NotebookCoverView.previewPage(of: $0)?.id })
+        let hosted = transclusionLinks.filter { Links.isTransclusion($0) && hosts.contains($0.sourcePageID) }
+        guard !hosted.isEmpty else { return [:] }
+        let ownerIDs = Set(hosted.map(\.destinationPageID))
+        var owners: [UUID: Page] = [:]
+        for notebook in allNotebooks {
+            for page in notebook.pages ?? [] where ownerIDs.contains(page.id) { owners[page.id] = page }
+        }
+        var result: [UUID: [PageElements.Transclusion]] = [:]
+        for host in hosts {
+            let resolved = PageElements.resolveTransclusions(hostedOn: host, links: transclusionLinks, owners: owners)
+            if !resolved.isEmpty { result[host] = resolved }
+        }
+        return result
     }
 
     // MARK: Custom order
@@ -1132,6 +1297,108 @@ struct LibraryView: View {
             try modelContext.save()
         } catch {
             print("Failed to save library change: \(error)")
+        }
+    }
+}
+
+/// Which notebooks and folders are ticked in the library. A plain value so
+/// the rules (toggle, select all, no folder into itself) are testable.
+nonisolated struct LibrarySelection: Equatable {
+    private(set) var notebookIDs: Set<UUID> = []
+    private(set) var folderIDs: Set<UUID> = []
+
+    var count: Int { notebookIDs.count + folderIDs.count }
+    var isEmpty: Bool { count == 0 }
+
+    func containsNotebook(_ id: UUID) -> Bool { notebookIDs.contains(id) }
+    func containsFolder(_ id: UUID) -> Bool { folderIDs.contains(id) }
+
+    mutating func toggleNotebook(_ id: UUID) {
+        if notebookIDs.contains(id) { notebookIDs.remove(id) } else { notebookIDs.insert(id) }
+    }
+
+    mutating func toggleFolder(_ id: UUID) {
+        if folderIDs.contains(id) { folderIDs.remove(id) } else { folderIDs.insert(id) }
+    }
+
+    mutating func selectAll(notebooks: [UUID], folders: [UUID]) {
+        notebookIDs = Set(notebooks)
+        folderIDs = Set(folders)
+    }
+
+    mutating func clear() {
+        notebookIDs = []
+        folderIDs = []
+    }
+
+    func isAll(notebooks: [UUID], folders: [UUID]) -> Bool {
+        let total = notebooks.count + folders.count
+        return total > 0 && notebooks.allSatisfy(notebookIDs.contains) && folders.allSatisfy(folderIDs.contains)
+    }
+
+    /// True when `id` is `ancestor` or sits anywhere below it.
+    /// `parents` maps a folder id to its parent's id (absent = top level).
+    static func isSelfOrDescendant(_ id: UUID, of ancestor: UUID, parents: [UUID: UUID]) -> Bool {
+        var current: UUID? = id
+        var steps = 0
+        while let node = current, steps <= parents.count + 1 {
+            if node == ancestor { return true }
+            current = parents[node]
+            steps += 1
+        }
+        return false
+    }
+
+    /// A folder may move to the top level (nil) or anywhere that is not
+    /// itself or inside itself.
+    func canMoveFolder(_ id: UUID, into destination: UUID?, parents: [UUID: UUID]) -> Bool {
+        guard let destination else { return true }
+        return !Self.isSelfOrDescendant(destination, of: id, parents: parents)
+    }
+
+    private func hasSelectedAncestor(_ folder: UUID, parents: [UUID: UUID]) -> Bool {
+        var current = parents[folder]
+        var steps = 0
+        while let node = current, steps <= parents.count {
+            if folderIDs.contains(node) { return true }
+            current = parents[node]
+            steps += 1
+        }
+        return false
+    }
+
+    /// Ticked folders with no ticked folder above them: deleting these (the
+    /// cascade takes the rest) never touches an already-deleted object.
+    func outermostFolderIDs(parents: [UUID: UUID]) -> Set<UUID> {
+        folderIDs.filter { !hasSelectedAncestor($0, parents: parents) }
+    }
+
+    /// Ticked notebooks not inside any ticked folder.
+    func notebookIDsOutsideSelectedFolders(notebookFolders: [UUID: UUID], parents: [UUID: UUID]) -> Set<UUID> {
+        notebookIDs.filter { id in
+            guard let folder = notebookFolders[id] else { return true }
+            return !(folderIDs.contains(folder) || hasSelectedAncestor(folder, parents: parents))
+        }
+    }
+
+    /// "Delete 3 items?" copy for the confirmation dialog.
+    static func deleteTitle(count: Int) -> String {
+        "Delete \(count) \(count == 1 ? "item" : "items")?"
+    }
+}
+
+private extension View {
+    /// A tick in the corner of a cell in selection mode.
+    func selectionMark(_ isPicked: Bool) -> some View {
+        overlay(alignment: .topTrailing) {
+            Image(systemName: isPicked ? "checkmark.circle.fill" : "circle")
+                .font(.title2)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(isPicked ? Color.white : Color.secondary,
+                                 isPicked ? Palette.selectionRing : Color.clear)
+                .background(Circle().fill(.thinMaterial))
+                .padding(Space.xs)
+                .accessibilityHidden(true)
         }
     }
 }

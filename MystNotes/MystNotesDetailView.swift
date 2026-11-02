@@ -571,6 +571,8 @@ struct NotebookDetailView: View {
         }
         .sheet(isPresented: $showingPageGrid) {
             PageGridView(pages: sortedPages, documentsByPageID: documentsByPageID,
+                         transclusionsByPageID: Self.thumbnailTransclusions(hosts: sortedPages, links: allLinks,
+                                                                            notebooks: allNotebooks),
                          currentPageID: currentPage?.id,
                          onOpen: { id in jumpToPage(withID: id) },
                          onDelete: { ids in deletePages(withIDs: ids) },
