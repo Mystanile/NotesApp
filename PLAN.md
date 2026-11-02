@@ -20,6 +20,61 @@ The user listed 16 items and left Claude to work alone for the day. Decisions:
 - **AI (reverses the locked "no network AI in v1" and the §5 non-goal, at the user's request):** opt-in, off by default, bring-your-own keys for Featherless (text) and ElevenLabs (voice), kept in the Keychain. Nothing is sent unless the user asks for it. The AI can write on a page in the user's own handwriting, built from an alphabet sheet they write once.
 - **`/design-taste-frontend-v1` was not installed** in this session. UI work followed Apple's HIG instead.
 
+## Handoff: start here (2026-11-02)
+
+**Read this first.** Everything from Nov 2 is on `linework-2026-11-02` (pushed). None of it has been compiled. Before anything else:
+
+1. On the Mac: `git fetch && git checkout linework-2026-11-02`, open the project, build. Expect compile errors; the list below says where.
+2. Fix them, then run `.claude/hooks/run-tests.sh`. Fix what fails. Then remove the `[not built]` exemption from `.claude/hooks/guard.sh` if you don't want it any more.
+3. Try it on the iPad with the `.agenttest` copy (`MYST_ID_SUFFIX=.agenttest`), not the real app.
+4. **Sync format is now 5.** A device on an older build refuses the folder. Install the same build everywhere before syncing.
+5. Rename the GitHub repo yourself: Settings > General > Repository name > `linework`. GitHub redirects the old URL. Add a license if you want one; none was added.
+
+**Likely compile-fix spots** (flagged by the builders and reviewers, roughly most likely first):
+- `SearchIndexer.swift`: the `@ModelActor actor SearchOCRStore` under default MainActor isolation.
+- `StudyPanelView.swift`: `nonisolated(unsafe)` statics, the `@Sendable` optional closure in `HandwritingWriter.Request`, `StudyContext` main-actor reads.
+- `SpeechClient.swift`: `ReadAloudPlayer`'s nonisolated AVAudioPlayer delegate callbacks and the continuation code.
+- `PageSidebarReorder.swift`: `ScrollPosition(edge:)`, `onScrollGeometryChange`, `onGeometryChange(for: CGRect.self)`, `@GestureState` cancel detection.
+- `ConnectionsPanel.swift`: a `nonisolated enum NodeInk` with a `@MainActor static`.
+- `LibraryGraphView.swift` / `NotebookGraphView.swift`: tuple key paths in `ForEach(id:)`, optional values as `.task(id:)`.
+- `DrawingToolbarView.swift`: `ViewThatFits` builds the options view twice; the rainbow `ColorPicker` overlay.
+- `OnboardingView.swift`: `Color.mix`. `LibraryCells.swift`: `.contentShape(.hoverEffect, …)`.
+- `SyncEngine.swift`: `beginBackgroundTask`'s expiration handler isolation; `import SwiftUI` for `ScenePhase`.
+- `Diagnostics.swift`: the `NSCondition` static.
+- `HandwritingCapture.swift`: `@Bindable` on the capture model, `interpolatedPoints(by: .distance(4))`.
+
+**Owed on the iPad (new today):**
+- The touch lock-out: swipe the page sidebar fast with a finger, then check a finger works without touching the Pencil first. Look for `[touch]` lines in `app.log`.
+- A straight line drawn at 3 to 5 degrees stays at that angle, ends where the pen was.
+- Sidebar: Reorder button, drag by the grip, auto-scroll, the + between pages with a pointer. Whether a grip drag scrolls the list instead.
+- Search: the lens on a handwriting match; the indexer pausing while a notebook is open; results with a 300-page PDF.
+- Draw with Finger on and off, while a page is open.
+- Pen picker: the rainbow + swatch takes a tap; popover sizing.
+- Make Node with the Pencil, rename, erase its ink (greys), undo (comes back).
+- Page Map and Library Map: pinch versus card drag, smoothness with a few hundred edges, crisp zoom.
+- AI: a real Featherless key and ElevenLabs key; Write on Page placement at several zooms; the handwriting sheet with the Pencil.
+- Custom templates: import a PDF as templates, add a page from one.
+- Battery: the app should not wake in the background (watchdog parked, folder presenter removed).
+
+### Done on Nov 2, 2026 (all [not built]: written and syntax-checked, never compiled)
+
+- [x] Shape tool: lines and arrows keep the pen's start and end, no angle snapping (`560678d`).
+- [x] Touch recovery across page changes, for the sidebar lock-out report (`d86c9fc`). Cause not proven.
+- [x] Battery: watchdog 4 Hz and parked in the background, folder presenter removed in the background, no pull after Control Center, background push protected (`6599523`).
+- [x] Renamed to Linework (user-facing only), new icon in light, dark, tinted and Mac, accent colour, brand mark (`cc2c969`, `ccbd42b`).
+- [x] `DesignSystem.swift` tokens and components (`2828cc6`); toolbar and pen picker redesign (`a5a23c9`); library, onboarding, settings, login polish (`84b30e3`).
+- [x] Page sidebar: in-app reorder with grips, auto-scroll, + between pages; the system drag is gone (`2225e0b`). The Canva-style long-press lift was not done: it fights the context menu.
+- [x] Sync format 5: `Link.title`, `Notebook.role` (`7cd8229`). M2 task 5, and task 1's helpers.
+- [x] Stroke ids survive erase and undo; resolver; `regionInk` (`ae26e02`). M2 tasks 3 and 4. Task 2 (device spike) skipped; questions in BACKLOG.
+- [x] Page Map rebuilt (M2 tasks 10, 11) (`412a0f5`); Library Map (task 12) (`18689db`); Make Node, badges, links to nodes, Connections panel (tasks 7, 8, 13) (`75bb99f`).
+- [x] Instant search, background OCR, Quick Look lens on the match; Draw with Finger (`44018f0`).
+- [x] Custom page templates from a PDF or image (`de10801`).
+- [x] AI study helper: Featherless and ElevenLabs on your own keys, study panel, quizzes, read aloud, write the answer on the page in your own handwriting (`c6e3a83`, `42ddbdb`, `3dbf55d`, `81917ca`).
+- [x] `Docs/COMPETITIVE_GAPS.md`: about 85 gaps against GoodNotes and OneNote, with a top-8 of quick wins. Done from it today: finger drawing. Still open from the top 8: ruler, laser pointer in Present, duplicate page and go-to-page, paper colour and line spacing, page grid view, zoom window, library sort and list view.
+- [x] README rewritten as a portfolio piece (`13e74dd`).
+
+Not done from the M2 plan: task 6 (mention integrity, `[[` across notebooks), task 9 (transclusion), task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check). The Page Map has no ghost cards for cross-notebook links yet, and the Library Map can't open a notebook straight into its Page Map.
+
 ## Autonomous run: decided by the user on 2026-10-25
 
 The user asked Claude to finish the plan alone. These decisions hold for the whole run:
@@ -31,7 +86,7 @@ The user asked Claude to finish the plan alone. These decisions hold for the who
 - Defaults chosen by Claude: transclusion is built under the conditions in `BACKLOG.md`. The iPhone uses the same app target (its device family is already 1, 2, 7). `LoginView` stays as it is until M6.
 - Left for the user: the M1 iPad checks with a Pencil and the paid developer membership. Also App Store Connect, TestFlight, a public privacy policy URL, and public hosting for share links.
 
-## Handoff: start here (2026-10-24)
+### Oct 24 handoff (superseded by Nov 2 above)
 
 Branch and build:
 
