@@ -86,6 +86,47 @@ extension NotebookDetailView {
         jumpToPage(withID: page.id)
     }
 
+    /// Page strip menu: a page right after the current one made from a
+    /// custom template (`PageTemplates`) - its paper, shape and artwork,
+    /// no ink. The file is shared with the template by name. The copy is
+    /// `PageTemplates.insertPage`, which is what the tests drive.
+    func addPage(fromTemplate template: Page) {
+        commitPendingDeletion()
+        saveCurrentPage()
+        let after = currentPage?.index ?? ((sortedPages.last?.index ?? -1))
+        let page = PageTemplates.insertPage(copyingPaperOf: template, into: notebook, at: after + 1,
+                                            paperOnly: false, in: modelContext)
+        saveMetadata("Failed to add the page from the template")
+        jumpToPage(withID: page.id)
+    }
+
+    /// Page strip menu: keeps the open page's paper as a custom template.
+    func saveCurrentPageAsTemplate() {
+        guard let page = currentPage else { return }
+        PageTemplates.saveAsTemplate(page, in: modelContext)
+        saveMetadata("Failed to save the template")
+    }
+
+    /// The page strip's add-page control: a menu of new-page choices.
+    /// Replaces `addPageButton` (which just did "New Page Like This").
+    @ViewBuilder
+    var addPageMenu: some View {
+        PageAddMenu(
+            canCopyCurrent: currentPage?.type == "paged",
+            templates: PageTemplates.templates(in: allNotebooks),
+            onBlank: { choose { addPage(type: "paged", template: AppSettings.defaultTemplate) } },
+            onLikeThis: { choose { if let page = currentPage { addPage(like: page) } } },
+            onPaper: { id in choose { addPage(type: "paged", template: id) } },
+            onWhiteboard: { choose { addPage(type: "whiteboard", template: "blank") } },
+            onTemplate: { template in choose { addPage(fromTemplate: template) } },
+            onSaveCurrent: { saveCurrentPageAsTemplate() })
+    }
+
+    private func choose(_ action: () -> Void) {
+        action()
+        if isCompactWidth { withAnimation(.snappy) { compactSidebarOpen = false } }
+    }
+
     /// The shape the next New Page takes: a size picked from the menu, or
     /// nil for the shape of the page you're on - so a landscape notebook,
     /// or one continuing a PDF, keeps going in that shape.

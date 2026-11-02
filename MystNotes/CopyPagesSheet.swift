@@ -47,7 +47,7 @@ struct CopyPagesSheet: View {
                     }
                 }
                 Section("Copy to") {
-                    ForEach(notebooks.filter { $0.id != currentNotebookID }) { notebook in
+                    ForEach(PageTemplates.libraryNotebooks(notebooks).filter { $0.id != currentNotebookID }) { notebook in
                         Button {
                             destination = notebook
                         } label: {

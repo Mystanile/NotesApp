@@ -14,7 +14,7 @@ struct LibraryView: View {
     // SwiftData #Predicate with a captured optional parent ID — simpler,
     // more reliable, and plenty fast at personal-library scale.
     @Query(sort: \Folder.name) private var allFolders: [Folder]
-    @Query(sort: \Notebook.title) private var allNotebooks: [Notebook]
+    @Query(sort: \Notebook.title) private var storedNotebooks: [Notebook]
     @Query private var allImportedDocuments: [ImportedDocument]
 
     @State private var showingNewFolderAlert = false
@@ -38,6 +38,7 @@ struct LibraryView: View {
 
     @State private var searchText = ""
     @State private var showingSettings = false
+    @State private var showingTemplates = false
     @State private var pdfExportURL: PDFExport?
     @State private var exportMessage: String?
     @State private var showingImporter = false
@@ -52,6 +53,12 @@ struct LibraryView: View {
 
     private var folders: [Folder] {
         allFolders.filter { $0.parentFolder?.id == parentFolder?.id }
+    }
+
+    /// Every notebook the library lists - the page-templates notebook
+    /// (`role == "templates"`) is managed from Page Templates instead.
+    private var allNotebooks: [Notebook] {
+        PageTemplates.libraryNotebooks(storedNotebooks)
     }
 
     private var notebooks: [Notebook] {
@@ -103,6 +110,16 @@ struct LibraryView: View {
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { showingSettings = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showingTemplates) {
+            NavigationStack {
+                PageTemplatesView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingTemplates = false }
                         }
                     }
             }
@@ -290,6 +307,11 @@ struct LibraryView: View {
                     } label: {
                         Label("Import PDF or Image", systemImage: "square.and.arrow.down")
                     }
+                    Button {
+                        showingTemplates = true
+                    } label: {
+                        Label("Page Templates…", systemImage: "doc.on.doc")
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -321,6 +343,11 @@ struct LibraryView: View {
                         showingImporter = true
                     } label: {
                         Label("Import PDF or Image", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        showingTemplates = true
+                    } label: {
+                        Label("Page Templates…", systemImage: "doc.on.doc")
                     }
                 } label: {
                     Image(systemName: "plus")

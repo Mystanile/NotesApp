@@ -33,7 +33,7 @@ struct LinkDestinationPickerView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                let others = Self.otherNotebooks(notebooks, excluding: currentNotebookID)
+                let others = Self.otherNotebooks(PageTemplates.libraryNotebooks(notebooks), excluding: currentNotebookID)
                 if !others.isEmpty {
                     Section("Other Notebooks") {
                         ForEach(others, id: \.id) { other in

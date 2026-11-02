@@ -39,7 +39,7 @@ struct SearchResultsView: View {
     private let indexer = SearchIndexer.shared
 
     private var allPages: [Page] {
-        allNotebooks.flatMap { $0.pages ?? [] }
+        PageTemplates.libraryNotebooks(allNotebooks).flatMap { $0.pages ?? [] }
     }
 
     var body: some View {

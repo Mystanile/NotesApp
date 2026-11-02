@@ -389,3 +389,71 @@ struct SidebarInsertGap: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
+
+/// The page strip's add-page control (Nov 2, 2026): a menu rather than one
+/// fixed action. New Page Like This first - what the button used to do -
+/// then the built-in papers, the user's own templates, and Manage Templates.
+/// It takes plain values and closures; the notebook view wires the actions.
+struct PageAddMenu: View {
+    var canCopyCurrent: Bool
+    var templates: [Page]
+    var onBlank: () -> Void
+    var onLikeThis: () -> Void
+    var onPaper: (String) -> Void
+    var onWhiteboard: () -> Void
+    var onTemplate: (Page) -> Void
+    var onSaveCurrent: () -> Void
+
+    @State private var managingTemplates = false
+
+    var body: some View {
+        Menu {
+            Button(action: onBlank) { Label("Blank Page", systemImage: "doc") }
+            if canCopyCurrent {
+                Button(action: onLikeThis) { Label("New Page Like This", systemImage: "doc.badge.plus") }
+            }
+            Section("Paper") {
+                ForEach(PageTemplate.options, id: \.id) { option in
+                    Button(option.label) { onPaper(option.id) }
+                }
+                Button("Whiteboard", action: onWhiteboard)
+            }
+            Section("Templates") {
+                ForEach(templates, id: \.id) { template in
+                    Button(PageTemplates.displayName(template)) { onTemplate(template) }
+                }
+                if canCopyCurrent {
+                    Button(action: onSaveCurrent) {
+                        Label("Save Page as Template", systemImage: "square.and.arrow.down")
+                    }
+                }
+                Button {
+                    managingTemplates = true
+                } label: {
+                    Label("Manage Templates…", systemImage: "square.grid.2x2")
+                }
+            }
+        } label: {
+            VStack(spacing: Space.xs) {
+                Image(systemName: "plus")
+                    .font(.title3)
+                    .frame(maxWidth: .infinity, minHeight: Metrics.minHitTarget)
+                    .background(RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
+                        .strokeBorder(Color.gray.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4])))
+                Text("Add page").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add page")
+        .sheet(isPresented: $managingTemplates) {
+            NavigationStack {
+                PageTemplatesView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { managingTemplates = false }
+                        }
+                    }
+            }
+        }
+    }
+}

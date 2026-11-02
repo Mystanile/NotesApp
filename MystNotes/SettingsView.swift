@@ -242,6 +242,16 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink {
+                    PageTemplatesView()
+                } label: {
+                    Label("Page Templates", systemImage: "doc.on.doc")
+                }
+            } footer: {
+                Text("Your own paper: make templates from a PDF or a picture, then start new pages from them.")
+            }
+
+            Section {
+                NavigationLink {
                     AISettingsView()
                 } label: {
                     Label("AI Study Helper", systemImage: "sparkles")
