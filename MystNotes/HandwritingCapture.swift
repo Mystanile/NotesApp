@@ -38,7 +38,7 @@ nonisolated enum GlyphNormalizer {
             }
             if points.count >= 2 { raw.append(points) }
         }
-        let xs = raw.flatMap { $0.map(\.x) }
+        let xs = raw.flatMap { $0.map { $0.x } }
         guard let minX = xs.min(), let maxX = xs.max() else { return nil }
 
         let xh = CaptureGeometry.xHeight

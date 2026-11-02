@@ -20,8 +20,8 @@ extension Notebook {
 
     /// Stores one card's position (clamped to the world) as a settings change.
     func setGraphPosition(_ point: CGPoint, forPageID id: UUID, at date: Date = Date()) {
-        var raw = graphPositions.reduce(into: [String: [Double]]()) { $0[$1.key.uuidString] = [$1.value.x, $1.value.y] }
-        raw[id.uuidString] = [min(max(point.x, 0), 1), min(max(point.y, 0), 1)]
+        var raw = graphPositions.reduce(into: [String: [Double]]()) { $0[$1.key.uuidString] = [Double($1.value.x), Double($1.value.y)] }
+        raw[id.uuidString] = [Double(min(max(point.x, 0), 1)), Double(min(max(point.y, 0), 1))]
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         graphLayout = (try? encoder.encode(raw)).flatMap { String(data: $0, encoding: .utf8) }
@@ -213,11 +213,11 @@ nonisolated struct GraphScene: Sendable {
     }
 
     /// The nodes the force layout places: pages, then tags.
-    var layoutNodes: [GraphNodeID] { pages.map { .page($0.id) } + tags.map { .tag($0.key) } }
+    var layoutNodes: [GraphNodeID] { pages.map { GraphNodeID.page($0.id) } + tags.map { GraphNodeID.tag($0.key) } }
 
     /// Edges as the layout sees them: a chip stands for its page.
     var layoutPairs: [GraphForceLayout.Pair] {
-        func resolve(_ n: GraphNodeID) -> GraphNodeID { ownerPage(of: n).map { .page($0) } ?? n }
+        func resolve(_ n: GraphNodeID) -> GraphNodeID { ownerPage(of: n).map { GraphNodeID.page($0) } ?? n }
         var seen = Set<GraphForceLayout.Pair>()
         var out: [GraphForceLayout.Pair] = []
         for e in edges {

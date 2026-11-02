@@ -806,22 +806,25 @@ private struct GraphMiniMapView: View {
     let onJump: (CGPoint) -> Void
 
     var body: some View {
-        Canvas { ctx, _ in
-            for page in scene.pages {
-                guard let p = centers[.page(page.id)] else { continue }
-                let r = map.toMini(CGRect(x: p.x - GraphGeometry.cardSize.width / 2, y: p.y - GraphGeometry.cardSize.height / 2,
+        // Copied out of `self` so the renderer closure touches only values.
+        let sceneCopy = self.scene, centersCopy = self.centers, mapCopy = self.map, viewCopy = self.viewportRect
+        let accent = Color.accentColor, nodeColor = Palette.node
+        return Canvas { ctx, _ in
+            for page in sceneCopy.pages {
+                guard let p = centersCopy[.page(page.id)] else { continue }
+                let r = mapCopy.toMini(CGRect(x: p.x - GraphGeometry.cardSize.width / 2, y: p.y - GraphGeometry.cardSize.height / 2,
                                           width: GraphGeometry.cardSize.width, height: GraphGeometry.cardSize.height))
                 ctx.fill(Path(roundedRect: r.insetBy(dx: -0.5, dy: -0.5), cornerRadius: 1.5),
-                         with: .color(Color.accentColor.opacity(0.55)))
+                         with: .color(accent.opacity(0.55)))
             }
-            for chip in scene.chips {
-                guard let p = centers[.chip(chip.linkID)] else { continue }
-                let c = map.toMini(p)
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4)), with: .color(Palette.node))
+            for chip in sceneCopy.chips {
+                guard let p = centersCopy[.chip(chip.linkID)] else { continue }
+                let c = mapCopy.toMini(p)
+                ctx.fill(Path(ellipseIn: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4)), with: .color(nodeColor))
             }
-            let v = map.toMini(viewportRect)
-            ctx.stroke(Path(roundedRect: v, cornerRadius: 2), with: .color(Color.accentColor), lineWidth: 1.5)
-            ctx.fill(Path(roundedRect: v, cornerRadius: 2), with: .color(Color.accentColor.opacity(0.08)))
+            let v = mapCopy.toMini(viewCopy)
+            ctx.stroke(Path(roundedRect: v, cornerRadius: 2), with: .color(accent), lineWidth: 1.5)
+            ctx.fill(Path(roundedRect: v, cornerRadius: 2), with: .color(accent.opacity(0.08)))
         }
         .padding(Space.xs)
         .surfaceCard(radius: Radius.m)

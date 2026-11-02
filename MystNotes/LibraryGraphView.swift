@@ -114,6 +114,7 @@ nonisolated struct LibraryMapData: Sendable, Equatable {
         return 1 + 5 * CGFloat(min(count, maxCount) - 1) / CGFloat(maxCount - 1)
     }
 
+    @MainActor
     static func layoutInput(_ data: LibraryMapData) -> GraphForceLayout.Input {
         let ids = data.notebooks.map(\.id)
         // Start on an ellipse, as the Page Map does, so the result never depends on chance.
@@ -569,7 +570,7 @@ private struct LibraryMapInspector: View {
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Space.xs) {
-                            ForEach(neighbours, id: \.info.id) { n in
+                            ForEach(Array(neighbours.enumerated()), id: \.offset) { _, n in
                                 Button { onSelect(n.info.id) } label: {
                                     Chip(title: "\(n.info.displayTitle) \u{00B7} \(n.count)")
                                 }
@@ -636,17 +637,20 @@ private struct LibraryMapMiniMap: View {
     let onJump: (CGPoint) -> Void
 
     var body: some View {
-        Canvas { ctx, _ in
-            for n in data.notebooks {
-                guard let p = points[.page(n.id)] else { continue }
-                let r = map.toMini(CGRect(x: p.x - GraphGeometry.cardSize.width / 2, y: p.y - GraphGeometry.cardSize.height / 2,
+        // Copied out of `self` so the renderer closure touches only values.
+        let dataCopy = self.data, pointsCopy = self.points, mapCopy = self.map, viewCopy = self.viewportRect
+        let accent = Color.accentColor
+        return Canvas { ctx, _ in
+            for n in dataCopy.notebooks {
+                guard let p = pointsCopy[.page(n.id)] else { continue }
+                let r = mapCopy.toMini(CGRect(x: p.x - GraphGeometry.cardSize.width / 2, y: p.y - GraphGeometry.cardSize.height / 2,
                                           width: GraphGeometry.cardSize.width, height: GraphGeometry.cardSize.height))
                 ctx.fill(Path(roundedRect: r.insetBy(dx: -0.5, dy: -0.5), cornerRadius: 1.5),
-                         with: .color(Color.accentColor.opacity(0.55)))
+                         with: .color(accent.opacity(0.55)))
             }
-            let v = map.toMini(viewportRect)
-            ctx.stroke(Path(roundedRect: v, cornerRadius: 2), with: .color(Color.accentColor), lineWidth: 1.5)
-            ctx.fill(Path(roundedRect: v, cornerRadius: 2), with: .color(Color.accentColor.opacity(0.08)))
+            let v = mapCopy.toMini(viewCopy)
+            ctx.stroke(Path(roundedRect: v, cornerRadius: 2), with: .color(accent), lineWidth: 1.5)
+            ctx.fill(Path(roundedRect: v, cornerRadius: 2), with: .color(accent.opacity(0.08)))
         }
         .padding(Space.xs)
         .surfaceCard(radius: Radius.m)
@@ -675,7 +679,7 @@ private struct LibraryMapFilterPanel: View {
             VStack(alignment: .leading, spacing: Space.s) {
                 SectionLabel("Edited since")
                 HStack(spacing: Space.xs) {
-                    ForEach(Self.presets, id: \.title) { preset in
+                    ForEach(Array(Self.presets.enumerated()), id: \.offset) { _, preset in
                         Button {
                             sinceDays = preset.days
                             filter.since = preset.days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: Date()) }
@@ -693,7 +697,7 @@ private struct LibraryMapFilterPanel: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: Space.xs) {
-                            ForEach(folders, id: \.id) { folder in
+                            ForEach(Array(folders.enumerated()), id: \.offset) { _, folder in
                                 let on = filter.folders.contains(folder.id)
                                 Button {
                                     if on { filter.folders.remove(folder.id) } else { filter.folders.insert(folder.id) }

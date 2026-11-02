@@ -49,10 +49,10 @@ struct FolderCellView: View {
 /// so a tap looked dead until the push began.
 struct LibraryCellButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        Body(configuration: configuration)
+        LibraryCellButtonBody(configuration: configuration)
     }
 
-    private struct Body: View {
+    private struct LibraryCellButtonBody: View {
         let configuration: ButtonStyleConfiguration
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

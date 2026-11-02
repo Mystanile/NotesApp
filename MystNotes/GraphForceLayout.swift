@@ -107,8 +107,8 @@ nonisolated enum GraphForceLayout {
                 dx[b] += ex / d * f; dy[b] += ey / d * f
             }
             for i in 0..<n {
-                dx[i] += (centre.x - x[i]) * gravity
-                dy[i] += (centre.y - y[i]) * gravity
+                dx[i] += (Double(centre.x) - x[i]) * gravity
+                dy[i] += (Double(centre.y) - y[i]) * gravity
                 guard !pinned[i] else { continue }
                 let length = (dx[i] * dx[i] + dy[i] * dy[i]).squareRoot()
                 guard length > 0 else { continue }

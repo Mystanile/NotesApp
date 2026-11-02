@@ -121,7 +121,7 @@ final class NodeTests: XCTestCase {
     }
 
     func testGoneDetached_runsOffTheMainThread() async {
-        final class ThreadProbe: @unchecked Sendable {
+        nonisolated final class ThreadProbe: @unchecked Sendable {
             private let lock = NSLock()
             private(set) var calls = 0
             private(set) var onMain = 0

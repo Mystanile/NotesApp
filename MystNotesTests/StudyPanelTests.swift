@@ -152,7 +152,7 @@ final class StudyPanelTests: XCTestCase {
 
     // MARK: Off the main thread
 
-    final class ThreadProbe: @unchecked Sendable {
+    nonisolated final class ThreadProbe: @unchecked Sendable {
         private let lock = NSLock()
         private(set) var calls = 0
         private(set) var onMain = 0
