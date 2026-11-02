@@ -46,6 +46,9 @@ nonisolated struct PageThumbnailRequest: Hashable, Sendable {
     var elements: PageElements = PageElements()
     var nominal: CGSize
     var output: CGSize
+    /// Part of the cache key, so a change of paper re-renders. Thumbnails
+    /// render `paper.outputStyle` (dark paper shows white).
+    var paper: PaperStyle = .standard
 }
 
 /// Composites one page - paper, imported artwork, ink - into a thumbnail.
@@ -97,7 +100,8 @@ nonisolated enum PageThumbnailRenderer {
             let output = request.output
             let renderer = UIGraphicsImageRenderer(size: output)
             return renderer.image { context in
-                UIColor.white.setFill()
+                let paper = request.paper.outputStyle
+                context.cgContext.setFillColor(paper.fillCGColor)
                 context.fill(CGRect(origin: .zero, size: output))
 
                 let scaleX = output.width / nominal.width
@@ -106,7 +110,7 @@ nonisolated enum PageThumbnailRenderer {
 
                 // Paper, then artwork, then ink - the same stack the editor
                 // draws, so the thumbnail shows the ruling too.
-                PageTemplate.draw(request.template, in: nominal, context: context.cgContext)
+                PageTemplate.draw(request.template, in: nominal, context: context.cgContext, paper: paper)
                 for entry in artwork {
                     entry.image.draw(in: entry.layer.rect(for: entry.image, in: nominal))
                 }
@@ -141,6 +145,10 @@ struct PageThumbnailView: View {
     /// render at the final size, when the finger lifts.
     var renderHeight: CGFloat? = nil
 
+    /// Observed only so the body (and the request's paper) refreshes when Settings changes.
+    @AppStorage(AppSettings.Keys.paperColor) private var paperColorRaw = PaperColor.white.rawValue
+    @AppStorage(AppSettings.Keys.lineSpacing) private var lineSpacingRaw = LineSpacingOption.normal.rawValue
+
     #if canImport(UIKit)
     private var store: BitmapStore<PageThumbnailRequest> { PageBitmaps.thumbnails }
     /// The last bitmap this cell showed, kept while its replacement (a
@@ -158,7 +166,7 @@ struct PageThumbnailView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6).fill(Color.white)
+            RoundedRectangle(cornerRadius: 6).fill(PaperStyle.resolve(colorRaw: paperColorRaw, spacingRaw: lineSpacingRaw).outputStyle.fillColor)
         #if canImport(UIKit)
             if let thumbnail = store.image(for: thumbnailRequest) ?? lastShown {
                 Image(uiImage: thumbnail)
@@ -223,7 +231,8 @@ struct PageThumbnailView: View {
             // No links: an anchor is a speck at this size, and fetching them
             // here would be a query per cell.
             elements: PageElements(page: page, links: []),
-            nominal: nominalPageSize, output: renderSize
+            nominal: nominalPageSize, output: renderSize,
+            paper: PaperStyle.resolve(colorRaw: paperColorRaw, spacingRaw: lineSpacingRaw)
         )
     }
 #endif

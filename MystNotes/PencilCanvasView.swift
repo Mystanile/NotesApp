@@ -350,6 +350,9 @@ struct ContentPopGate: UIViewRepresentable {
 }
 
 struct PencilCanvasView: UIViewRepresentable {
+    /// Dark paper runs the canvas in a dark interface style (below).
+    @AppStorage(AppSettings.Keys.paperColor) private var paperColorRaw = PaperColor.white.rawValue
+
     @Binding var canvasView: PKCanvasView
     /// The page's own coordinate space - what ink, element frames and
     /// artwork fractions are all measured in.
@@ -506,7 +509,11 @@ struct PencilCanvasView: UIViewRepresentable {
         // PencilKit auto-inverts ink in dark mode (it assumes a black
         // canvas); the page is always a light paper background, so pin the
         // canvas to light - see the dark-mode ink history in git.
-        if canvas.overrideUserInterfaceStyle != .light { canvas.overrideUserInterfaceStyle = .light }
+        // Dark paper (a display preference) is the exception: PencilKit's
+        // own dark adaptation then shows black ink as white. Exports and
+        // thumbnails stay on white paper.
+        let style: UIUserInterfaceStyle = PaperStyle.resolve(colorRaw: paperColorRaw, spacingRaw: nil).isDark ? .dark : .light
+        if canvas.overrideUserInterfaceStyle != style { canvas.overrideUserInterfaceStyle = style }
 
         // The page scrolls and zooms inside the canvas's own scroll view.
         // `isScrollEnabled` stands down the pan only; the pinch has to be

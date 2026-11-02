@@ -11,6 +11,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Keys.fingerDrawing) private var fingerDrawing = false
     @AppStorage(AppSettings.Keys.template) private var defaultTemplate = "blank"
     @AppStorage(AppSettings.Keys.appearance) private var appearance = "system"
+    @AppStorage(AppSettings.Keys.paperColor) private var paperColor = PaperColor.white.rawValue
+    @AppStorage(AppSettings.Keys.lineSpacing) private var lineSpacing = LineSpacingOption.normal.rawValue
     @AppStorage(AppSettings.Keys.signedInDisplayName) private var signedInDisplayName = ""
     @AppStorage(AppSettings.Keys.isSignedIn) private var isSignedIn = false
     @AppStorage(AppSettings.Keys.isGuestMode) private var isGuestMode = false
@@ -67,6 +69,26 @@ struct SettingsView: View {
                         Text(option.label).tag(option.id)
                     }
                 }
+                Picker("Paper Colour", selection: $paperColor) {
+                    ForEach(PaperColor.allCases, id: \.rawValue) { option in
+                        Label {
+                            Text(option.label)
+                        } icon: {
+                            PaperSwatch(style: PaperStyle(color: option, spacing: .normal))
+                        }
+                        .tag(option.rawValue)
+                    }
+                }
+                Picker("Line Spacing", selection: $lineSpacing) {
+                    ForEach(LineSpacingOption.allCases, id: \.rawValue) { option in
+                        Label {
+                            Text(option.label)
+                        } icon: {
+                            PaperSwatch(style: PaperStyle(color: .white, spacing: option))
+                        }
+                        .tag(option.rawValue)
+                    }
+                }
                 NavigationLink {
                     PageTemplatesView()
                 } label: {
@@ -75,7 +97,7 @@ struct SettingsView: View {
             } header: {
                 Text("Paper & Templates")
             } footer: {
-                Text("The default is the first page of a new notebook. Make your own paper from a PDF or a picture, then start new pages from it.")
+                Text("The default is the first page of a new notebook. Make your own paper from a PDF or a picture, then start new pages from it. Paper colour and line spacing are display preferences for this device. Dark paper is for writing only: exports and thumbnails use white paper.")
             }
 
             Section {
@@ -402,4 +424,22 @@ struct SettingsView: View {
 }
 extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
+}
+
+
+/// A small preview of a paper: its fill and a few ruled lines at its spacing.
+private struct PaperSwatch: View {
+    let style: PaperStyle
+
+    var body: some View {
+        Canvas { context, size in
+            context.withCGContext { cg in
+                PageTemplate.draw("lined", in: CGSize(width: size.width * 3, height: size.height * 3), context: cg, paper: style)
+            }
+        }
+        .frame(width: 26, height: 26)
+        .background(style.fillColor)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.gray.opacity(0.4), lineWidth: 1))
+    }
 }

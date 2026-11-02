@@ -19,6 +19,93 @@ import UIKit
 /// white paper whatever the system appearance, and a dynamic gray would
 /// make the ruling change colour in dark mode the way the ink itself once
 /// did.
+/// Paper colour, one of three. A display preference (`AppSettings`).
+nonisolated enum PaperColor: String, CaseIterable, Sendable {
+    case white, cream, dark
+    var label: String {
+        switch self { case .white: return "White"; case .cream: return "Cream"; case .dark: return "Dark" }
+    }
+}
+
+/// Line spacing, one of three. Multiplies the ruling's spacing.
+nonisolated enum LineSpacingOption: String, CaseIterable, Sendable {
+    case narrow, normal, wide
+    var label: String {
+        switch self { case .narrow: return "Narrow"; case .normal: return "Normal"; case .wide: return "Wide" }
+    }
+    var multiplier: CGFloat {
+        switch self { case .narrow: return 0.8; case .normal: return 1; case .wide: return 1.25 }
+    }
+}
+
+/// What the paper looks like: fill, ruling colour and spacing. One value,
+/// resolved from `AppSettings`, handed to the live page, the thumbnails and
+/// the exporter so they agree (it is part of `PageThumbnailRequest`, so a
+/// change re-renders every thumbnail).
+///
+/// Dark paper is a display preference: the live canvas runs in a dark
+/// interface style so PencilKit shows black ink as white, but exports and
+/// thumbnails use white paper (`outputStyle`), because their ink is rendered
+/// in the light trait and would vanish on a dark fill.
+nonisolated struct PaperStyle: Hashable, Sendable {
+    var color: PaperColor = .white
+    var spacing: LineSpacingOption = .normal
+
+    static let standard = PaperStyle()
+
+    var multiplier: CGFloat { spacing.multiplier }
+    var isDark: Bool { color == .dark }
+
+    /// Fill as sRGB components.
+    var fillRGB: (r: CGFloat, g: CGFloat, b: CGFloat) {
+        switch color {
+        case .white: return (1, 1, 1)
+        case .cream: return (0xFB / 255, 0xF7 / 255, 0xEE / 255)
+        case .dark: return (0x1E / 255, 0x1F / 255, 0x24 / 255)
+        }
+    }
+
+    /// Ruling as sRGB components plus alpha.
+    var rulingRGBA: (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+        switch color {
+        case .white: return (0.5, 0.5, 0.5, 0.25)
+        case .cream: return (0.45, 0.40, 0.33, 0.28)
+        case .dark: return (1, 1, 1, 0.18)
+        }
+    }
+
+    var fillCGColor: CGColor {
+        let f = fillRGB
+        return CGColor(srgbRed: f.r, green: f.g, blue: f.b, alpha: 1)
+    }
+
+    func rulingCGColor(alphaScale: CGFloat = 1) -> CGColor {
+        let c = rulingRGBA
+        return CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: min(c.a * alphaScale, 1))
+    }
+
+    var fillColor: Color {
+        let f = fillRGB
+        return Color(.sRGB, red: Double(f.r), green: Double(f.g), blue: Double(f.b), opacity: 1)
+    }
+
+    /// The style for thumbnails and exports: dark paper becomes white.
+    var outputStyle: PaperStyle {
+        PaperStyle(color: isDark ? .white : color, spacing: spacing)
+    }
+
+    /// Resolved from the stored raw values; unknown ones fall back to the defaults.
+    static func resolve(colorRaw: String?, spacingRaw: String?) -> PaperStyle {
+        PaperStyle(color: colorRaw.flatMap(PaperColor.init(rawValue:)) ?? .white,
+                   spacing: spacingRaw.flatMap(LineSpacingOption.init(rawValue:)) ?? .normal)
+    }
+
+    /// The current preferences.
+    static var current: PaperStyle {
+        resolve(colorRaw: AppSettings.paperColorRaw, spacingRaw: AppSettings.lineSpacingRaw)
+    }
+}
+
 nonisolated enum PageTemplate {
     /// The papers a user can pick, in menu order.
     static let options: [(id: String, label: String)] = [
@@ -49,34 +136,36 @@ nonisolated enum PageTemplate {
 
     /// Draws the ruling for `template` across `size`, in page points. The
     /// caller owns the paper colour underneath.
-    static func draw(_ template: String, in size: CGSize, context: CGContext) {
+    static func draw(_ template: String, in size: CGSize, context: CGContext, paper: PaperStyle = .standard) {
         guard size.width > 0, size.height > 0, !isEmpty(template) else { return }
         context.saveGState()
         defer { context.restoreGState() }
 
-        let color = CGColor(gray: patternGray, alpha: patternAlpha)
+        let color = paper.rulingCGColor()
+        let k = paper.multiplier
+        let lineStep = lineSpacing * k, dotStep = dotSpacing * k, engStep = engineeringSpacing * k
         switch template {
         case "lined":
             context.setStrokeColor(color)
             context.setLineWidth(1)
-            strokeRows(in: size, context: context)
+            strokeRows(in: size, step: lineStep, context: context)
             context.strokePath()
         case "grid":
             context.setStrokeColor(color)
             context.setLineWidth(1)
-            strokeRows(in: size, context: context)
-            strokeColumns(in: size, context: context)
+            strokeRows(in: size, step: lineStep, context: context)
+            strokeColumns(in: size, step: lineStep, context: context)
             context.strokePath()
         case "dotted":
             context.setFillColor(color)
-            var y = dotSpacing
+            var y = dotStep
             while y < size.height {
-                var x = dotSpacing
+                var x = dotStep
                 while x < size.width {
                     context.fillEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2))
-                    x += dotSpacing
+                    x += dotStep
                 }
-                y += dotSpacing
+                y += dotStep
             }
         case "engineering":
             // Minor lines, then the heavier every-fifth ones over them.
@@ -84,17 +173,17 @@ nonisolated enum PageTemplate {
             var index = 1
             context.setStrokeColor(color)
             context.setLineWidth(0.75)
-            var offset = engineeringSpacing
+            var offset = engStep
             while offset < max(size.width, size.height) {
                 if index % 5 == 0 { major.append(offset) } else {
                     if offset < size.height { context.move(to: CGPoint(x: 0, y: offset)); context.addLine(to: CGPoint(x: size.width, y: offset)) }
                     if offset < size.width { context.move(to: CGPoint(x: offset, y: 0)); context.addLine(to: CGPoint(x: offset, y: size.height)) }
                 }
-                offset += engineeringSpacing
+                offset += engStep
                 index += 1
             }
             context.strokePath()
-            context.setStrokeColor(CGColor(gray: patternGray, alpha: patternAlpha * 2))
+            context.setStrokeColor(paper.rulingCGColor(alphaScale: 2))
             context.setLineWidth(1.25)
             for offset in major {
                 if offset < size.height { context.move(to: CGPoint(x: 0, y: offset)); context.addLine(to: CGPoint(x: size.width, y: offset)) }
@@ -107,9 +196,9 @@ nonisolated enum PageTemplate {
             let summaryTop = size.height * (1 - cornellSummaryFraction)
             context.setStrokeColor(color)
             context.setLineWidth(1)
-            strokeRows(in: CGSize(width: size.width, height: summaryTop), context: context)
+            strokeRows(in: CGSize(width: size.width, height: summaryTop), step: lineStep, context: context)
             context.strokePath()
-            context.setStrokeColor(CGColor(gray: patternGray, alpha: patternAlpha * 2.5))
+            context.setStrokeColor(paper.rulingCGColor(alphaScale: 2.5))
             context.setLineWidth(1.5)
             let cueX = size.width * cornellCueFraction
             context.move(to: CGPoint(x: cueX, y: 0)); context.addLine(to: CGPoint(x: cueX, y: summaryTop))
@@ -120,21 +209,21 @@ nonisolated enum PageTemplate {
         }
     }
 
-    private static func strokeRows(in size: CGSize, context: CGContext) {
-        var y = lineSpacing
+    private static func strokeRows(in size: CGSize, step: CGFloat, context: CGContext) {
+        var y = step
         while y < size.height {
             context.move(to: CGPoint(x: 0, y: y))
             context.addLine(to: CGPoint(x: size.width, y: y))
-            y += lineSpacing
+            y += step
         }
     }
 
-    private static func strokeColumns(in size: CGSize, context: CGContext) {
-        var x = lineSpacing
+    private static func strokeColumns(in size: CGSize, step: CGFloat, context: CGContext) {
+        var x = step
         while x < size.width {
             context.move(to: CGPoint(x: x, y: 0))
             context.addLine(to: CGPoint(x: x, y: size.height))
-            x += lineSpacing
+            x += step
         }
     }
 }
@@ -153,12 +242,17 @@ struct PageBackgroundView: View {
     /// through, which is the point.
     var showsPaper: Bool = true
 
+    /// The paper preferences, live: changing them in Settings redraws.
+    @AppStorage(AppSettings.Keys.paperColor) private var paperColorRaw = PaperColor.white.rawValue
+    @AppStorage(AppSettings.Keys.lineSpacing) private var lineSpacingRaw = LineSpacingOption.normal.rawValue
+
     var body: some View {
+        let paper = PaperStyle.resolve(colorRaw: paperColorRaw, spacingRaw: lineSpacingRaw)
         Canvas { context, size in
             context.withCGContext { cg in
-                PageTemplate.draw(template, in: size, context: cg)
+                PageTemplate.draw(template, in: size, context: cg, paper: paper)
             }
         }
-        .background(showsPaper ? Color.white : Color.clear)
+        .background(showsPaper ? paper.fillColor : Color.clear)
     }
 }

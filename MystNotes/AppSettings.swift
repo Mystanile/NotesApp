@@ -40,6 +40,9 @@ nonisolated enum AppSettings {
         static let aiEnabled = "aiEnabled"
         static let aiModel = "aiModel"
         static let elevenVoiceID = "elevenVoiceID"
+        // Paper style (display preferences)
+        static let paperColor = "paperColor"
+        static let lineSpacing = "lineSpacing"
     }
 
     // MARK: Account (Sign in with Apple)
@@ -268,5 +271,17 @@ nonisolated enum AppSettings {
         case "dark": return .dark
         default: return nil
         }
+    }
+
+    // MARK: - Paper style (display preference; no model, sync or format change)
+
+    static var paperColorRaw: String {
+        get { defaults.string(forKey: Keys.paperColor) ?? PaperColor.white.rawValue }
+        set { defaults.set(newValue, forKey: Keys.paperColor) }
+    }
+
+    static var lineSpacingRaw: String {
+        get { defaults.string(forKey: Keys.lineSpacing) ?? LineSpacingOption.normal.rawValue }
+        set { defaults.set(newValue, forKey: Keys.lineSpacing) }
     }
 }

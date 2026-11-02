@@ -55,12 +55,14 @@ enum PageRenderer {
 
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
-        UIColor.white.setFill()
+        // Exports use `outputStyle`: dark paper exports on white.
+        let paper = PaperStyle.current.outputStyle
+        context.setFillColor(paper.fillCGColor)
         context.fill(CGRect(origin: .zero, size: nominal))
         // The paper's own ruling, under everything - an export of a
         // lined page used to come out blank whether or not anything had
         // been imported onto it.
-        PageTemplate.draw(page.template, in: nominal, context: context)
+        PageTemplate.draw(page.template, in: nominal, context: context, paper: paper)
 
         for layer in artwork {
             if layer.isPDF, let pdfPage = document(layer.fileRef, in: &documents)?.page(at: layer.pdfPageIndex),
