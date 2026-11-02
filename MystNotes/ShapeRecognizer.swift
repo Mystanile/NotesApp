@@ -39,9 +39,11 @@ nonisolated enum ShapeLineStyle: String, CaseIterable, Codable, Sendable {
 /// 5. bail out (`nil`) when nothing fits. A shape tool that guesses wrong
 ///    is worse than one that leaves the stroke alone.
 ///
-/// Lines, arrow shafts and rectangles snap to the axes (and to 45°) when
-/// they are drawn within a few degrees of them, so a line meant to be
-/// horizontal comes out horizontal.
+/// Lines and arrow shafts go exactly where the pen put them: from the
+/// stroke's first point to its last, at whatever angle that is (user's
+/// call, Nov 2, 2026: a line that jumped onto 0°/45°/90° moved both of its
+/// ends away from where they were aimed). Rectangles and ellipses still
+/// straighten onto the axes when they are drawn within a few degrees.
 ///
 /// Corners come out sharp because polygon vertices are repeated three
 /// times in the `PKStrokePath` control points: the path is a cubic
@@ -121,13 +123,6 @@ nonisolated enum ShapeRecognizer {
     private static let axisSnapTolerance: CGFloat = 10 * .pi / 180
     /// Square when the two side lengths are within this fraction.
     private static let squareTolerance: CGFloat = 0.12
-    /// A line (or an arrow's shaft) within this of horizontal or vertical
-    /// is straightened onto it. Generous on purpose: "I meant that to be
-    /// horizontal" is the single most common thing asked of a shape tool.
-    private static let lineAxisTolerance: CGFloat = 10 * .pi / 180
-    /// ...and this much for the 45° diagonals, which are asked for less
-    /// often and are easier to hit by accident.
-    private static let lineDiagonalTolerance: CGFloat = 6 * .pi / 180
 
     // MARK: - Entry points
 
@@ -385,38 +380,8 @@ nonisolated enum ShapeRecognizer {
         guard chord > 0 else { return nil }
         let deviation = points.map { distanceFromSegment($0, start, end) }.max() ?? 0
         guard deviation / chord < lineDeviation else { return nil }
-        let snapped = axisSnapped(from: start, to: end)
-        return RecognizedShape(kind: .line, outline: [snapped.0, snapped.1], cornerIndices: [0, 1])
-    }
-
-    /// Straightens a segment onto the nearest axis (or 45° diagonal) when
-    /// it is already within a few degrees of it, keeping its midpoint and
-    /// its length - so a near-horizontal line comes out horizontal without
-    /// either end jumping.
-    static func axisSnapped(from a: CGPoint, to b: CGPoint) -> (CGPoint, CGPoint) {
-        let length = distance(a, b)
-        guard length > 0 else { return (a, b) }
-        let angle = atan2(b.y - a.y, b.x - a.x)
-
-        var snapped: CGFloat?
-        for step in 0..<8 {
-            let candidate = CGFloat(step) * .pi / 4 - .pi
-            // Both directions of the same axis are equally good; compare
-            // against every multiple of 45° over the full turn.
-            let delta = abs(angleDifference(angle, candidate))
-            let isAxis = step % 2 == 0
-            if delta < (isAxis ? lineAxisTolerance : lineDiagonalTolerance) {
-                snapped = candidate
-                break
-            }
-        }
-        guard let theta = snapped else { return (a, b) }
-        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-        let half = length / 2
-        return (
-            CGPoint(x: mid.x - cos(theta) * half, y: mid.y - sin(theta) * half),
-            CGPoint(x: mid.x + cos(theta) * half, y: mid.y + sin(theta) * half)
-        )
+        // The pen's own ends, never rotated onto an axis.
+        return RecognizedShape(kind: .line, outline: [start, end], cornerIndices: [0, 1])
     }
 
     /// An arrow drawn in one stroke: a straight shaft, then a head at the
@@ -456,10 +421,10 @@ nonisolated enum ShapeRecognizer {
               backtrack > shaftLength * 0.06         // it comes back on itself
         else { return nil }
 
-        // The shaft gets the same axis snap a line does, and the head is
-        // rebuilt around the snapped tip so the arrow stays straight.
-        let snapped = axisSnapped(from: tail, to: tip)
-        let snappedTail = snapped.0, snappedTip = snapped.1
+        // The shaft runs from where the pen started to the tip it drew, at
+        // the angle it was drawn (no axis snap, same as a line), and the
+        // head is rebuilt around that tip so the arrow stays straight.
+        let snappedTail = tail, snappedTip = tip
         let snappedDirection = normalized(CGVector(dx: snappedTip.x - snappedTail.x, dy: snappedTip.y - snappedTail.y))
 
         let barbAngle: CGFloat = 30 * .pi / 180

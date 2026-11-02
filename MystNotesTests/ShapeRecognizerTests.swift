@@ -267,11 +267,12 @@ final class ShapeRecognizerTests: XCTestCase {
         XCTAssertEqual(stroke.ink.inkType, .pen)
     }
 
-    // MARK: - Axis snapping
+    // MARK: - Lines keep the pen's ends (no axis snap since Nov 2, 2026)
 
-    func testLine_nearlyHorizontal_comesOutHorizontal() {
+    func testLine_nearlyHorizontal_keepsThePensStartAndEnd() {
         var rng = Jitter(seed: 21)
-        // Drawn 4 degrees off horizontal - inside the snap tolerance.
+        // Drawn 4 degrees off horizontal: it used to be rotated onto the axis,
+        // which moved both ends. Now it starts and ends where the pen did.
         let points = (0...80).map { i -> CGPoint in
             let t = CGFloat(i) / 80
             let x = 60 + 300 * t
@@ -280,13 +281,15 @@ final class ShapeRecognizerTests: XCTestCase {
         let shape = ShapeRecognizer.recognize(points)
         XCTAssertEqual(shape?.kind, .line)
         let outline = shape!.outline
-        XCTAssertEqual(outline[0].y, outline[1].y, accuracy: 0.001, "a near-horizontal line must come out horizontal")
-        // The length and the middle of the line are kept, so neither end jumps.
-        XCTAssertEqual(hypot(outline[1].x - outline[0].x, outline[1].y - outline[0].y),
-                       ShapeRecognizer.distance(points[0], points[points.count - 1]), accuracy: 2)
+        XCTAssertEqual(outline.count, 2)
+        XCTAssertEqual(outline[0].x, points[0].x, accuracy: 0.01)
+        XCTAssertEqual(outline[0].y, points[0].y, accuracy: 0.01)
+        XCTAssertEqual(outline[1].x, points[points.count - 1].x, accuracy: 0.01)
+        XCTAssertEqual(outline[1].y, points[points.count - 1].y, accuracy: 0.01)
+        XCTAssertNotEqual(outline[0].y, outline[1].y, accuracy: 1, "a 4° line is not forced horizontal")
     }
 
-    func testLine_nearlyVertical_comesOutVertical() {
+    func testLine_nearlyVertical_isNotForcedVertical() {
         var rng = Jitter(seed: 22)
         let points = (0...80).map { i -> CGPoint in
             let t = CGFloat(i) / 80
@@ -294,7 +297,20 @@ final class ShapeRecognizerTests: XCTestCase {
         }
         let shape = ShapeRecognizer.recognize(points)
         XCTAssertEqual(shape?.kind, .line)
-        XCTAssertEqual(shape!.outline[0].x, shape!.outline[1].x, accuracy: 0.001)
+        XCTAssertEqual(shape!.outline[0].x, points[0].x, accuracy: 0.01)
+        XCTAssertEqual(shape!.outline[1].x, points[points.count - 1].x, accuracy: 0.01)
+    }
+
+    func testLine_nearlyDiagonal_isNotForcedTo45Degrees() {
+        // 42 degrees used to be pulled onto the 45° diagonal.
+        let angle: CGFloat = 42 * .pi / 180
+        let points = (0...80).map { i -> CGPoint in
+            let t = CGFloat(i) / 80
+            return CGPoint(x: 80 + 280 * t * cos(angle), y: 80 + 280 * t * sin(angle))
+        }
+        let outline = ShapeRecognizer.recognize(points)!.outline
+        let drawn = atan2(outline[1].y - outline[0].y, outline[1].x - outline[0].x)
+        XCTAssertEqual(drawn, angle, accuracy: 0.2 * .pi / 180)
     }
 
     func testLine_deliberatelyAtAnAngle_isLeftAtThatAngle() {
