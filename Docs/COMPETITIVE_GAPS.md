@@ -87,7 +87,7 @@ On AI: `CLAUDE.md` used to lock "no network AI calls in v1", and §5 ruled out A
 | Library sort | GoodNotes sorts by name, date created or date modified, ascending or descending. | The library has fixed sorts. No picker. | S | done Nov 2 (plus a custom order) |
 | List view | GoodNotes switches the library between grid and list. | Grid only. | S | done Nov 2 |
 | Folder colours | GoodNotes 6 picks any folder colour by wheel, hex or RGB. | Folders have no colour. | S | open |
-| Multi-select in library | GoodNotes selects many notebooks to move, duplicate or delete. | One notebook at a time. | M | open |
+| Multi-select in library | GoodNotes selects many notebooks to move, duplicate or delete. | One notebook at a time. | M | done Nov 2 |
 | Tag summary | OneNote tags lines (To Do, Important) and builds a summary of every tagged item. | Tags are per page. No line-level tags, no summary. | M | open |
 | Calendar and tasks | OneNote links to Outlook tasks. GoodNotes shows calendar events in planners. | No calendar or task integration. | L | open |
 | Quick note | GoodNotes opens a QuickNote from the Home Screen icon or a widget. | No widget, no Home Screen quick action. | S | planned (M5, App Intents) |

@@ -101,6 +101,18 @@ Format 5 now also carries: recordings (with their audio payloads), tape links, `
 
 Owed on the iPad, round 3: the edit menu appearing at the selection and after a drag, its Colour submenu tint, right-click on the Mac, Cmd-D; recolour speed on a dense page; microphone permission, recording across page turns, playback rate, the veil's alignment, tap-to-seek; Replay fitting the page; inserting a node and dragging it, live update when its source changes; tape covering and peeling, Pencil strokes starting on a tape (they hit the tape), Review with real handwriting; photo OCR on real photos.
 
+### Round 4, Nov 2 late (all [not built])
+
+- [x] Compile audit of the round-3 files: a duplicate playback veil removed, a missing UIKit import, explicit closure types in ternaries, small init fixes. Nothing else certain.
+- [x] **Spotlight and Shortcuts (M5):** pages and notebooks in Spotlight (never locked notebooks or templates; never captured while a notebook is open); Open Notebook, New Page, Search Linework intents with Siri phrases. `ContentView` now uses `NavigationStack(path:)`.
+- [x] **Transcription (M3):** recordings transcribe on device with SpeechAnalyzer; a Transcript list in the player follows playback and seeks on a tap; transcripts are searchable ("in a recording") and exported. Derived data like OCR (format 5). The uncertain Speech API calls are isolated in small functions in `RecordingTranscriber.swift`.
+- [x] **Semantic search (M4):** NaturalLanguage sentence embeddings per page, cached by text hash; "Related" results under exact matches; "Similar pages" with a Link button in the Connections panel. Threshold 0.35 is a guess: tune it on real notes.
+- [x] **Library multi-select** (move, delete to trash) and transcluded ink in the All Pages grid and on cover previews.
+
+Compile-risk spots to check first (round 4): `ModelContext.didSave` (SpotlightIndexer); the AppIntents declarations under default MainActor isolation; the Speech framework names in `RecordingTranscriber` (`SpeechTranscriber` init options, `AssetInventory`, `SpeechAnalyzer.start(inputAudioFile:finishAfterFile:)`, `result.text.runs[].audioTimeRange`); `nonisolated extension TranscriptSegment`; `LibraryCells` accessibility label expression complexity; `PageElements.resolveTransclusions` sort inference.
+
+Owed on the iPad, round 4: a Spotlight hit opening the page (cold and warm launch); Shortcuts phrases; transcription on a real lecture recording and its timestamps; Related results quality; multi-select move and delete.
+
 Not done from the M2 plan: task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check).
 
 ## Autonomous run: decided by the user on 2026-10-25
