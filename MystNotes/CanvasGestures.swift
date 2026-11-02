@@ -388,7 +388,83 @@ class CanvasHostView: UIView {
     private var dropInteraction: UIDropInteraction?
     /// The lasso's selection, so ⌘C / ⌘X / ⌘V and the Edit menu work on
     /// selected ink the way they do on a selected picture.
-    weak var inkSelection: InkSelectionController?
+    weak var inkSelection: InkSelectionController? {
+        didSet { if inkSelection != nil { installSelectionMenu() } }
+    }
+
+    // MARK: Selection menu
+
+    private var editMenuInteraction: UIEditMenuInteraction?
+    /// Where the menu points: the selection's box in this view, clipped to
+    /// what is visible.
+    fileprivate(set) var selectionMenuTargetRect: CGRect = .zero
+
+    /// One interaction and one secondary-click recogniser, added the first
+    /// time a selection controller arrives. Idempotent.
+    private func installSelectionMenu() {
+        guard editMenuInteraction == nil else { return }
+        let interaction = UIEditMenuInteraction(delegate: self)
+        addInteraction(interaction)
+        editMenuInteraction = interaction
+        // Mac Catalyst: a right-click opens the same menu, on the selection
+        // or - with nothing selected - offering Paste where it was clicked.
+        let click = UITapGestureRecognizer(target: self, action: #selector(handleSecondaryClick(_:)))
+        click.buttonMaskRequired = .secondary
+        click.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        click.cancelsTouchesInView = false
+        addGestureRecognizer(click)
+    }
+
+    /// Opens the menu on the next run-loop turn - a touch callback is no
+    /// place to present UI from. `point` is where a click landed; without
+    /// one the menu points at the top of the selection.
+    func presentSelectionMenu(at point: CGPoint? = nil) {
+        DispatchQueue.main.async { [weak self] in self?.presentSelectionMenuNow(at: point) }
+    }
+
+    private func presentSelectionMenuNow(at point: CGPoint?) {
+        guard let inkSelection, inkSelection.isActive, window != nil,
+              let interaction = editMenuInteraction else { return }
+        let source: CGPoint
+        if inkSelection.hasSelection, let rect = inkSelection.selectionRect(in: self) {
+            var visible = rect.intersection(bounds)
+            if visible.isNull { visible = CGRect(x: bounds.midX, y: bounds.midY, width: 1, height: 1) }
+            selectionMenuTargetRect = visible
+            source = point ?? CGPoint(x: visible.midX, y: visible.minY)
+        } else if let point {
+            selectionMenuTargetRect = CGRect(x: point.x, y: point.y, width: 1, height: 1)
+            source = point
+        } else {
+            return
+        }
+        interaction.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: source))
+    }
+
+    func dismissSelectionMenu() {
+        editMenuInteraction?.dismissMenu()
+    }
+
+    @objc private func handleSecondaryClick(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, let inkSelection, inkSelection.isActive else { return }
+        let point = recognizer.location(in: self)
+        if inkSelection.hasSelection, let rect = inkSelection.selectionRect(in: self), !rect.contains(point) {
+            return  // a click outside the box belongs to whatever is there
+        }
+        presentSelectionMenu(at: point)
+    }
+
+    /// Duplicate and Delete from the keyboard while ink is selected; ⌘C,
+    /// ⌘X and ⌘V already arrive as `copy`, `cut` and `paste`.
+    override var keyCommands: [UIKeyCommand]? {
+        let duplicate = UIKeyCommand(input: "d", modifierFlags: .command, action: #selector(inkDuplicate(_:)))
+        duplicate.discoverabilityTitle = "Duplicate Selection"
+        let delete = UIKeyCommand(input: UIKeyCommand.inputDelete, modifierFlags: [], action: #selector(inkDelete(_:)))
+        delete.discoverabilityTitle = "Delete Selection"
+        return (super.keyCommands ?? []) + [duplicate, delete]
+    }
+
+    @objc func inkDuplicate(_ sender: Any?) { inkSelection?.duplicate() }
+    @objc func inkDelete(_ sender: Any?) { inkSelection?.delete() }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) {
@@ -400,7 +476,8 @@ class CanvasHostView: UIView {
             if inkSelection?.isActive == true, InkSelectionController.pasteboardHasInk { return true }
             return onPasteImage != nil && CanvasPasteboard.hasImage
         }
-        if action == #selector(copy(_:)) || action == #selector(cut(_:)) {
+        if action == #selector(copy(_:)) || action == #selector(cut(_:))
+            || action == #selector(inkDuplicate(_:)) || action == #selector(inkDelete(_:)) {
             return inkSelection?.hasSelection == true
         }
         return super.canPerformAction(action, withSender: sender)
@@ -631,6 +708,18 @@ class CanvasHostView: UIView {
 
 /// Dragging a picture out of Finder, Files or another app and onto the page
 /// - the gesture a Mac user reaches for first.
+extension CanvasHostView: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
+                             suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let inkSelection else { return nil }
+        return SelectionMenu.menu(for: inkSelection, host: self)
+    }
+
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
+        selectionMenuTargetRect
+    }
+}
+
 extension CanvasHostView: UIDropInteractionDelegate {
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
         session.canLoadObjects(ofClass: UIImage.self)

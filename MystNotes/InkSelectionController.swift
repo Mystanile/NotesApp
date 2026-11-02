@@ -51,6 +51,11 @@ final class InkSelectionController: NSObject {
     }
     /// After every committed edit, for the autosave.
     @ObservationIgnored var onDrawingChanged: () -> Void = {}
+    /// The screen's side of the edit menu (Colour, Copy as Image, Convert to
+    /// Text, Link, Make Node). Refreshed by the detail view as it renders;
+    /// the menu reads it when it opens.
+    @ObservationIgnored var menuActions = SelectionMenuActions()
+    func setMenuActions(_ actions: SelectionMenuActions) { menuActions = actions }
 
     /// The page's canvas. A fresh one arrives with every page, and a
     /// selection never outlives the page it was made on.
@@ -104,6 +109,8 @@ final class InkSelectionController: NSObject {
     @ObservationIgnored private let tapOutside = UITapGestureRecognizer()
     private var recognizers: [UIGestureRecognizer] { [lasso, fingerPan, pinch, rotation, tapOutside] }
     @ObservationIgnored private weak var host: UIView?
+    /// The host as a `CanvasHostView`, which owns the edit menu.
+    @ObservationIgnored private weak var menuHost: CanvasHostView?
 
     override init() {
         super.init()
@@ -134,6 +141,7 @@ final class InkSelectionController: NSObject {
             for recognizer in recognizers { old.removeGestureRecognizer(recognizer) }
         }
         self.host = host
+        menuHost = host as? CanvasHostView
         for recognizer in recognizers { host.addGestureRecognizer(recognizer) }
     }
 
@@ -141,7 +149,9 @@ final class InkSelectionController: NSObject {
         if let host {
             for recognizer in recognizers { host.removeGestureRecognizer(recognizer) }
         }
+        menuHost?.dismissSelectionMenu()
         host = nil
+        menuHost = nil
     }
 
     private func applyActivity() {
@@ -152,6 +162,7 @@ final class InkSelectionController: NSObject {
     // MARK: Selecting
 
     func clear() {
+        menuHost?.dismissSelectionMenu()
         fingerprints = []
         corners = nil
         inkBoundsAfterChange = nil
@@ -172,6 +183,7 @@ final class InkSelectionController: NSObject {
         fingerprints = indices.map { StrokeIDMap.Fingerprint(drawing.strokes[$0]) }
         inkBoundsAfterChange = InkSelection.bounds(of: drawing, indices: indices)
         corners = InkSelection.corners(of: inkBoundsAfterChange!)
+        presentMenu()
     }
 
     /// Selects strokes that are already in the drawing - after a duplicate
@@ -233,12 +245,35 @@ final class InkSelectionController: NSObject {
         return InkSelection.polygon(corners, contains: pagePoint)
     }
 
+    // MARK: Edit menu
+
+    /// Shows the edit menu at the selection. A no-op without a selection or
+    /// a host; the host presents on the next run-loop turn, so this is safe
+    /// to call from inside a touch callback.
+    func presentMenu() {
+        guard hasSelection else { return }
+        menuHost?.presentSelectionMenu()
+    }
+
+    /// The selection's bounding box in `view`'s coordinates - the page
+    /// points of `corners` through the zoom and the scroll offset, the
+    /// inverse of `pagePoint(canvasPoint:)`.
+    func selectionRect(in view: UIView) -> CGRect? {
+        guard let canvas, let corners, !corners.isEmpty else { return nil }
+        let zoom = max(canvas.zoomScale, 0.0001)
+        let points = corners.map { canvas.convert(CGPoint(x: $0.x * zoom, y: $0.y * zoom), to: view) }
+        let xs = points.map(\.x), ys = points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     // MARK: Gestures, in page points
 
     /// A pan, pinch or twist has started. Several can run at once (a
     /// pinch is also a pan); the base is taken by the first and the
     /// commit made by the last.
     func beginGesture() {
+        menuHost?.dismissSelectionMenu()
         if activeGestures > 0 {
             activeGestures += 1
             return
@@ -289,7 +324,11 @@ final class InkSelectionController: NSObject {
         activeGestures = max(activeGestures - 1, 0)
         guard activeGestures == 0 else { return }
         defer { base = nil; accumulated = .identity }
-        guard let canvas, let base, !accumulated.isIdentity else { return }
+        guard let canvas, let base else { return }
+        guard !accumulated.isIdentity else {
+            presentMenu()   // a tap inside the box: bring the menu back
+            return
+        }
         // One undo step for the whole gesture: back to the drawing it
         // started from, not to the frame before the last finger lifted.
         let final = canvas.drawing
@@ -297,6 +336,7 @@ final class InkSelectionController: NSObject {
         canvas.setDrawingUndoably(final)
         if let indices = currentIndices(in: final) { inkBoundsAfterChange = InkSelection.bounds(of: final, indices: indices) }
         onDrawingChanged()
+        presentMenu()
     }
 
     // MARK: Commands
@@ -327,8 +367,14 @@ final class InkSelectionController: NSObject {
 
     /// The selection in another colour; still selected, one undo step.
     func recolor(_ color: UIColor) {
-        guard let canvas, let indices = currentIndices(in: canvas.drawing) else { return }
-        canvas.setDrawingUndoably(InkSelection.recoloring(canvas.drawing, indices: indices, to: color))
+        guard let canvas else { return }
+        let drawing = canvas.drawing
+        guard let indices = currentIndices(in: drawing) else { return }
+        // One pass over the selected strokes only, one undo step, one
+        // autosave. The fingerprints don't include ink, so the selection
+        // survives the change as it is.
+        guard let recoloured = InkSelection.recoloringIfChanged(drawing, indices: indices, to: color) else { return }
+        canvas.setDrawingUndoably(recoloured)
         onDrawingChanged()
     }
 

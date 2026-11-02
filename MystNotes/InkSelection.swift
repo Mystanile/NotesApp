@@ -54,13 +54,43 @@ nonisolated enum InkSelection {
     /// highlighter stays see-through) and ink type. Only the ink changes,
     /// so every stroke keeps its creation date and seed - its id.
     static func recoloring(_ drawing: PKDrawing, indices: [Int], to color: UIColor) -> PKDrawing {
+        recoloringIfChanged(drawing, indices: indices, to: color) ?? drawing
+    }
+
+    /// `recoloring`, or nil when every selected stroke is already that
+    /// colour (nothing to rebuild, nothing to undo, nothing to autosave).
+    ///
+    /// Touches the selected strokes only: `PKStroke` is a value type, so
+    /// the copy of `drawing.strokes` shares every other stroke untouched,
+    /// and one `PKInk` is built per distinct (ink type, opacity) rather
+    /// than per stroke. The one `PKDrawing(strokes:)` at the end is the
+    /// floor - PencilKit has no way to edit a drawing in place - and the
+    /// canvas relayout that follows it is PencilKit's.
+    static func recoloringIfChanged(_ drawing: PKDrawing, indices: [Int], to color: UIColor) -> PKDrawing? {
         var strokes = drawing.strokes
-        for index in indices {
-            var alpha: CGFloat = 1
-            strokes[index].ink.color.getRed(nil, green: nil, blue: nil, alpha: &alpha)
-            strokes[index].ink = PKInk(strokes[index].ink.inkType, color: color.withAlphaComponent(alpha))
+        var inks: [(type: PKInk.InkType, alpha: CGFloat, ink: PKInk)] = []
+        var changed = false
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        color.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
+        for index in indices where strokes.indices.contains(index) {
+            let current = strokes[index].ink
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, alpha: CGFloat = 1
+            current.color.getRed(&r, green: &g, blue: &b, alpha: &alpha)
+            // A stroke keeps its own opacity.
+            if abs(r - tr) < 0.002, abs(g - tg) < 0.002, abs(b - tb) < 0.002 {
+                continue
+            }
+            let ink: PKInk
+            if let known = inks.first(where: { $0.type == current.inkType && $0.alpha == alpha }) {
+                ink = known.ink
+            } else {
+                ink = PKInk(current.inkType, color: color.withAlphaComponent(alpha))
+                inks.append((current.inkType, alpha, ink))
+            }
+            strokes[index].ink = ink
+            changed = true
         }
-        return PKDrawing(strokes: strokes)
+        return changed ? PKDrawing(strokes: strokes) : nil
     }
 
     /// The strokes as a picture - for the clipboard, to paste into another

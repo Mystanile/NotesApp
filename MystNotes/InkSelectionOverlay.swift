@@ -82,137 +82,170 @@ struct InkSelectionHandles: View {
                             }
                     )
             }
+            if corners.count == 4 {
+                // Re-presents the edit menu. A 44 pt target, set just
+                // outside the top-right corner so the resize handle there
+                // keeps its own.
+                let anchor = corners[1]
+                Button { controller.presentMenu() } label: {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 28 / zoom, height: 28 / zoom)
+                        .overlay {
+                            HStack(spacing: 3 / zoom) {
+                                ForEach(0..<3, id: \.self) { _ in
+                                    Circle().fill(Color.white.opacity(0.95)).frame(width: 4 / zoom, height: 4 / zoom)
+                                }
+                            }
+                        }
+                        .frame(width: Metrics.minHitTarget / zoom, height: Metrics.minHitTarget / zoom)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .position(x: anchor.x + 30 / zoom, y: anchor.y - 30 / zoom)
+                .accessibilityLabel("Selection actions")
+            }
         }
         .coordinateSpace(.named(Self.space))
     }
 }
 
-/// The controls that appear while ink is selected. Styled like
-/// `ImageAdjustToolbar` so the two read as the same family of UI.
-struct InkSelectionToolbar: View {
-    var canPaste: Bool
-    var onCut: () -> Void
-    var onCopy: () -> Void
-    var onPaste: () -> Void
-    var onDuplicate: () -> Void
-    var onDelete: () -> Void
-    var onRecolor: (Color) -> Void = { _ in }
-    var onCopyAsImage: () -> Void = {}
-    var onConvertToText: () -> Void = {}
-    /// Nil hides the button (the whiteboard draws no link anchors yet).
-    var onLinkTo: (() -> Void)? = nil
-    /// Nil hides the button (the whiteboard has no nodes).
-    var onMakeNode: (() -> Void)? = nil
-    var onDone: () -> Void
+/// What the lasso's edit menu offers, in order. The list is a pure function
+/// of the state so a test can pin it; `SelectionMenu.menu` turns it into a
+/// `UIMenu`.
+nonisolated enum SelectionMenuItem: Equatable, Sendable {
+    case cut, copy, paste, duplicate, delete, colour, copyAsImage, convertToText, linkTo, makeNode, tape
 
-    private let colors: [Color] = [.black, .red, .orange, .yellow, .green, .blue, .purple, .brown]
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            full
-            compact
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-    }
-
-    private var colourButtons: some View {
-        ForEach(colors, id: \.self) { color in
-            Button { onRecolor(color) } label: {
-                Label { Text(color.description.capitalized) } icon: {
-                    Image(systemName: "circle.fill").foregroundStyle(color)
-                }
-            }
+    var title: String {
+        switch self {
+        case .cut: return "Cut"
+        case .copy: return "Copy"
+        case .paste: return "Paste"
+        case .duplicate: return "Duplicate"
+        case .delete: return "Delete"
+        case .colour: return "Colour"
+        case .copyAsImage: return "Copy as Image"
+        case .convertToText: return "Convert to Text"
+        case .linkTo: return "Link This To\u{2026}"
+        case .makeNode: return "Make Node"
+        case .tape: return "Tape"
         }
     }
 
-    private var full: some View {
-        HStack(spacing: 4) {
-            iconButton("scissors", help: "Cut", action: onCut)
-            iconButton("doc.on.doc", help: "Copy", action: onCopy)
-            iconButton("doc.on.clipboard", help: "Paste", action: onPaste)
-                .disabled(!canPaste)
-                .opacity(canPaste ? 1 : 0.4)
-            iconButton("plus.square.on.square", help: "Duplicate", action: onDuplicate)
-            Divider().frame(height: 24)
-            Menu { colourButtons } label: {
-                Image(systemName: "paintpalette").font(.system(size: 17)).frame(width: 36, height: 34)
-            }
-            .help("Colour")
-            iconButton("photo", help: "Copy as Image", action: onCopyAsImage)
-            iconButton("character.textbox", help: "Convert to Text", action: onConvertToText)
-            if let onLinkTo {
-                iconButton("link", help: "Link This To…", action: onLinkTo)
-            }
-            if let onMakeNode {
-                iconButton("scribble", help: "Make Node", action: onMakeNode)
-            }
-            Divider().frame(height: 24)
-            iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
-            Divider().frame(height: 24)
-            Button(action: onDone) {
-                Label("Done", systemImage: "checkmark")
-                    .font(.subheadline.weight(.semibold))
-                    .labelStyle(.titleAndIcon)
-                    .padding(.horizontal, 10)
-                    .frame(height: 34)
-                    .foregroundStyle(Color.accentColor)
-            }
+    var systemImage: String {
+        switch self {
+        case .cut: return "scissors"
+        case .copy: return "doc.on.doc"
+        case .paste: return "doc.on.clipboard"
+        case .duplicate: return "plus.square.on.square"
+        case .delete: return "trash"
+        case .colour: return "paintpalette"
+        case .copyAsImage: return "photo"
+        case .convertToText: return "character.textbox"
+        case .linkTo: return "link"
+        case .makeNode: return "scribble"
+        case .tape: return "rectangle.on.rectangle"
         }
     }
+}
 
-    /// For windows under ~460 pt: the rarely used actions go in a menu.
-    private var compact: some View {
-        HStack(spacing: 4) {
-            iconButton("scissors", help: "Cut", action: onCut)
-            iconButton("doc.on.doc", help: "Copy", action: onCopy)
-            iconButton("trash", help: "Delete", isDestructive: true, action: onDelete)
-            Menu {
-                Button { onPaste() } label: { Label("Paste", systemImage: "doc.on.clipboard") }
-                    .disabled(!canPaste)
-                Button { onDuplicate() } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                Menu { colourButtons } label: { Label("Colour", systemImage: "paintpalette") }
-                Button { onCopyAsImage() } label: { Label("Copy as Image", systemImage: "photo") }
-                Button { onConvertToText() } label: { Label("Convert to Text", systemImage: "character.textbox") }
-                if let onLinkTo {
-                    Button { onLinkTo() } label: { Label("Link This To…", systemImage: "link") }
-                }
-                if let onMakeNode {
-                    Button { onMakeNode() } label: { Label("Make Node", systemImage: "scribble") }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle").font(.system(size: 17)).frame(width: 36, height: 34)
+nonisolated enum SelectionMenu {
+    /// - `hasSelection`: ink is selected. Without it the only thing worth
+    ///   offering is Paste (a right-click on empty page), and only if the
+    ///   pasteboard holds ink.
+    /// - `pasteboardHasInk`: Paste is left out rather than greyed, so the
+    ///   menu stays short.
+    /// - `isPaged`: a paged page, which can hold links and nodes; the
+    ///   whiteboard has neither.
+    /// - `hasTape`: the tape action is wired up.
+    static func items(hasSelection: Bool, pasteboardHasInk: Bool, isPaged: Bool,
+                      hasTape: Bool = false) -> [SelectionMenuItem] {
+        guard hasSelection else { return pasteboardHasInk ? [.paste] : [] }
+        var items: [SelectionMenuItem] = [.cut, .copy]
+        if pasteboardHasInk { items.append(.paste) }
+        items += [.duplicate, .delete, .colour, .copyAsImage, .convertToText]
+        if isPaged { items += [.linkTo, .makeNode] }
+        if hasTape { items.append(.tape) }
+        return items
+    }
+}
+
+/// The lasso menu's custom actions, handed in by the screen that owns the
+/// page (the same callbacks the old floating toolbar received). Cut, Copy,
+/// Paste, Duplicate and Delete are not here: those are the host's and the
+/// controller's own. A nil closure leaves its item out.
+struct SelectionMenuActions {
+    var onRecolor: ((UIColor) -> Void)?
+    var onCopyAsImage: (() -> Void)?
+    var onConvertToText: (() -> Void)?
+    /// Nil on the whiteboard (no link anchors yet).
+    var onLinkTo: (() -> Void)?
+    /// Nil on the whiteboard (no nodes).
+    var onMakeNode: (() -> Void)?
+    /// Left nil for now; another task adds Tape.
+    var onTape: (() -> Void)?
+}
+
+extension SelectionMenu {
+    /// The menu for the current selection. Cut, Copy and Paste go through
+    /// the host's responder methods, so the keyboard, the system Edit menu
+    /// and this menu share one implementation.
+    @MainActor static func menu(for controller: InkSelectionController, host: CanvasHostView) -> UIMenu? {
+        let actions = controller.menuActions
+        let entries = Self.items(hasSelection: controller.hasSelection,
+                                 pasteboardHasInk: InkSelectionController.pasteboardHasInk,
+                                 isPaged: actions.onMakeNode != nil || actions.onLinkTo != nil,
+                                 hasTape: actions.onTape != nil)
+        var elements: [UIMenuElement] = []
+        for item in entries {
+            let image = UIImage(systemName: item.systemImage)
+            switch item {
+            case .cut:
+                elements.append(UIAction(title: item.title, image: image) { [weak host] _ in host?.cut(nil) })
+            case .copy:
+                elements.append(UIAction(title: item.title, image: image) { [weak host] _ in host?.copy(nil) })
+            case .paste:
+                elements.append(UIAction(title: item.title, image: image) { [weak host] _ in host?.paste(nil) })
+            case .duplicate:
+                elements.append(UIAction(title: item.title, image: image) { [weak controller] _ in controller?.duplicate() })
+            case .delete:
+                elements.append(UIAction(title: item.title, image: image, attributes: .destructive) { [weak controller] _ in
+                    controller?.delete()
+                })
+            case .colour:
+                if let onRecolor = actions.onRecolor { elements.append(colourMenu(onRecolor)) }
+            case .copyAsImage:
+                if let run = actions.onCopyAsImage { elements.append(UIAction(title: item.title, image: image) { _ in run() }) }
+            case .convertToText:
+                if let run = actions.onConvertToText { elements.append(UIAction(title: item.title, image: image) { _ in run() }) }
+            case .linkTo:
+                if let run = actions.onLinkTo { elements.append(UIAction(title: item.title, image: image) { _ in run() }) }
+            case .makeNode:
+                if let run = actions.onMakeNode { elements.append(UIAction(title: item.title, image: image) { _ in run() }) }
+            case .tape:
+                if let run = actions.onTape { elements.append(UIAction(title: item.title, image: image) { _ in run() }) }
             }
-            .help("More")
-            .accessibilityLabel("More")
-            Divider().frame(height: 24)
-            Button(action: onDone) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .foregroundStyle(Color.accentColor)
-            }
-            .help("Done")
-            .accessibilityLabel("Done")
         }
+        return elements.isEmpty ? nil : UIMenu(children: elements)
     }
 
-    private func iconButton(
-        _ systemImage: String,
-        help: String,
-        isDestructive: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 17))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(isDestructive ? Color.red : Color.primary)
+    /// The ten swatches, then the colours used lately - the same palette
+    /// and the same `recentInkColors` the drawing toolbar keeps.
+    @MainActor static func colourMenu(_ onRecolor: @escaping (UIColor) -> Void) -> UIMenu {
+        func action(hex: String, name: String) -> UIAction {
+            let color = Color(hex: hex).fixedUIColor
+            let dot = UIImage(systemName: "circle.fill")?.withTintColor(color, renderingMode: .alwaysOriginal)
+            return UIAction(title: name, image: dot) { _ in onRecolor(color) }
         }
-        .help(help)
-        .accessibilityLabel(help)
+        var groups: [UIMenuElement] = [
+            UIMenu(options: .displayInline, children: InkPalette.swatches.map { action(hex: $0.hex, name: $0.name) })
+        ]
+        let recents = InkPalette.decodeRecents(UserDefaults.standard.string(forKey: InkPalette.recentsKey) ?? "")
+        if !recents.isEmpty {
+            groups.append(UIMenu(title: "Recent", options: .displayInline,
+                                 children: recents.map { action(hex: $0, name: $0) }))
+        }
+        return UIMenu(title: "Colour", image: UIImage(systemName: "paintpalette"), children: groups)
     }
 }
 #endif

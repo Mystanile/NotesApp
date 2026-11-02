@@ -392,27 +392,19 @@ final class SimProbeElementsTests: XCTestCase {
         XCTAssertEqual(stored.frameX, 170)
     }
 
-    // MARK: - 3. Lasso corner handles and the lasso toolbar
-
-    final class Frames {
-        var lassoToolbar: CGRect?
-        var drawingToolbar: CGRect?
-    }
+    // MARK: - 3. Lasso corner handles
 
     /// The paged canvas's lasso layers, in the order and with the modifiers
     /// `NotebookDetailView.pagedCanvas` gives them (MystNotesDetailView.swift,
-    /// the `toolState.activeKind == .lasso` block), and - for compact width -
-    /// the floating drawing toolbar as `mainContent` overlays it. A copy of
-    /// that layout, because the real screen's tool is private `@State` a
-    /// test can't set to the lasso; if those lines change, this must too.
+    /// the `toolState.activeKind == .lasso` block). A copy of that layout,
+    /// because the real screen's tool is private `@State` a test can't set
+    /// to the lasso; if those lines change, this must too. The selection's
+    /// actions are a system edit menu on the canvas host now, so there is no
+    /// toolbar to lay out.
     private struct LassoHost: View {
         let viewport: CanvasViewport
         let selection: InkSelectionController
         let pageSize: CGSize
-        var floatingDrawingToolbar = false
-        let frames: Frames
-        @State private var tool = DrawingToolState()
-        @State private var openPopover: DrawingToolKind?
 
         var body: some View {
             ZStack {
@@ -426,26 +418,6 @@ final class SimProbeElementsTests: XCTestCase {
                     PageViewportLayer(viewport: viewport, pageSize: pageSize) { scale in
                         InkSelectionHandles(corners: corners, scale: scale, controller: selection)
                     }
-                }
-                if selection.hasSelection {
-                    NotebookDetailView.placeInkToolbar(
-                        InkSelectionToolbar(canPaste: true, onCut: {}, onCopy: {}, onPaste: {}, onDuplicate: {},
-                                            onDelete: {}, onLinkTo: {}, onDone: {})
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.lassoToolbar = $0 },
-                        corners: selection.display.corners, viewport: viewport)
-                }
-            }
-            .overlay(alignment: .top) {
-                if floatingDrawingToolbar && !selection.hasSelection {   // mainContent hides it while ink is selected
-                    GeometryReader { geo in
-                        DrawingToolbarView(style: .floating, toolState: $tool, openPopover: $openPopover,
-                                           canUndo: true, canRedo: false, isFillToolAvailable: true,
-                                           isTextBoxAvailable: true, containerSize: geo.size,
-                                           onUndo: {}, onRedo: {}, onAddTextBox: {}, onAddSticker: {}, onAddLink: {})
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.drawingToolbar = $0 }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                    .padding(.top, 8)
                 }
             }
             .ignoresSafeArea()
@@ -511,9 +483,8 @@ final class SimProbeElementsTests: XCTestCase {
         let corners = try XCTUnwrap(selection.display.corners, "the lasso selected nothing")
         let viewport = CanvasViewport()
         viewport.hasSynced = true
-        let frames = Frames()
-        let window = try show(LassoHost(viewport: viewport, selection: selection, pageSize: CGSize(width: 820, height: 1000),
-                                        frames: frames), size: CGSize(width: 820, height: 700))
+        let window = try show(LassoHost(viewport: viewport, selection: selection, pageSize: CGSize(width: 820, height: 1000)),
+                              size: CGSize(width: 820, height: 700))
         defer { close(window) }
 
         try await settle()
@@ -538,113 +509,6 @@ final class SimProbeElementsTests: XCTestCase {
         let resized = try Shot(window)
         savePNG(resized.image, "probe-lasso-handles-resized")
         assertHandles(on: grown, in: resized, viewport, "after a resize at zoom 2")
-    }
-
-    /// PLAN.md "Owed on the iPad": the lasso toolbar, fully on screen.
-    ///
-    /// The toolbar is screen-space chrome, centred at the top of the
-    /// canvas, one row, never wrapping - so zoom and where the ink sits
-    /// don't move it, and the window width is what can clip it. Checked at
-    /// the widths an 11" iPad gives an app: full screen landscape and
-    /// portrait, and roughly the Split View and Slide Over widths (585,
-    /// 504, 375, 320). Every button must be inside the window.
-    ///
-    /// Cannot show: the Mac (a Catalyst window can be any width), the
-    /// buttons' taps, and the real screen's chrome around the canvas.
-    func testLassoToolbar_isFullyOnScreen_atIPadWindowWidths() async throws {
-        let (canvas, selection) = selected(at: CGPoint(x: 100, y: 300))
-        defer { _ = canvas }
-        var clipped: [String] = []
-        for width in [1180, 820, 585, 504, 375, 320] as [CGFloat] {
-            let frames = Frames()
-            let viewport = CanvasViewport()
-            viewport.hasSynced = true
-            let window = try show(LassoHost(viewport: viewport, selection: selection, pageSize: CGSize(width: width, height: 900),
-                                            frames: frames), size: CGSize(width: width, height: 600))
-            try await settle(0.6)
-            savePNG(try Shot(window).image, "probe-lasso-toolbar-\(Int(width))")
-            close(window)
-            guard let bar = frames.lassoToolbar else { clipped.append("\(Int(width)): toolbar never laid out"); continue }
-            print("PROBE lasso toolbar at width \(Int(width)): \(bar)")
-            if bar.minX < 0 || bar.maxX > width {
-                clipped.append("\(Int(width)) pt: toolbar spans x \(Int(bar.minX))...\(Int(bar.maxX)) (\(Int(bar.width)) pt wide)")
-            }
-        }
-        XCTAssertTrue(clipped.isEmpty,
-                      "the lasso toolbar runs off the window, so its end buttons (Cut on the left, Delete and Done on the right) can't be reached: "
-                      + clipped.joined(separator: "; "))
-    }
-
-    /// PLAN.md "Owed on the iPad": the lasso toolbar, reachable.
-    ///
-    /// In compact width (Split View, Slide Over) the drawing toolbar isn't
-    /// in the navigation bar: it floats over the canvas, top centre, 8 pt
-    /// down - the same spot the lasso toolbar takes, and it is drawn above
-    /// it (an overlay on the canvas section). It is not hidden while ink is
-    /// selected, only while a picture is being placed. This checks the two
-    /// don't overlap at a compact width; 585 pt is an 11" iPad's half of
-    /// landscape Split View, where the lasso toolbar itself fits.
-    ///
-    /// Cannot show: that the floating bar, which can be dragged, is where
-    /// a user leaves it; and the real `horizontalSizeClass` decision (this
-    /// lays both out as the compact branch does).
-    func testLassoToolbar_isNotCoveredByTheFloatingDrawingToolbar_inCompactWidth() async throws {
-        let (canvas, selection) = selected(at: CGPoint(x: 100, y: 300))
-        defer { _ = canvas }
-        let frames = Frames()
-        let viewport = CanvasViewport()
-        viewport.hasSynced = true
-        let window = try show(LassoHost(viewport: viewport, selection: selection, pageSize: CGSize(width: 585, height: 900),
-                                        floatingDrawingToolbar: true, frames: frames), size: CGSize(width: 585, height: 700))
-        defer { close(window) }
-        try await settle()
-        savePNG(try Shot(window).image, "probe-lasso-toolbar-compact")
-
-        let lasso = try XCTUnwrap(frames.lassoToolbar, "the lasso toolbar never laid out")
-        // The fix hides the floating bar while ink is selected: no frame at all is fine.
-        let drawing = frames.drawingToolbar ?? .null
-        print("PROBE compact: lasso toolbar \(lasso), floating drawing toolbar \(drawing)")
-        XCTAssertFalse(lasso.intersects(drawing),
-                       "in compact width the floating drawing toolbar (\(drawing)) is drawn over the lasso toolbar (\(lasso)): "
-                       + "\(Int(lasso.intersection(drawing).width)) x \(Int(lasso.intersection(drawing).height)) pt of the lasso toolbar's buttons are under it")
-    }
-
-    /// PLAN.md "Owed on the iPad": lasso corner handles, reachable.
-    ///
-    /// Ink near the top of the view - a heading at the top of the page, at
-    /// fit - puts the selection's top corner handles where the lasso
-    /// toolbar sits. The toolbar is later in the ZStack, so it is drawn
-    /// over them and takes their touches; and with ink selected the page
-    /// can't pan (`gateCanvasGestures`) to bring them out. The only way to
-    /// a top handle is to drag the ink down first. This checks no handle,
-    /// with its 12 pt of extra hit area, lies under the toolbar.
-    ///
-    /// Cannot show: a finger missing the handle; this is geometry only.
-    func testLassoHandles_atTheTopOfTheView_areNotUnderTheLassoToolbar() async throws {
-        // A heading ~30 pt below the top of the canvas: its box's top edge
-        // falls in the toolbar's band (8 pt down, ~46 pt tall).
-        let (canvas, selection) = selected(at: CGPoint(x: 360, y: 34))
-        defer { _ = canvas }
-        let corners = try XCTUnwrap(selection.display.corners, "the lasso selected nothing")
-        let frames = Frames()
-        let viewport = CanvasViewport()
-        viewport.hasSynced = true
-        let window = try show(LassoHost(viewport: viewport, selection: selection, pageSize: CGSize(width: 820, height: 1000),
-                                        frames: frames), size: CGSize(width: 820, height: 700))
-        defer { close(window) }
-        try await settle()
-        savePNG(try Shot(window).image, "probe-lasso-handles-under-toolbar")
-
-        let bar = try XCTUnwrap(frames.lassoToolbar, "the lasso toolbar never laid out")
-        // A handle is 14 pt with a 12 pt larger hit area: reachable if any
-        // of that circle (radius 19) is outside the toolbar.
-        let covered = corners.map { screen($0, viewport) }.filter { point in
-            bar.contains(CGRect(x: point.x - 19, y: point.y - 19, width: 38, height: 38))
-        }
-        XCTAssertTrue(covered.isEmpty,
-                      "\(covered.count) corner handle(s) at \(covered.map { "(\(Int($0.x)), \(Int($0.y)))" }.joined(separator: ", ")) "
-                      + "are entirely under the lasso toolbar (\(bar)), which is drawn over them and takes the touch; "
-                      + "the page can't pan while ink is selected, so they can only be reached by dragging the ink down first")
     }
 
     // MARK: - 4. Editing a text box: drag selects, a handle moves it
