@@ -27,22 +27,31 @@ nonisolated enum StudyScope: String, CaseIterable, Identifiable, Sendable {
 nonisolated enum StudyContext {
     static let notIndexedNote = "(handwriting not yet indexed)"
 
+    /// A PDF page whose text has not been read yet.
+    struct PDFRef: Equatable, Sendable {
+        var fileRef: String
+        var pageIndex: Int
+    }
+
     struct Entry: Equatable, Sendable {
         var number: Int
         var title: String?
         var typed: [String]
         var recognized: String?
         var pdf: [String]
+        /// PDF pages still to be read (off the main thread) into `pdf`.
+        var pdfPending: [PDFRef]
         /// True once OCR has run for the page (even if it found nothing).
         var handwritingIndexed: Bool
 
         init(number: Int, title: String? = nil, typed: [String] = [], recognized: String? = nil,
-             pdf: [String] = [], handwritingIndexed: Bool = true) {
+             pdf: [String] = [], pdfPending: [PDFRef] = [], handwritingIndexed: Bool = true) {
             self.number = number
             self.title = title
             self.typed = typed
             self.recognized = recognized
             self.pdf = pdf
+            self.pdfPending = pdfPending
             self.handwritingIndexed = handwritingIndexed
         }
 
@@ -87,19 +96,46 @@ nonisolated enum StudyContext {
         return line
     }
 
+    /// Reads the pending PDF pages on a background thread and returns the
+    /// entries with their text filled in. Takes and returns values only.
+    static func resolvingPDFText(_ entries: [Entry]) async -> [Entry] {
+        await Task.detached(priority: .userInitiated) { fillPDFText(entries) }.value
+    }
+
+    /// Synchronous body of `resolvingPDFText`; call it only off the main thread.
+    static func fillPDFText(_ entries: [Entry]) -> [Entry] {
+        entries.map { entry in
+            guard !entry.pdfPending.isEmpty else { return entry }
+            var out = entry
+            for ref in entry.pdfPending {
+                if let t = PDFTextExtractor.text(fileRef: ref.fileRef, pageIndex: ref.pageIndex) { out.pdf.append(t) }
+            }
+            out.pdfPending = []
+            return out
+        }
+    }
+
     /// Turns pages into entries. `numbers` are 1-based positions in the notebook.
+    /// PDF text is taken from the cache only; pages not read yet are listed
+    /// in `pdfPending` so the file is never opened on the main thread.
+    @MainActor
     static func entries(for pages: [(number: Int, page: Page)],
                         documents: [UUID: [ImportedDocument]]) -> [Entry] {
         pages.map { number, page in
             let blocks = (page.textBlocks ?? []).sorted { ($0.frameY, $0.frameX) < ($1.frameY, $1.frameX) }
             var pdf: [String] = []
+            var pending: [PDFRef] = []
             for doc in documents[page.id] ?? [] where doc.sourceType == "pdf" && !doc.fileRef.isEmpty {
-                if let t = SearchIndex.pdfPageText(fileRef: doc.fileRef, pageIndex: doc.pdfPageIndex) { pdf.append(t) }
+                switch PDFTextExtractor.lookup(fileRef: doc.fileRef, pageIndex: doc.pdfPageIndex) {
+                case .hit(let t): pdf.append(t)
+                case .failed: break
+                case .unknown: pending.append(PDFRef(fileRef: doc.fileRef, pageIndex: doc.pdfPageIndex))
+                }
             }
             let recognized = page.recognizedTextCache
             let indexed = page.ocrUpdatedAt != nil || !(recognized ?? "").trimmed.isEmpty
             return Entry(number: number, title: page.title, typed: blocks.map(\.content),
-                         recognized: recognized, pdf: pdf, handwritingIndexed: indexed)
+                         recognized: recognized, pdf: pdf, pdfPending: pending, handwritingIndexed: indexed)
         }
     }
 }
@@ -245,6 +281,8 @@ nonisolated enum HandwritingWriter {
         var rgba: [Double]
         var width: CGFloat
         var seed: UInt64
+        /// Test seam: called from `build`, so a test can see which thread ran it.
+        var onBuild: (@Sendable () -> Void)?
     }
 
     struct Output: @unchecked Sendable {
@@ -257,12 +295,13 @@ nonisolated enum HandwritingWriter {
     }
 
     static func build(_ r: Request) -> Output {
+        r.onBuild?()
         let c = r.rgba
         let color = UIColor(red: c[0], green: c[1], blue: c[2], alpha: c[3])
         let strokes = HandwritingSynth.layout(
             text: r.text, profile: HandwritingProfileStore.load(), origin: r.placement.origin,
             maxWidth: r.placement.maxWidth, xHeight: r.placement.xHeight,
-            ink: PKInk(r.inkType, color: color), width: r.width, baseDate: Date(), seed: r.seed)
+            ink: PKInkingTool(r.inkType, color: color, width: r.width).ink, width: r.width, baseDate: Date(), seed: r.seed)
         return Output(strokes: strokes, maxY: strokes.map { $0.renderBounds.maxY }.max() ?? 0)
     }
 }
@@ -357,6 +396,7 @@ struct StudyPanelView: View {
     @State private var scope: StudyScope = .page
     @State private var contextCount = 0
     @State private var contextReadable = true
+    @State private var reading = false
     @State private var hasKey = Keychain.get(Keychain.Account.featherless) != nil
     @State private var hasProfile = FileManager.default.fileExists(atPath: HandwritingProfileStore.fileURL.path)
     @State private var asking = false
@@ -378,6 +418,12 @@ struct StudyPanelView: View {
                 }
                 .pickerStyle(.segmented)
                 if case .idle = model.phase, !model.hasSent { sendNote }
+                if reading {
+                    HStack(spacing: Space.s) {
+                        ProgressView()
+                        Text("Reading…").font(Typography.caption).foregroundStyle(.secondary)
+                    }
+                }
                 tiles
                 if asking { askField }
                 result
@@ -388,7 +434,7 @@ struct StudyPanelView: View {
             }
             .padding(Space.l)
         }
-        .task(id: ContextKey(scope: scope, pageID: pageID)) { refreshContext() }
+        .task(id: ContextKey(scope: scope, pageID: pageID)) { await refreshContext() }
         .onAppear {
             hasKey = Keychain.get(Keychain.Account.featherless) != nil
             hasProfile = FileManager.default.fileExists(atPath: HandwritingProfileStore.fileURL.path)
@@ -439,13 +485,13 @@ struct StudyPanelView: View {
     }
 
     private var tiles: some View {
-        let enabled = hasKey && contextReadable && !isLoading
+        let enabled = hasKey && contextReadable && !isLoading && !reading
         return LazyVGrid(columns: [GridItem(.flexible(), spacing: Space.m), GridItem(.flexible(), spacing: Space.m)],
                          spacing: Space.m) {
             tile("Summarize", "text.alignleft", enabled) { send(.summarize) }
             tile("Explain", "lightbulb", enabled) { send(.explain) }
             tile("Quiz Me", "rectangle.on.rectangle.angled", enabled) { send(.quiz) }
-            tile("Ask", "questionmark.bubble", hasKey && contextReadable) { asking.toggle() }
+            tile("Ask", "questionmark.bubble", hasKey && contextReadable && !reading) { asking.toggle() }
         }
     }
 
@@ -605,13 +651,22 @@ struct StudyPanelView: View {
 
     private var isLoading: Bool { if case .loading = model.phase { return true } else { return false } }
 
-    private func refreshContext() {
-        let e = entries(scope)
+    private func refreshContext() async {
+        var e = entries(scope)
+        let needsReading = e.contains { !$0.pdfPending.isEmpty }
+        reading = needsReading
+        if needsReading {
+            e = await StudyContext.resolvingPDFText(e)
+            // A newer refresh owns the state now.
+            guard !Task.isCancelled else { return }
+            reading = false
+        }
         contextCount = StudyContext.text(pages: e).count
         contextReadable = StudyContext.hasReadableText(e)
     }
 
     private func send(_ action: StudyPanelModel.Action) {
+        guard !reading else { return }
         player.stop()
         status = nil
         let e = entries(scope)

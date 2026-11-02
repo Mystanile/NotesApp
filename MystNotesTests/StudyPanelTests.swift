@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import PencilKit
 @testable import Mystnotes
 
 final class StudyPanelTests: XCTestCase {
@@ -129,5 +130,46 @@ final class StudyPanelTests: XCTestCase {
         try Data("{}".utf8).write(to: source)
         LibraryExport.addHandwritingProfile(from: source, to: root)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("Handwriting/profile.json")), Data("{}".utf8))
+    }
+
+    func testAddHandwritingProfile_neverOverwritesAnExistingFile() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("StudyPanelTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("profile.json")
+        let root = dir.appendingPathComponent("root", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: source)
+
+        let folder = root.appendingPathComponent("Handwriting", isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: folder.appendingPathComponent("profile.json"))
+
+        LibraryExport.addHandwritingProfile(from: source, to: root)
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("profile.json")), Data("old".utf8))
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("profile-1.json")), Data("new".utf8))
+    }
+
+    // MARK: Off the main thread
+
+    final class ThreadProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var calls = 0
+        private(set) var onMain = 0
+        func record() { lock.lock(); calls += 1; if Thread.isMainThread { onMain += 1 }; lock.unlock() }
+    }
+
+    @MainActor
+    func testHandwritingWriter_generate_runsOffTheMainThread() async {
+        let probe = ThreadProbe()
+        let request = HandwritingWriter.Request(
+            text: "Hello", placement: .init(origin: CGPoint(x: 24, y: 24), maxWidth: 300, xHeight: 9),
+            inkType: .pen, rgba: [0, 0, 0, 1], width: 3, seed: 7,
+            onBuild: { probe.record() })
+
+        _ = await HandwritingWriter.generate(request)
+
+        XCTAssertEqual(probe.calls, 1, "the layout ran")
+        XCTAssertEqual(probe.onMain, 0, "handwriting layout ran on the main thread")
     }
 }

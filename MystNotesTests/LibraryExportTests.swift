@@ -48,13 +48,34 @@ final class LibraryExportTests: XCTestCase {
         XCTAssertTrue(markdown.contains("## Page 2"), markdown)
     }
 
+    /// A profile URL that does not exist, so counts never depend on the real
+    /// library's taught handwriting.
+    private func absent(in directory: URL) -> URL { directory.appendingPathComponent("no-such-profile.json") }
+
+    @MainActor
+    func testLibraryArchive_includesTheTaughtHandwriting() async throws {
+        let (_, physics, _) = try library()
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryExportTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let profile = work.appendingPathComponent("profile-source.json")
+        try Data("{\"taught\":true}".utf8).write(to: profile)
+
+        let (folder, _) = try await LibraryExport.makeArchive(of: [physics], documents: [], in: work,
+                                                              handwritingProfile: profile)
+
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("Handwriting/profile.json")),
+                       Data("{\"taught\":true}".utf8))
+    }
+
     @MainActor
     func testLibraryArchive_isAZipOfEveryNotebookAsPDFAndMarkdown() async throws {
         let (_, physics, loose) = try library()
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryExportTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: work) }
 
-        let (folder, zip) = try await LibraryExport.makeArchive(of: [physics, loose], documents: [], in: work)
+        let (folder, zip) = try await LibraryExport.makeArchive(of: [physics, loose], documents: [], in: work,
+                                                                handwritingProfile: absent(in: work))
 
         let files = try XCTUnwrap(FileManager.default.subpaths(atPath: folder.path)).sorted()
         XCTAssertEqual(files.filter { !$0.hasSuffix("/") && $0.contains(".") },
@@ -77,7 +98,8 @@ final class LibraryExportTests: XCTestCase {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryExportTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: work) }
 
-        let (folder, _) = try await LibraryExport.makeArchive(of: [loose, twin], documents: [], in: work)
+        let (folder, _) = try await LibraryExport.makeArchive(of: [loose, twin], documents: [], in: work,
+                                                                handwritingProfile: absent(in: work))
 
         let markdown = try XCTUnwrap(FileManager.default.subpaths(atPath: folder.path)).filter { $0.hasSuffix(".md") }
         XCTAssertEqual(markdown.count, 2, "both notebooks are in the export: \(markdown)")

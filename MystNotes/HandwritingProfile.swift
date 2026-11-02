@@ -90,9 +90,9 @@ nonisolated enum HandwritingProfileStore {
         FileStore.baseDirectory().appendingPathComponent("Handwriting", isDirectory: true)
     }
 
-    /// Exposed so export and backup can include it.
-    /// TODO(invariant 9): `LibraryExport` / `Backup` must add this file;
-    /// that wiring is a later task. Until then a profile is not in exports.
+    /// Exposed so export and backup can include it (`LibraryExport`,
+    /// `Backup`). Restoring a backup does not bring the profile back yet:
+    /// the file is in the archive for the user, but nothing reads it on restore.
     static var fileURL: URL {
         directoryURL.appendingPathComponent("profile.json")
     }

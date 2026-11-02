@@ -32,6 +32,10 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(restored.ink(forPageID: page.id), Data("the second law".utf8), "the ink didn't come back")
     }
 
+    /// A profile URL that does not exist, so the test never depends on the
+    /// real library's taught handwriting.
+    private var absentProfile: URL { harness.root.appendingPathComponent("no-such-profile.json") }
+
     func testArchive_isAZipNamedForTheWeekday_overwrittenAWeekLater() throws {
         let ipad = try harness.makeDevice("iPad")
         _ = try ipad.createNotebook(title: "Thermo", pageCount: 1)
@@ -40,13 +44,15 @@ final class BackupTests: XCTestCase {
 
         let monday = ISO8601DateFormatter().date(from: "2026-09-28T09:00:00Z")!
         let zip = try Backup.archive(container: ipad.container, localFiles: ipad.filesDirectory,
-                                     to: destination, now: monday)
+                                     to: destination, now: monday,
+                                     handwritingProfile: absentProfile)
         XCTAssertTrue(zip.lastPathComponent.hasPrefix("Mystnotes Backup"), zip.lastPathComponent)
         XCTAssertEqual(Array(try Data(contentsOf: zip).prefix(4)), [0x50, 0x4B, 0x03, 0x04])
 
         let nextMonday = monday.addingTimeInterval(7 * 24 * 3600)
         let again = try Backup.archive(container: ipad.container, localFiles: ipad.filesDirectory,
-                                       to: destination, now: nextMonday)
+                                       to: destination, now: nextMonday,
+                                       handwritingProfile: absentProfile)
         XCTAssertEqual(again, zip, "a week later the same day's file is replaced")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path).count, 1)
     }

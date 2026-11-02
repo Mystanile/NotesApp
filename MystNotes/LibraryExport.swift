@@ -100,10 +100,14 @@ enum LibraryExport {
         let fm = FileManager.default
         guard fm.fileExists(atPath: source.path) else { return }
         let folder = root.appendingPathComponent("Handwriting", isDirectory: true)
-        let target = folder.appendingPathComponent("profile.json")
+        var target = folder.appendingPathComponent("profile.json")
+        var copy = 1
+        while fm.fileExists(atPath: target.path) {
+            target = folder.appendingPathComponent("profile-\(copy).json")
+            copy += 1
+        }
         do {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: target.path) { return }
             try fm.copyItem(at: source, to: target)
         } catch {
             AppLog.note("export", "handwriting profile not copied: \(error)")

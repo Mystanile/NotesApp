@@ -6,27 +6,11 @@ import PDFKit
 /// recognized handwriting (Vision OCR, cached in `recognizedTextCache`), and
 /// the text layer of an imported PDF (extracted from the file on demand).
 enum SearchIndex {
-    /// Memoized PDF text so we don't re-read a (potentially large) PDF file on
-    /// every keystroke. Key: "<fileRef>:<pageIndex>".
-    private static var pdfTextCache: [String: String] = [:]
-
     /// The text of one page within an imported PDF, extracted lazily and cached.
+    /// Synchronous: callers on the main thread should prefer
+    /// `PDFTextExtractor.lookup` and extract off-main (the Study panel does).
     static func pdfPageText(fileRef: String, pageIndex: Int) -> String? {
-        let key = "\(fileRef):\(pageIndex)"
-        if let cached = pdfTextCache[key] { return cached }
-
-        let url = FileStore.url(for: fileRef)
-        guard let document = PDFDocument(url: url) else { return nil }
-
-        // Extract every page's text once, then cache per-page entries.
-        var texts: [String] = []
-        for i in 0..<document.pageCount {
-            texts.append(document.page(at: i)?.string ?? "")
-        }
-        for (i, text) in texts.enumerated() {
-            pdfTextCache["\(fileRef):\(i)"] = text
-        }
-        return texts.indices.contains(pageIndex) ? texts[pageIndex] : nil
+        PDFTextExtractor.text(fileRef: fileRef, pageIndex: pageIndex)
     }
 
     // MARK: - Blob cache
@@ -104,5 +88,52 @@ enum SearchIndex {
         }
 
         return parts.joined(separator: "\n").lowercased()
+    }
+}
+/// Memoized PDF text so a (potentially large) PDF is not re-read on every
+/// keystroke or panel refresh. Safe to call from any thread: the tables are
+/// guarded by a lock and the PDF is parsed outside it. A file that fails to
+/// open is remembered, so a broken PDF is not retried on every refresh.
+nonisolated enum PDFTextExtractor {
+    enum Lookup: Equatable, Sendable {
+        case hit(String)
+        /// Known to have no text for this page (unreadable file, or page out of range).
+        case failed
+        /// Not read yet.
+        case unknown
+    }
+
+    private static let lock = NSLock()
+    /// Key: "<fileRef>:<pageIndex>".
+    nonisolated(unsafe) private static var pages: [String: String] = [:]
+    nonisolated(unsafe) private static var loadedFiles: Set<String> = []
+    nonisolated(unsafe) private static var failedFiles: Set<String> = []
+
+    /// What the cache knows, without touching the disk.
+    static func lookup(fileRef: String, pageIndex: Int) -> Lookup {
+        lock.lock(); defer { lock.unlock() }
+        if let text = pages["\(fileRef):\(pageIndex)"] { return .hit(text) }
+        if loadedFiles.contains(fileRef) || failedFiles.contains(fileRef) { return .failed }
+        return .unknown
+    }
+
+    /// The page's text, reading the whole file once if it is not cached.
+    static func text(fileRef: String, pageIndex: Int) -> String? {
+        switch lookup(fileRef: fileRef, pageIndex: pageIndex) {
+        case .hit(let text): return text
+        case .failed: return nil
+        case .unknown: break
+        }
+        guard let document = PDFDocument(url: FileStore.url(for: fileRef)) else {
+            lock.lock(); failedFiles.insert(fileRef); lock.unlock()
+            return nil
+        }
+        var texts: [String] = []
+        for i in 0..<document.pageCount { texts.append(document.page(at: i)?.string ?? "") }
+        lock.lock()
+        for (i, text) in texts.enumerated() { pages["\(fileRef):\(i)"] = text }
+        loadedFiles.insert(fileRef)
+        lock.unlock()
+        return texts.indices.contains(pageIndex) ? texts[pageIndex] : nil
     }
 }
