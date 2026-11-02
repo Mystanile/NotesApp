@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 import SwiftData
+import SwiftUI
+import UIKit
 
 /// Folder-based library sync - the free-account alternative to CloudKit.
 ///
@@ -249,12 +251,61 @@ final class SyncEngine: ObservableObject {
         start(pull: true, push: false)
     }
 
-    /// Backgrounding doesn't wait for the debounce.
+    /// Whether becoming active should pull. `previous` is the last scene
+    /// phase other than `.inactive`: a Control Center peek goes
+    /// active -> inactive -> active and missed nothing, while a return
+    /// from `.background` may have missed a lot. `nil` is launch, which
+    /// `ContentView.task` already pulls for.
+    nonisolated static func shouldPullOnActive(previous: ScenePhase?) -> Bool {
+        previous == .background
+    }
+
+    /// Serial, so a suspend and the resume that follows it can't swap
+    /// places. `removeFilePresenter` can block on in-flight coordination.
+    nonisolated private static let watcherQueue = DispatchQueue(label: "MystNotes.SyncEngine.watcher", qos: .utility)
+
+    /// The app went to the background: stop the file presenter so the
+    /// process isn't woken for every change in the folder. The foreground
+    /// pull catches up on whatever was missed.
+    func suspendWatching() {
+        guard let watcher else { return }
+        Self.watcherQueue.async { watcher.suspend() }
+    }
+
+    /// Back in the foreground. Does not pull; `pullOnForeground` does.
+    func resumeWatching() {
+        guard let watcher else { return }
+        Self.watcherQueue.async { watcher.resume() }
+    }
+
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "MystNotes.sync.push") { [weak self] in
+            AppLog.note("sync", "background time expired during push")
+            Task { @MainActor [weak self] in self?.endBackgroundTask() }
+        }
+    }
+
+    private func endBackgroundTask() {
+        // Idempotent: only ends a task this engine holds.
+        guard backgroundTask != .invalid else { return }
+        let task = backgroundTask
+        backgroundTask = .invalid
+        UIApplication.shared.endBackgroundTask(task)
+    }
+
+    /// Backgrounding doesn't wait for the debounce. The push is held open
+    /// with a background task so iOS doesn't suspend the app mid-write; it
+    /// ends when the engine goes idle (or when the system says time is up).
     func pushOnBackground() {
         debouncer.cancel()
         writeMirror()
-        guard SyncFolder.isConfigured else { return }
+        guard SyncFolder.isConfigured, container != nil else { return }
+        beginBackgroundTask()
         start(pull: false, push: true)
+        if !isRunning { endBackgroundTask() }
     }
 
     private func start(pull: Bool, push: Bool) {
@@ -289,6 +340,7 @@ final class SyncEngine: ObservableObject {
             AppLog.note("sync", "run did not finish within \(Int(Self.runWatchdogInterval)) s; no longer waiting for it")
             self.isRunning = false
             self.currentRunID = nil
+            self.endBackgroundTask()
             self.status = .waiting("Sync is taking longer than expected. It will retry.")
         }
         let work = Self.runDetached(container: container, environment: environment, pull: pull, push: push)
@@ -313,8 +365,14 @@ final class SyncEngine: ObservableObject {
             }
             if self.pushAgainWhenDone {
                 self.pushAgainWhenDone = false
+                // The background task was held for the run that just ended;
+                // a chained push in the background needs one of its own.
+                if UIApplication.shared.applicationState == .background {
+                    self.beginBackgroundTask()
+                }
                 self.start(pull: false, push: true)
             }
+            if !self.isRunning { self.endBackgroundTask() }
         }
     }
 }
@@ -1479,6 +1537,43 @@ nonisolated struct SyncRunner {
         let store = DrawingStore.inDirectory(environment.localFilesDirectory())
         for page in notebook.pages ?? [] {
             store.trashDrawing(forPageID: page.id)
+        }
+    }
+}
+
+
+// MARK: - App lifecycle (process-wide)
+
+/// `scenePhase` is per scene, but the main-thread watchdog, the folder
+/// watcher and the background push are process-wide. With several windows
+/// (`MystnotesWindowView`) one scene backgrounding must not pause them for
+/// the others, so they follow the application's notifications instead,
+/// registered once at launch. The per-scene foreground pull stays in
+/// `ContentView`.
+@MainActor
+enum AppLifecycle {
+    private static var started = false
+
+    static func start() {
+        guard !started else { return }
+        started = true
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                MainThreadWatchdog.checkpoint("AppLifecycle.didEnterBackground")
+                // Paused in the background only: a hang while inactive still matters.
+                MainThreadWatchdog.pause()
+                SyncEngine.shared.pushOnBackground()
+                SyncEngine.shared.suspendWatching()
+                // After the notebook's own save, which runs at .inactive.
+                NotebookLock.shared.relockAll()
+            }
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                MainThreadWatchdog.resume()
+                SyncEngine.shared.resumeWatching()
+            }
         }
     }
 }

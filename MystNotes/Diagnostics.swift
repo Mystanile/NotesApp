@@ -105,7 +105,7 @@ nonisolated enum MainThreadWatchdog {
     /// How often the watchdog thread looks. The main thread is only
     /// pinged when there's no outstanding ping, so this is what bounds
     /// the resolution, not how often main is woken.
-    static let pollInterval: TimeInterval = 0.05
+    static let pollInterval: TimeInterval = 0.25
     private static let lock = NSLock()
     private static var lastCheckpoint = "(none)"
     private static var lastCheckpointAt = Date()
@@ -135,6 +135,57 @@ nonisolated enum MainThreadWatchdog {
 
     private static var started = false
 
+    // MARK: Pausing (background)
+
+    nonisolated(unsafe) private static let pauseCondition = NSCondition()
+    private static var paused = false
+    private static var pingCount = 0
+
+    /// Pings sent to the main thread so far (for tests).
+    static var pingsSent: Int {
+        lock.lock(); defer { lock.unlock() }
+        return pingCount
+    }
+
+    /// Parks the watchdog thread (zero wakeups) while the app is in the
+    /// background. Any outstanding ping is forgotten, so the pause itself
+    /// never reads as a hang. Takes effect within one `pollInterval`.
+    static func pause() {
+        pauseCondition.lock()
+        paused = true
+        pauseCondition.unlock()
+        clearState()
+    }
+
+    static func resume() {
+        clearState()
+        pauseCondition.lock()
+        paused = false
+        pauseCondition.broadcast()
+        pauseCondition.unlock()
+    }
+
+    private static func clearState() {
+        lock.lock()
+        let now = Date()
+        pingSent = nil
+        reportedThisHang = false
+        reportedStallThisHang = false
+        reportedSpin = false
+        reportedMode = false
+        lastIdle = now
+        idleModeSince = now
+        lock.unlock()
+    }
+
+    /// Blocks while paused. True if it actually waited.
+    private static func waitWhilePaused() -> Bool {
+        pauseCondition.lock(); defer { pauseCondition.unlock() }
+        guard paused else { return false }
+        while paused { pauseCondition.wait() }
+        return true
+    }
+
     static func start() {
         lock.lock(); let alreadyStarted = started; started = true; lock.unlock()
         guard !alreadyStarted else { return }
@@ -144,6 +195,9 @@ nonisolated enum MainThreadWatchdog {
         let thread = Thread {
             while true {
                 Thread.sleep(forTimeInterval: pollInterval)
+                // Checked after the sleep so a pause that arrived during it
+                // sends no further ping; state is reset on the way out.
+                if waitWhilePaused() { clearState(); continue }
                 lock.lock()
                 if pingSent == nil {
                     let busy = Date().timeIntervalSince(lastIdle)
@@ -193,6 +247,7 @@ nonisolated enum MainThreadWatchdog {
                     continue   // still waiting for the last ping
                 }
                 pingSent = Date()
+                pingCount += 1
                 lock.unlock()
                 DispatchQueue.main.async {
                     lock.lock()

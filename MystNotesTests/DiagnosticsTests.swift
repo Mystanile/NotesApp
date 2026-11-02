@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Mystnotes
 
 /// M0 task 21. MetricKit itself can only be exercised on a device; what a
@@ -49,5 +50,12 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertTrue(text.contains("diagnostic-2026-09-12T00-00-00Z-abcd1234.json"))
         XCTAssertTrue(text.contains("summary.txt"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("summary.txt").path))
+    }
+
+    func testShouldPullOnActive_onlyAfterBackground() {
+        XCTAssertTrue(SyncEngine.shouldPullOnActive(previous: .background))
+        XCTAssertFalse(SyncEngine.shouldPullOnActive(previous: .active))
+        XCTAssertFalse(SyncEngine.shouldPullOnActive(previous: .inactive))
+        XCTAssertFalse(SyncEngine.shouldPullOnActive(previous: nil), "launch is pulled by ContentView.task")
     }
 }

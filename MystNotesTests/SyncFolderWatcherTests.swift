@@ -45,6 +45,31 @@ final class SyncFolderWatcherTests: XCTestCase {
         XCTAssertEqual(changes, 2, "nothing after stop")
     }
 
+    func testSuspend_stopsEvents_andResume_restoresThem() async throws {
+        var changes = 0
+        let watcher = SyncFolderWatcher(url: directory, coalescingInterval: 0.3) { changes += 1 }
+        watcher.suspend()
+        XCTAssertFalse(watcher.isActive)
+        write("index.json", in: directory)
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        XCTAssertEqual(changes, 0, "no events while suspended")
+
+        watcher.resume()
+        XCTAssertTrue(watcher.isActive)
+        write("index.json", in: directory)
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        XCTAssertEqual(changes, 1, "events again after resume")
+        watcher.stop()
+    }
+
+    func testResume_afterStop_staysInactive() {
+        let watcher = SyncFolderWatcher(url: directory, coalescingInterval: 0.3) {}
+        watcher.suspend()
+        watcher.stop()
+        watcher.resume()
+        XCTAssertFalse(watcher.isActive, "a stopped watcher is not resurrected by a late resume")
+    }
+
     /// A coordinated write, the way the engine and iCloud's daemon write.
     private func write(_ name: String, in dir: URL) {
         let url = dir.appendingPathComponent(name)

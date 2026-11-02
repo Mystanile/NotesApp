@@ -17,6 +17,8 @@ struct ContentView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    /// The last scene phase other than `.inactive`; see `SyncEngine.shouldPullOnActive`.
+    @State private var lastSettledPhase: ScenePhase?
 
     var body: some View {
         Group {
@@ -62,16 +64,12 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             MainThreadWatchdog.checkpoint("ContentView.scenePhase \(phase)")
-            switch phase {
-            case .active:
+            // Watchdog pause, watcher suspend, background push and relock are
+            // process-wide: see `AppLifecycle`. Only the per-scene pull is here.
+            if phase == .active, SyncEngine.shouldPullOnActive(previous: lastSettledPhase) {
                 SyncEngine.shared.pullOnForeground()
-            case .background:
-                SyncEngine.shared.pushOnBackground()
-                // After the notebook's own save, which runs at .inactive.
-                NotebookLock.shared.relockAll()
-            default:
-                break
             }
+            if phase != .inactive { lastSettledPhase = phase }
         }
     }
 

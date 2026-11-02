@@ -10,6 +10,7 @@ struct NotebookApp: App {
         // Crash, hang and disk-write diagnostics arrive from MetricKit on
         // the launch after they happen; see Diagnostics.swift.
         CrashReporter.shared.start()
+        AppLifecycle.start()
         // Trashed payloads past their retention finally go. Local only -
         // the sync folder's trash is swept inside a sync run, while the
         // folder is held. Off the main thread: it stats a directory.

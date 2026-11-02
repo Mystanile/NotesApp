@@ -19,6 +19,10 @@ nonisolated final class SyncFolderWatcher: @unchecked Sendable {
     private let presenter: Presenter
     private let debouncer: SyncDebouncer
     private let stopAccess: @Sendable () -> Void
+    private let stateLock = NSLock()
+    private var isPresenting = false
+    /// Set by `stop()`; a stopped watcher never presents again.
+    private var stopped = false
 
     /// Starts watching `url`. `stopAccess` is called on `stop()` so a
     /// security-scoped folder can be held open for the watcher's lifetime.
@@ -37,16 +41,51 @@ nonisolated final class SyncFolderWatcher: @unchecked Sendable {
             }
         }
         NSFileCoordinator.addFilePresenter(presenter)
+        isPresenting = true
+    }
+
+    /// Takes the presenter off while the app is in the background, so the
+    /// process isn't woken for every change in the folder. Idempotent; may
+    /// block on in-flight coordination, so not on the main thread.
+    func suspend() {
+        stateLock.lock()
+        let shouldRemove = isPresenting
+        isPresenting = false
+        if shouldRemove { NSFileCoordinator.removeFilePresenter(presenter) }
+        stateLock.unlock()
+        guard shouldRemove else { return }
+        let debouncer = self.debouncer
+        Task { @MainActor in debouncer.cancel() }
+    }
+
+    /// Puts the presenter back. Does not pull: changes made while it was
+    /// off are the foreground pull's job. A stopped watcher stays stopped.
+    func resume() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard !stopped, !isPresenting else { return }
+        isPresenting = true
+        NSFileCoordinator.addFilePresenter(presenter)
+    }
+
+    var isActive: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return isPresenting
     }
 
     /// May be called from any thread. `removeFilePresenter` waits for
     /// in-flight coordination to finish, so callers on the main thread
     /// should hop off first.
     func stop() {
-        NSFileCoordinator.removeFilePresenter(presenter)
+        stateLock.lock()
+        let alreadyStopped = stopped
+        let shouldRemove = isPresenting
+        stopped = true
+        isPresenting = false
+        if shouldRemove { NSFileCoordinator.removeFilePresenter(presenter) }
+        stateLock.unlock()
         let debouncer = self.debouncer
         Task { @MainActor in debouncer.cancel() }
-        stopAccess()
+        if !alreadyStopped { stopAccess() }
     }
 
     /// The `NSFilePresenter` itself. Kept separate from the watcher so the
