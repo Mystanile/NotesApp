@@ -89,4 +89,40 @@ final class PageSidebarReorderTests: XCTestCase {
         XCTAssertEqual(SidebarReorderModel.clampedOffset(100, min: 0, max: 400), 100)
         XCTAssertEqual(SidebarReorderModel.clampedOffset(100, min: 0, max: -10), 0)
     }
+
+    // MARK: Press-and-hold hit-testing
+
+    private var frames: [Int: CGRect] {
+        // Three rows of 100 with a 14 gap, 10 pt in from the left.
+        [0: CGRect(x: 10, y: 0, width: 120, height: 100),
+         1: CGRect(x: 10, y: 114, width: 120, height: 100),
+         2: CGRect(x: 10, y: 228, width: 120, height: 100)]
+    }
+
+    func testRowIndex_findsTheRowUnderThePress() {
+        XCTAssertEqual(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: 50), frames: frames), 0)
+        XCTAssertEqual(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: 120), frames: frames), 1)
+        XCTAssertEqual(SidebarReorderModel.rowIndex(at: CGPoint(x: 129, y: 327), frames: frames), 2)
+    }
+
+    func testRowIndex_gapsAndOutsideAreNoRow() {
+        XCTAssertNil(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: 107), frames: frames))
+        XCTAssertNil(SidebarReorderModel.rowIndex(at: CGPoint(x: 5, y: 50), frames: frames))
+        XCTAssertNil(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: 400), frames: frames))
+        XCTAssertNil(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: .nan), frames: frames))
+        XCTAssertNil(SidebarReorderModel.rowIndex(at: CGPoint(x: 50, y: 50), frames: [:]))
+    }
+
+    func testRowIndex_overlapPicksTheLowestIndex() {
+        let overlapping: [Int: CGRect] = [3: CGRect(x: 0, y: 0, width: 50, height: 50),
+                                          2: CGRect(x: 0, y: 0, width: 50, height: 50)]
+        XCTAssertEqual(SidebarReorderModel.rowIndex(at: CGPoint(x: 10, y: 10), frames: overlapping), 2)
+    }
+
+    func testMenuCorner_isTheTopTrailing44() {
+        let frame = frames[0]!
+        XCTAssertTrue(SidebarReorderModel.isInMenuCorner(CGPoint(x: 120, y: 20), of: frame))
+        XCTAssertFalse(SidebarReorderModel.isInMenuCorner(CGPoint(x: 60, y: 20), of: frame))
+        XCTAssertFalse(SidebarReorderModel.isInMenuCorner(CGPoint(x: 120, y: 60), of: frame))
+    }
 }

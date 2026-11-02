@@ -96,6 +96,9 @@ struct DrawingToolState: Equatable {
     /// (`ShapeHoldRecognizer`). Freehand ink is always solid - PencilKit
     /// has no dashed ink, and a dashed shape is many short strokes.
     var shapeLineStyle: ShapeLineStyle = .solid
+    /// PencilKit's on-canvas ruler. Session only: never persisted, so a
+    /// fresh launch starts without a ruler in the way.
+    var rulerActive: Bool = false
 
     var pkTool: PKTool {
         switch activeKind {
@@ -568,6 +571,8 @@ struct DrawingToolbarView: View {
             toolButton(.eraser, systemImage: "eraser", label: "Eraser")
             if shows(.lasso) { toolButton(.lasso, systemImage: "lasso", label: "Lasso") }
             if shows(.fill) { toolButton(.fill, systemImage: "paintbrush.fill", label: "Fill", disabled: !isFillToolAvailable) }
+            // PencilKit's ruler is wired on paged pages only.
+            if isTextBoxAvailable { rulerButton }
 
             if hasInsertMenu {
                 Divider().frame(height: 24)
@@ -711,6 +716,21 @@ struct DrawingToolbarView: View {
     }
 
     @ViewBuilder
+    /// Toggles PencilKit's ruler. It is not a tool: it stays on while the
+    /// pen, highlighter or lasso changes. Hidden on whiteboards
+    /// (`isTextBoxAvailable` is false there), whose canvas doesn't apply it.
+    private var rulerButton: some View {
+        Button {
+            toolState.rulerActive.toggle()
+        } label: {
+            Image(systemName: "ruler")
+                .foregroundStyle(toolState.rulerActive ? Palette.ink : Color.primary)
+        }
+        .buttonStyle(ToolIconButtonStyle(isSelected: toolState.rulerActive))
+        .accessibilityLabel("Ruler")
+        .accessibilityAddTraits(toolState.rulerActive ? .isSelected : [])
+    }
+
     private func iconButton(_ systemImage: String, label: String, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)

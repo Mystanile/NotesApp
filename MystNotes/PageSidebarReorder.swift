@@ -9,9 +9,14 @@ import SwiftUI
 //  * REORDER MODE is the guaranteed path: a "Reorder" button above the list
 //    shows a grip (line.3.horizontal) on every cell, and a drag that starts on
 //    a grip lifts the page immediately - no long press.
-//  * A long-press lift on the thumbnail itself is NOT implemented: it would
-//    share the long press with `.contextMenu`, and SwiftUI offers no reliable
-//    way to let both coexist. The context menu keeps the long press.
+//  * PRESS-AND-HOLD (Canva/Keynote): a 0.3 s long press on any thumbnail lifts
+//    it and the same drag carries on with no mode. One list-level gesture,
+//    `LongPressGesture.sequenced(before: DragGesture)`, hit-tests the row
+//    from the stored frames. A tap still opens the page, and a swipe that
+//    moves before the hold completes fails the long press, so it scrolls.
+//  * That is why the cell has no `.contextMenu`: a long-press context menu and
+//    a long-press drag can't share one gesture. Its items sit behind an
+//    ellipsis `Menu` (`sidebarCellMenu`) on the current page and on hover.
 //  * One gesture on the whole list (not one per cell), because a LazyVStack
 //    drops cells that scroll away and a gesture on a dropped cell dies
 //    mid-drag during auto-scroll. The lifted page is drawn as an overlay for
@@ -69,6 +74,19 @@ nonisolated enum SidebarReorderModel {
             return maxStep * min(1, (pointerY - (viewportHeight - edge)) / edge)
         }
         return 0
+    }
+
+    /// The row whose frame holds `point` (content space). Gaps between rows
+    /// belong to no row. Overlapping frames: the lowest index wins.
+    static func rowIndex(at point: CGPoint, frames: [Int: CGRect]) -> Int? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        return frames.filter { $0.value.contains(point) }.keys.min()
+    }
+
+    /// The ellipsis button's 44 pt square at a row's top-trailing corner. A
+    /// press there belongs to the menu, not to a lift.
+    static func isInMenuCorner(_ point: CGPoint, of frame: CGRect, size: CGFloat = 44) -> Bool {
+        CGRect(x: frame.maxX - size, y: frame.minY, width: size, height: size).contains(point)
     }
 
     static func clampedOffset(_ proposed: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
@@ -156,6 +174,10 @@ struct PageSidebarReorderList<Cell: View, Footer: View>: View {
     @State private var liftCount = 0
     /// Resets to false when the drag ends *or is cancelled*.
     @GestureState private var touching = false
+    @GestureState private var holdTouching = false
+    /// True while the press-and-hold gesture owns the current drag, so the
+    /// grip gesture (live at the same time in Reorder mode) doesn't also steer it.
+    @State private var holdOwnsDrag = false
 
     private let edgeZone: CGFloat = 60
     private let spring = Animation.spring(response: 0.3, dampingFraction: 0.8)
@@ -194,8 +216,12 @@ struct PageSidebarReorderList<Cell: View, Footer: View>: View {
                 }
                 .overlay(alignment: .topLeading) { liftedOverlay }
                 .simultaneousGesture(reorderGesture, including: isReordering ? .all : .subviews)
+                .simultaneousGesture(holdGesture)
                 .onChange(of: touching) { _, now in
-                    if !now, drag != nil { cancelDrag() }
+                    if !now, drag != nil, !holdOwnsDrag { cancelDrag() }
+                }
+                .onChange(of: holdTouching) { _, now in
+                    if !now, drag != nil, holdOwnsDrag { cancelDrag() }
                 }
                 .task(id: drag != nil) { await autoScroll() }
                 .onAppear { scrollToCurrent(proxy) }
@@ -235,6 +261,8 @@ struct PageSidebarReorderList<Cell: View, Footer: View>: View {
         let lifted = drag?.pageID == page.id
         VStack(spacing: 0) {
             cell(index, page, isReordering)
+                // No tap on release after a lift.
+                .allowsHitTesting(drag == nil)
                 .accessibilityActions {
                     if index > 0 {
                         Button("Move up") { onMove(page.id, index - 1) }
@@ -293,33 +321,72 @@ struct PageSidebarReorderList<Cell: View, Footer: View>: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(SidebarSpace.viewport))
             .updating($touching) { _, state, _ in state = true }
             .onChanged { value in
-                if drag == nil { beginDrag(at: value.startLocation) }
-                guard var d = drag else { return }
-                d.translation = value.translation.height
-                d.pointerY = value.location.y
-                drag = d
+                if drag == nil { beginDrag(at: value.startLocation, requireGrip: true) }
+                guard !holdOwnsDrag else { return }
+                track(value)
             }
-            .onEnded { _ in endDrag() }
+            .onEnded { _ in if !holdOwnsDrag { endDrag() } }
     }
 
-    /// A drag lifts a page only when it starts on a grip (the bottom-trailing
-    /// corner of a cell); anywhere else it is left to the scroll view.
-    private func beginDrag(at start: CGPoint) {
+    /// Press and hold 0.3 s on any thumbnail, then drag. The long press has no
+    /// location, so the lift waits for the drag's first value, which starts
+    /// where the hold ended.
+    private var holdGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.3)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(SidebarSpace.viewport)))
+            .updating($holdTouching) { value, state, _ in
+                if case .second = value { state = true }
+            }
+            .onChanged { value in
+                guard case .second(true, let dragValue?) = value else { return }
+                if drag == nil {
+                    beginDrag(at: dragValue.startLocation, requireGrip: false)
+                    holdOwnsDrag = drag != nil
+                }
+                guard holdOwnsDrag else { return }
+                track(dragValue)
+            }
+            .onEnded { _ in if holdOwnsDrag { endDrag() } }
+    }
+
+    private func track(_ value: DragGesture.Value) {
+        guard var d = drag else { return }
+        d.translation = value.translation.height
+        d.pointerY = value.location.y
+        drag = d
+    }
+
+    /// With `requireGrip` a drag lifts a page only when it starts on a grip
+    /// (the bottom-trailing corner of a cell); without it (press and hold)
+    /// anywhere on a row but the menu button's corner. Elsewhere it is left to
+    /// the scroll view.
+    private func beginDrag(at start: CGPoint, requireGrip: Bool) {
         let visibleTop = metrics.offset + metrics.insetTop
         let point = CGPoint(x: start.x, y: start.y + visibleTop)
+        var indexed: [Int: CGRect] = [:]
         for (id, frame) in frameBox.frames {
-            let grip = CGRect(x: frame.maxX - 48, y: frame.maxY - 40, width: 48, height: 40)
-            guard grip.contains(point),
-                  let index = pages.firstIndex(where: { $0.id == id }) else { continue }
-            scrollTarget = metrics.offset
-            liftCount += 1
-            withAnimation(spring) {
-                drag = SidebarDragState(pageID: id, originIndex: index, count: pages.count,
-                                        rowHeight: frame.height, translation: 0, pointerY: start.y,
-                                        startScrollOffset: metrics.offset, scrollOffset: metrics.offset,
-                                        startViewportTop: frame.minY - visibleTop)
-            }
-            return
+            if let index = pages.firstIndex(where: { $0.id == id }) { indexed[index] = frame }
+        }
+        let hit: Int?
+        if requireGrip {
+            hit = indexed.first { _, frame in
+                CGRect(x: frame.maxX - 48, y: frame.maxY - 40, width: 48, height: 40).contains(point)
+            }?.key
+        } else if let index = SidebarReorderModel.rowIndex(at: point, frames: indexed),
+                  let frame = indexed[index],
+                  !SidebarReorderModel.isInMenuCorner(point, of: frame) {
+            hit = index
+        } else {
+            hit = nil
+        }
+        guard let index = hit, let frame = indexed[index] else { return }
+        scrollTarget = metrics.offset
+        liftCount += 1
+        withAnimation(spring) {
+            drag = SidebarDragState(pageID: pages[index].id, originIndex: index, count: pages.count,
+                                    rowHeight: frame.height, translation: 0, pointerY: start.y,
+                                    startScrollOffset: metrics.offset, scrollOffset: metrics.offset,
+                                    startViewportTop: frame.minY - visibleTop)
         }
     }
 
@@ -332,12 +399,14 @@ struct PageSidebarReorderList<Cell: View, Footer: View>: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             drag = nil
+            holdOwnsDrag = false
             if target != d.originIndex { onMove(d.pageID, target) }
         }
     }
 
     private func cancelDrag() {
         withAnimation(spring) { drag = nil }
+        holdOwnsDrag = false
     }
 
     /// Scrolls while the pointer sits in the top or bottom edge zone. A task
@@ -455,5 +524,48 @@ struct PageAddMenu: View {
                     }
             }
         }
+    }
+}
+
+// MARK: - Cell menu
+
+/// The ellipsis menu that replaced the thumbnail's `.contextMenu` (see the
+/// design notes at the top). Shown on the current page's cell and while a
+/// pointer hovers; always with VoiceOver on, which has no hover.
+struct SidebarCellMenu<MenuContent: View>: ViewModifier {
+    let isCurrent: Bool
+    @ViewBuilder let menu: () -> MenuContent
+    @State private var hovering = false
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering = $0 }
+            .overlay(alignment: .topTrailing) {
+                if isCurrent || hovering || voiceOver {
+                    Menu {
+                        menu()
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(.regularMaterial))
+                            .overlay(Circle().strokeBorder(Palette.separator, lineWidth: Metrics.hairline))
+                            .frame(width: Metrics.minHitTarget, height: Metrics.minHitTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Page actions")
+                    .transition(.opacity)
+                }
+            }
+            .animation(Motion.quick, value: hovering)
+    }
+}
+
+extension View {
+    func sidebarCellMenu<MenuContent: View>(isCurrent: Bool,
+                                            @ViewBuilder _ menu: @escaping () -> MenuContent) -> some View {
+        modifier(SidebarCellMenu(isCurrent: isCurrent, menu: menu))
     }
 }

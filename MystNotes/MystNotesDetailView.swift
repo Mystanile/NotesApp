@@ -845,7 +845,8 @@ struct NotebookDetailView: View {
                     jumpToPage(at: target)
                     return true
                 } : nil,
-                fingerDrawing: fingerDrawing
+                fingerDrawing: fingerDrawing,
+                isRulerActive: toolState.rulerActive
             )
 
             if toolState.activeKind == .lasso && !isPresenting {
@@ -1119,7 +1120,10 @@ struct NotebookDetailView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                    .contextMenu {
+                    // Not `.contextMenu`: a long press now lifts the page
+                    // to drag it, and one long press can't be both. The same
+                    // items sit behind the cell's ellipsis button.
+                    .sidebarCellMenu(isCurrent: index == currentPageIndex) {
                         Button {
                             page.isBookmarked = !(page.isBookmarked ?? false)
                             page.markModified()

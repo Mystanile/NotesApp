@@ -396,6 +396,8 @@ struct PencilCanvasView: UIViewRepresentable {
     /// "Draw with finger", handed down by the detail view (which observes
     /// the setting) so a change reaches an open page at once.
     var fingerDrawing: Bool = false
+    /// PencilKit's ruler, from `DrawingToolState.rulerActive`.
+    var isRulerActive: Bool = false
 
     func makeUIView(context: Context) -> PagedCanvasHostView {
         let host = PagedCanvasHostView()
@@ -520,6 +522,7 @@ struct PencilCanvasView: UIViewRepresentable {
         if canvas.alwaysBounceHorizontal { canvas.alwaysBounceHorizontal = false }
         if canvas.showsVerticalScrollIndicator { canvas.showsVerticalScrollIndicator = false }
         if canvas.showsHorizontalScrollIndicator { canvas.showsHorizontalScrollIndicator = false }
+        if canvas.isRulerActive != isRulerActive { canvas.isRulerActive = isRulerActive }
         // The nav bar / safe area must never nudge the page mid-stroke.
         if canvas.contentInsetAdjustmentBehavior != .never { canvas.contentInsetAdjustmentBehavior = .never }
         // Two fingers pan and pinch; one finger joins in only once you're

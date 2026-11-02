@@ -46,7 +46,8 @@ The user listed 16 items and left Claude to work alone for the day. Decisions:
 **Owed on the iPad (new today):**
 - The touch lock-out: swipe the page sidebar fast with a finger, then check a finger works without touching the Pencil first. Look for `[touch]` lines in `app.log`.
 - A straight line drawn at 3 to 5 degrees stays at that angle, ends where the pen was.
-- Sidebar: Reorder button, drag by the grip, auto-scroll, the + between pages with a pointer. Whether a grip drag scrolls the list instead.
+- Sidebar: hold a thumbnail 0.3 s and drag; a swipe still scrolls; a tap opens; hold and release opens nothing; the ... menu; Reorder mode grips; auto-scroll; the + between pages with a pointer.
+- Ruler: toggles, survives page turns.
 - Search: the lens on a handwriting match; the indexer pausing while a notebook is open; results with a 300-page PDF.
 - Draw with Finger on and off, while a page is open.
 - Pen picker: the rainbow + swatch takes a tap; popover sizing.
@@ -63,14 +64,15 @@ The user listed 16 items and left Claude to work alone for the day. Decisions:
 - [x] Battery: watchdog 4 Hz and parked in the background, folder presenter removed in the background, no pull after Control Center, background push protected (`6599523`).
 - [x] Renamed to Linework (user-facing only), new icon in light, dark, tinted and Mac, accent colour, brand mark (`cc2c969`, `ccbd42b`).
 - [x] `DesignSystem.swift` tokens and components (`2828cc6`); toolbar and pen picker redesign (`a5a23c9`); library, onboarding, settings, login polish (`84b30e3`).
-- [x] Page sidebar: in-app reorder with grips, auto-scroll, + between pages; the system drag is gone (`2225e0b`). The Canva-style long-press lift was not done: it fights the context menu.
+- [x] Page sidebar: press and hold a thumbnail to drag it (Canva-style), springs apart, auto-scroll, + between pages; the page menu moved to a ... button on the current page and on hover; a Reorder mode with grips remains (`2225e0b` and the next commit).
+- [x] Ruler on the paged canvas (PencilKit's `isRulerActive`), from a toolbar button. Not on whiteboards.
 - [x] Sync format 5: `Link.title`, `Notebook.role` (`7cd8229`). M2 task 5, and task 1's helpers.
 - [x] Stroke ids survive erase and undo; resolver; `regionInk` (`ae26e02`). M2 tasks 3 and 4. Task 2 (device spike) skipped; questions in BACKLOG.
 - [x] Page Map rebuilt (M2 tasks 10, 11) (`412a0f5`); Library Map (task 12) (`18689db`); Make Node, badges, links to nodes, Connections panel (tasks 7, 8, 13) (`75bb99f`).
 - [x] Instant search, background OCR, Quick Look lens on the match; Draw with Finger (`44018f0`).
 - [x] Custom page templates from a PDF or image (`de10801`).
 - [x] AI study helper: Featherless and ElevenLabs on your own keys, study panel, quizzes, read aloud, write the answer on the page in your own handwriting (`c6e3a83`, `42ddbdb`, `3dbf55d`, `81917ca`).
-- [x] `Docs/COMPETITIVE_GAPS.md`: about 85 gaps against GoodNotes and OneNote, with a top-8 of quick wins. Done from it today: finger drawing. Still open from the top 8: ruler, laser pointer in Present, duplicate page and go-to-page, paper colour and line spacing, page grid view, zoom window, library sort and list view.
+- [x] `Docs/COMPETITIVE_GAPS.md`: about 85 gaps against GoodNotes and OneNote, with a top-8 of quick wins. Done from it today: finger drawing. Still open from the top 8: laser pointer in Present, duplicate page and go-to-page, paper colour and line spacing, page grid view, zoom window, library sort and list view.
 - [x] README rewritten as a portfolio piece (`13e74dd`).
 
 Not done from the M2 plan: task 6 (mention integrity, `[[` across notebooks), task 9 (transclusion), task 14 (drawable map decision), task 15 (docs catch-up, partly done in SPEC 7.1 and 7.2), task 16 (device check). The Page Map has no ghost cards for cross-notebook links yet, and the Library Map can't open a notebook straight into its Page Map.
