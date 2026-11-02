@@ -40,6 +40,10 @@ nonisolated enum AppSettings {
         static let aiEnabled = "aiEnabled"
         static let aiModel = "aiModel"
         static let elevenVoiceID = "elevenVoiceID"
+        static let librarySortKey = "librarySortKey"
+        static let librarySortAscending = "librarySortAscending"
+        static let libraryViewMode = "libraryViewMode"
+        static let libraryFolderOrder = "libraryFolderOrder"
         // Paper style (display preferences)
         static let paperColor = "paperColor"
         static let lineSpacing = "lineSpacing"
@@ -256,6 +260,54 @@ nonisolated enum AppSettings {
     static var elevenVoiceID: String {
         get { defaults.string(forKey: Keys.elevenVoiceID) ?? SpeechClient.defaultVoiceID }
         set { defaults.set(newValue, forKey: Keys.elevenVoiceID) }
+    }
+
+    // MARK: Library sort and layout (per device)
+
+    /// A `LibrarySortKey` raw value. Title ascending is the default: it is
+    /// what the library did before sorting existed.
+    static var librarySortKey: String {
+        get { defaults.string(forKey: Keys.librarySortKey) ?? LibrarySortOrder.default.key.rawValue }
+        set { defaults.set(newValue, forKey: Keys.librarySortKey) }
+    }
+
+    static var librarySortAscending: Bool {
+        get { defaults.object(forKey: Keys.librarySortAscending) as? Bool ?? LibrarySortOrder.default.ascending }
+        set { defaults.set(newValue, forKey: Keys.librarySortAscending) }
+    }
+
+    /// "grid" (default) or "list".
+    static var libraryViewMode: String {
+        get { defaults.string(forKey: Keys.libraryViewMode) ?? "grid" }
+        set { defaults.set(newValue, forKey: Keys.libraryViewMode) }
+    }
+
+    /// Folders' Custom order, JSON `{"<folder id>": Double}`. Per device on
+    /// purpose: folders have no settings clock to merge a position on (see
+    /// `Notebook.manualOrder` and SPEC 7.1). Read it through `folderOrder`.
+    static var libraryFolderOrderData: Data {
+        get { defaults.data(forKey: Keys.libraryFolderOrder) ?? Data() }
+        set { defaults.set(newValue, forKey: Keys.libraryFolderOrder) }
+    }
+
+    static var folderOrder: [UUID: Double] {
+        get { decodeFolderOrder(libraryFolderOrderData) }
+        set { libraryFolderOrderData = encodeFolderOrder(newValue) }
+    }
+
+    static func decodeFolderOrder(_ data: Data) -> [UUID: Double] {
+        guard !data.isEmpty,
+              let raw = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        var result: [UUID: Double] = [:]
+        for (key, value) in raw {
+            if let id = UUID(uuidString: key) { result[id] = value }
+        }
+        return result
+    }
+
+    static func encodeFolderOrder(_ order: [UUID: Double]) -> Data {
+        let raw = Dictionary(uniqueKeysWithValues: order.map { ($0.key.uuidString, $0.value) })
+        return (try? JSONEncoder().encode(raw)) ?? Data()
     }
 
     // MARK: Appearance

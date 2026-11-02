@@ -1286,7 +1286,8 @@ nonisolated struct SyncRunner {
                 createdAt: notebook.createdAt, modifiedAt: notebook.modifiedAt,
                 settingsModifiedAt: notebook.settingsModifiedAt,
                 folderID: notebook.folder?.id, isFavorite: notebook.isFavorite,
-                isLocked: notebook.isLocked, graphLayout: notebook.graphLayout, role: notebook.role, pages: pageDTOs, links: links
+                isLocked: notebook.isLocked, graphLayout: notebook.graphLayout, role: notebook.role,
+                manualOrder: notebook.manualOrder, pages: pageDTOs, links: links
             )
         }
 
@@ -1372,6 +1373,7 @@ nonisolated struct SyncRunner {
                     existing.isLocked = entry.isLocked
                     existing.graphLayout = entry.graphLayout
                     existing.role = entry.role
+                    existing.manualOrder = entry.manualOrder
                     existing.settingsModifiedAt = entry.settingsModifiedAt
                 }
                 lift(existing, to: entry.modifiedAt)
@@ -1387,6 +1389,7 @@ nonisolated struct SyncRunner {
                 notebook.isLocked = entry.isLocked
                 notebook.graphLayout = entry.graphLayout
                 notebook.role = entry.role
+                notebook.manualOrder = entry.manualOrder
                 context.insert(notebook)
                 notebookByID[entry.id] = notebook
             }

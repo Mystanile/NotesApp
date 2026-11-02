@@ -61,6 +61,11 @@ final class Notebook {
     /// page-templates notebook. nil is an ordinary notebook. A setting, on
     /// the settings clock like the cover (format 5).
     var role: String?
+    /// Where the user put this notebook in the library's Custom sort, among
+    /// the notebooks of its folder. Smaller sorts first; nil sorts after
+    /// every numbered one. A setting on the settings clock (format 5);
+    /// write it only with `markSettingsModified()`. See `LibrarySort`.
+    var manualOrder: Double?
 
     var folder: Folder?
 
@@ -81,9 +86,12 @@ final class Notebook {
 extension Notebook {
     /// Records a change to the notebook's own settings (title, cover,
     /// folder). Also lifts `modifiedAt` for the library sort.
-    func markSettingsModified(at date: Date = Date()) {
+    /// `liftModifiedAt: false` is for settings that are not an edit of the
+    /// notebook's content - its place in the Custom sort - so that moving
+    /// a cover doesn't reorder Recent or rewrite "Edited ...".
+    func markSettingsModified(at date: Date = Date(), liftModifiedAt: Bool = true) {
         settingsModifiedAt = date
-        if modifiedAt < date { modifiedAt = date }
+        if liftModifiedAt, modifiedAt < date { modifiedAt = date }
     }
 }
 

@@ -1587,6 +1587,87 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(arrived.role, "templates")
     }
 
+    /// `Notebook.manualOrder` (the library's Custom sort) is a notebook setting: it rides
+    /// the settings clock, and moving a cover is not an edit, so `modifiedAt` stays put.
+    func testNotebookManualOrder_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Ordered", pageCount: 1)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance()
+        let editedBefore = notebook.modifiedAt
+        notebook.manualOrder = 2.5
+        notebook.markSettingsModified(at: harness.clock.now, liftModifiedAt: false)
+        try ipad.context.save()
+        XCTAssertEqual(notebook.modifiedAt, editedBefore, "a position is not an edit")
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.notebook(id: notebook.id))
+        XCTAssertEqual(arrived.manualOrder, 2.5)
+        XCTAssertEqual(arrived.modifiedAt, editedBefore, "the position must not lift the edit date over there either")
+    }
+
+    /// A notebook that first arrives already carries its position.
+    func testNotebookManualOrder_arrivesWithANewNotebook() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Fresh", pageCount: 1)
+        harness.clock.advance()
+        notebook.manualOrder = -1
+        notebook.markSettingsModified(at: harness.clock.now, liftModifiedAt: false)
+        try ipad.context.save()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertEqual(try mac.notebook(id: notebook.id)?.manualOrder, -1)
+    }
+
+    /// Two devices reorder the same notebook while apart: the later settings write wins on both.
+    func testNotebookManualOrder_newerSettingsWins() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebookID = try ipad.createNotebook(title: "Contested", pageCount: 1).id
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance()
+        let macNotebook = try XCTUnwrap(try mac.notebook(id: notebookID))
+        macNotebook.manualOrder = 5
+        macNotebook.markSettingsModified(at: harness.clock.now, liftModifiedAt: false)
+        try mac.context.save()
+
+        harness.clock.advance()
+        let ipadNotebook = try XCTUnwrap(try ipad.notebook(id: notebookID))
+        ipadNotebook.manualOrder = 9
+        ipadNotebook.markSettingsModified(at: harness.clock.now, liftModifiedAt: false)
+        try ipad.context.save()
+
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        harness.clock.advance(); try ipad.sync()
+
+        for device in [ipad, mac] {
+            XCTAssertEqual(try device.notebook(id: notebookID)?.manualOrder, 9, "\(device.name) did not take the newer position")
+        }
+    }
+
+    /// A format-5 index entry written before `manualOrder` existed still decodes, with no position.
+    func testNotebookDTO_withoutManualOrder_decodesAsNil() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"Old","coverStyle":"default",
+         "createdAt":"2026-01-01T00:00:00.000Z","modifiedAt":"2026-01-01T00:00:00.000Z",
+         "pages":[],"links":[]}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = SnapshotDates.decoding
+        let dto = try decoder.decode(NotebookDTO.self, from: Data(json.utf8))
+        XCTAssertNil(dto.manualOrder)
+    }
+
     /// M2 link integrity: deleting a page deletes the links that point at
     /// it, and those links live on *other* pages. Those pages must count as
     /// changed, or the other device keeps a link to a page that is gone.

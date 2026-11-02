@@ -279,6 +279,10 @@ Tags are never stored as links; the graph derives them from `Page.tags`.
 
 **`Notebook.role`** (new, optional, absent in format 4; in `NotebookIndexEntry` and `NotebookDTO`): marks a notebook the app itself uses. `"templates"` is the custom page-templates notebook; nil is an ordinary notebook. It is a notebook setting and merges on `settingsModifiedAt` like the title and cover.
 
+**`Notebook.manualOrder`** (new, optional, absent before; in `NotebookIndexEntry` and `NotebookDTO`; also format 5, since no device runs format 5 yet): the notebook's position in the library's Custom sort, among the notebooks of its folder. A `Double`; smaller sorts first; nil sorts after every numbered notebook (then by `modifiedAt`, newest first). A move writes the midpoint of the new neighbours (or the end neighbour -/+ 1.0) and, when the gap falls below 1e-6, renumbers the whole level 1, 2, 3... Every write goes through `markSettingsModified()`, so it merges on `settingsModifiedAt` with the title and cover. The index signature needs no change: a changed order moves `settingsModifiedAt`.
+
+**Folder order is not in the format.** Folders have no settings clock: they merge as a flat upsert by id, so a synced `manualOrder` would last-writer-win across unrelated edits and could not be compared. Folder Custom order is therefore per device, in `AppSettings` (`libraryFolderOrder`, JSON `{"<folder id>": Double}`). Sort key, direction and grid/list choice are per device too. Revisit if folders ever get a settings clock.
+
 
 ---
 

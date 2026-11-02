@@ -1,9 +1,15 @@
 import SwiftUI
+import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Folder cell
 
 struct FolderCellView: View {
     let folder: Folder
+    /// Arrange mode: a grip says the cell can be dragged.
+    var showsGrip = false
 
     private var detail: String {
         if folder.smartQuery != nil { return "Smart folder" }
@@ -38,6 +44,9 @@ struct FolderCellView: View {
             RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
                 .strokeBorder(Palette.separator, lineWidth: Metrics.hairline)
         )
+        .overlay(alignment: .topTrailing) {
+            if showsGrip { LibraryGripBadge().padding(Space.s) }
+        }
         .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: Radius.l, style: .continuous))
         .hoverEffect(.highlight)
         .accessibilityElement(children: .ignore)
@@ -180,6 +189,8 @@ struct RecentNotebookCellView: View {
 struct NotebookCellView: View {
     let notebook: Notebook
     var previewArtwork: [UUID: [ImportedDocument]] = [:]
+    /// Arrange mode: a grip says the cell can be dragged.
+    var showsGrip = false
 
     private var pageCount: Int {
         notebook.pages?.count ?? 0
@@ -209,6 +220,9 @@ struct NotebookCellView: View {
                             .shadow(color: .black.opacity(0.35), radius: 1.5)
                             .accessibilityLabel("Favorite")
                     }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if showsGrip { LibraryGripBadge().padding(Space.s) }
                 }
             VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(notebook.title.isEmpty ? "Untitled" : notebook.title)
@@ -248,6 +262,254 @@ struct NotebookCellView: View {
         f.locale = Locale.current
         f.setLocalizedDateFormatFromTemplate(format)
         return "Edited " + f.string(from: date)
+    }
+}
+
+// MARK: - List rows (the library's list layout)
+
+/// A notebook as a compact row: a small cover, the title, then
+/// "folder - Edited ... - N pages".
+struct NotebookRowView: View {
+    let notebook: Notebook
+    var showsGrip = false
+
+    private var pageCount: Int { notebook.pages?.count ?? 0 }
+
+    private var detail: String {
+        let folder = notebook.folder?.name ?? "My Library"
+        return "\(folder) \u{00B7} \(NotebookCellView.editedText(notebook.modifiedAt)) \u{00B7} \(pageCount) page\(pageCount == 1 ? "" : "s")"
+    }
+
+    var body: some View {
+        HStack(spacing: Space.m) {
+            NotebookCoverView(notebook: notebook)
+                .frame(width: 40)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                HStack(spacing: Space.xs) {
+                    Text(notebook.title.isEmpty ? "Untitled" : notebook.title)
+                        .font(Typography.headline)
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                    if notebook.isLocked == true {
+                        Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if notebook.isFavorite == true {
+                        Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
+                    }
+                }
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if showsGrip { LibraryGripBadge(onDark: false) }
+        }
+        .libraryRowChrome()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(notebook.title.isEmpty ? "Untitled" : notebook.title), \(detail)"
+                            + (notebook.isLocked == true ? ", locked" : "")
+                            + (notebook.isFavorite == true ? ", favorite" : ""))
+    }
+}
+
+/// A folder as a compact row.
+struct FolderRowView: View {
+    let folder: Folder
+    var showsGrip = false
+
+    private var detail: String {
+        if folder.smartQuery != nil { return "Smart folder" }
+        let count = (folder.notebooks?.count ?? 0) + (folder.subfolders?.count ?? 0)
+        return count == 0 ? "Empty" : "\(count) item\(count == 1 ? "" : "s")"
+    }
+
+    var body: some View {
+        HStack(spacing: Space.m) {
+            Image(systemName: folder.smartQuery == nil ? "folder.fill" : "folder.fill.badge.gearshape")
+                .font(.system(size: 26))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 40)
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Text(folder.name.isEmpty ? "Untitled Folder" : folder.name)
+                    .font(Typography.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if showsGrip { LibraryGripBadge(onDark: false) }
+        }
+        .libraryRowChrome()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(folder.name.isEmpty ? "Untitled Folder" : folder.name), folder, \(detail)")
+    }
+}
+
+private extension View {
+    func libraryRowChrome() -> some View {
+        self
+            .padding(.vertical, Space.s)
+            .padding(.horizontal, Space.m)
+            .frame(maxWidth: .infinity, minHeight: Metrics.minHitTarget)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
+                    .strokeBorder(Palette.separator, lineWidth: Metrics.hairline)
+            )
+            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: Radius.m, style: .continuous))
+            .hoverEffect(.highlight)
+    }
+}
+
+// MARK: - Custom order: drag to reorder
+
+/// The grip shown on a cell while arranging.
+struct LibraryGripBadge: View {
+    /// On a cover (dark chip, white glyph) or on a row (plain secondary glyph).
+    var onDark = true
+
+    var body: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(onDark ? Color.white : Color.secondary)
+            .padding(6)
+            .background(onDark ? Color.black.opacity(0.45) : Color.clear, in: Capsule())
+            .accessibilityHidden(true)
+    }
+}
+
+enum LibraryHaptics {
+    static func lift() {
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        #endif
+    }
+
+    static func drop() {
+        #if canImport(UIKit)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        #endif
+    }
+}
+
+/// Everything one reorderable section (the notebooks, or the folders)
+/// shares while an item is being dragged: the id in the air, the order as
+/// it looks right now, and what to do when it lands. Nothing is written
+/// to the model until the drop; `commit` gets the final order and the id
+/// that moved.
+struct LibraryReorderContext {
+    var baseOrder: [UUID]
+    var draggingID: Binding<UUID?>
+    var liveOrder: Binding<[UUID]?>
+    var commit: ([UUID], UUID) -> Void
+}
+
+/// Live reordering: entering another cell moves the dragged one into its
+/// place (the others animate aside); the drop commits.
+struct LibraryReorderDelegate: DropDelegate {
+    /// nil for the section's container, which only commits (a drop in the
+    /// gap between cells).
+    let targetID: UUID?
+    let context: LibraryReorderContext
+
+    func dropEntered(info: DropInfo) {
+        guard let target = targetID,
+              let moving = context.draggingID.wrappedValue, moving != target,
+              var ids = context.liveOrder.wrappedValue,
+              let from = ids.firstIndex(of: moving), let to = ids.firstIndex(of: target) else { return }
+        ids.remove(at: from)
+        ids.insert(moving, at: to)
+        withAnimation(Motion.snappy) { context.liveOrder.wrappedValue = ids }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer {
+            context.draggingID.wrappedValue = nil
+            context.liveOrder.wrappedValue = nil
+        }
+        guard let moving = context.draggingID.wrappedValue,
+              let ids = context.liveOrder.wrappedValue else { return false }
+        LibraryHaptics.drop()
+        context.commit(ids, moving)
+        return true
+    }
+}
+
+/// Makes a cell draggable and a drop target for its section. Used only
+/// while arranging.
+struct LibraryReorderModifier: ViewModifier {
+    let id: UUID
+    let context: LibraryReorderContext
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(context.draggingID.wrappedValue == id ? 0.35 : 1)
+            .animation(Motion.quick, value: context.draggingID.wrappedValue == id)
+            .onDrag {
+                LibraryHaptics.lift()
+                context.draggingID.wrappedValue = id
+                context.liveOrder.wrappedValue = context.baseOrder
+                return NSItemProvider(object: id.uuidString as NSString)
+            }
+            .onDrop(of: [UTType.plainText], delegate: LibraryReorderDelegate(targetID: id, context: context))
+    }
+}
+
+/// VoiceOver's way to reorder: "Move Earlier" / "Move Later" in the actions rotor.
+struct LibraryMoveActionsModifier: ViewModifier {
+    let enabled: Bool
+    let earlier: () -> Void
+    let later: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .accessibilityAction(named: "Move Earlier", earlier)
+                .accessibilityAction(named: "Move Later", later)
+        } else {
+            content
+        }
+    }
+}
+
+/// The section's container as a drop target, so a drop in the gap between
+/// cells still lands. Only while arranging.
+struct LibraryContainerDropModifier: ViewModifier {
+    let enabled: Bool
+    let context: LibraryReorderContext
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onDrop(of: [UTType.plainText], delegate: LibraryReorderDelegate(targetID: nil, context: context))
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func libraryReorderContainer(enabled: Bool, context: LibraryReorderContext) -> some View {
+        modifier(LibraryContainerDropModifier(enabled: enabled, context: context))
+    }
+
+    func libraryReorderable(id: UUID, context: LibraryReorderContext) -> some View {
+        modifier(LibraryReorderModifier(id: id, context: context))
+    }
+
+    func libraryMoveActions(enabled: Bool, earlier: @escaping () -> Void, later: @escaping () -> Void) -> some View {
+        modifier(LibraryMoveActionsModifier(enabled: enabled, earlier: earlier, later: later))
     }
 }
 

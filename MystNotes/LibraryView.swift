@@ -47,6 +47,22 @@ struct LibraryView: View {
     @State private var exportMessage: String?
     @State private var showingImporter = false
 
+    // Sort and layout: per device (AppSettings). Notebook positions in the
+    // Custom sort sync (`Notebook.manualOrder`); folder positions do not -
+    // folders have no settings clock - so they live here as JSON.
+    @AppStorage(AppSettings.Keys.librarySortKey) private var sortKeyRaw = LibrarySortOrder.default.key.rawValue
+    @AppStorage(AppSettings.Keys.librarySortAscending) private var sortAscending = LibrarySortOrder.default.ascending
+    @AppStorage(AppSettings.Keys.libraryViewMode) private var viewMode = "grid"
+    @AppStorage(AppSettings.Keys.libraryFolderOrder) private var folderOrderData = Data()
+
+    /// Custom sort only: cells can be dragged. A mode, not a bare long
+    /// press, so dragging can't fight the context menu (see `libraryItem`).
+    @State private var isArranging = false
+    @State private var draggingNotebookID: UUID?
+    @State private var liveNotebookOrder: [UUID]?
+    @State private var draggingFolderID: UUID?
+    @State private var liveFolderOrder: [UUID]?
+
     /// Identifiable wrapper so a finished PDF can drive a `.sheet(item:)`.
     private struct PDFExport: Identifiable {
         let id = UUID()
@@ -57,8 +73,65 @@ struct LibraryView: View {
     /// covers from ballooning in a wide window.
     private let gridColumns = [GridItem(.adaptive(minimum: 148, maximum: 220), spacing: Space.l, alignment: .top)]
 
-    private var folders: [Folder] {
+    private var sortOrder: LibrarySortOrder {
+        LibrarySortOrder(key: LibrarySortKey(rawValue: sortKeyRaw) ?? LibrarySortOrder.default.key,
+                         ascending: sortAscending)
+    }
+
+    private var isCustom: Bool { sortOrder.key == .custom }
+    private var isList: Bool { viewMode == "list" }
+    /// Dragging is live: Custom, and the user pressed Arrange.
+    private var arrangeActive: Bool { isArranging && isCustom }
+
+    private var levelFolders: [Folder] {
         allFolders.filter { $0.parentFolder?.id == parentFolder?.id }
+    }
+
+    /// This level's folders in the chosen order (or as they look mid-drag).
+    private var folders: [Folder] {
+        let positions = AppSettings.decodeFolderOrder(folderOrderData)
+        let sorted = LibrarySort.sorted(levelFolders, by: sortOrder) { Self.sortItem(for: $0, positions: positions) }
+        return arranged(sorted, live: liveFolderOrder) { $0.id }
+    }
+
+    /// A folder has no dates of its own; it takes its contents': created is
+    /// its oldest notebook's, edited its newest's. An empty one sorts as oldest.
+    private static func sortItem(for folder: Folder, positions: [UUID: Double]) -> LibrarySortItem {
+        let dates = contentDates(of: folder)
+        return LibrarySortItem(id: folder.id, title: folder.name.isEmpty ? "Untitled Folder" : folder.name,
+                               created: dates?.created ?? .distantPast, modified: dates?.modified ?? .distantPast,
+                               manualOrder: positions[folder.id])
+    }
+
+    private static func contentDates(of folder: Folder) -> (created: Date, modified: Date)? {
+        var created: Date?
+        var modified: Date?
+        for notebook in folder.notebooks ?? [] {
+            created = created.map { min($0, notebook.createdAt) } ?? notebook.createdAt
+            modified = modified.map { max($0, notebook.modifiedAt) } ?? notebook.modifiedAt
+        }
+        for sub in folder.subfolders ?? [] {
+            guard let inner = contentDates(of: sub) else { continue }
+            created = created.map { min($0, inner.created) } ?? inner.created
+            modified = modified.map { max($0, inner.modified) } ?? inner.modified
+        }
+        guard let created, let modified else { return nil }
+        return (created, modified)
+    }
+
+    private static func sortItem(for notebook: Notebook) -> LibrarySortItem {
+        LibrarySortItem(id: notebook.id, title: notebook.title.isEmpty ? "Untitled" : notebook.title,
+                        created: notebook.createdAt, modified: notebook.modifiedAt,
+                        manualOrder: notebook.manualOrder)
+    }
+
+    /// `items` in the order a drag in progress has put them in. Anything
+    /// that doesn't line up (an item arrived mid-drag) falls back to `items`.
+    private func arranged<T>(_ items: [T], live: [UUID]?, id: (T) -> UUID) -> [T] {
+        guard let live else { return items }
+        let byID = Dictionary(items.map { (id($0), $0) }, uniquingKeysWith: { first, _ in first })
+        let ordered = live.compactMap { byID[$0] }
+        return ordered.count == items.count ? ordered : items
     }
 
     /// Every notebook the library lists - the page-templates notebook
@@ -67,8 +140,13 @@ struct LibraryView: View {
         PageTemplates.libraryNotebooks(storedNotebooks)
     }
 
-    private var notebooks: [Notebook] {
+    private var levelNotebooks: [Notebook] {
         allNotebooks.filter { $0.folder?.id == parentFolder?.id }
+    }
+
+    private var notebooks: [Notebook] {
+        let sorted = LibrarySort.sorted(levelNotebooks, by: sortOrder) { Self.sortItem(for: $0) }
+        return arranged(sorted, live: liveNotebookOrder) { $0.id }
     }
 
     /// The most recently touched notebooks across the whole library
@@ -243,36 +321,26 @@ struct LibraryView: View {
 
                 if !folders.isEmpty {
                     section("Folders") {
-                        LazyVGrid(columns: gridColumns, spacing: Space.l) {
+                        let context = folderReorder
+                        itemLayout(gridSpacing: Space.l) {
                             ForEach(folders, id: \.id) { folder in
-                                NavigationLink(value: folder) {
-                                    FolderCellView(folder: folder)
-                                }
-                                .buttonStyle(LibraryCellButtonStyle())
-                                .contextMenu { folderMenu(for: folder) }
+                                folderItem(folder, context: context)
                             }
                         }
+                        .libraryReorderContainer(enabled: arrangeActive, context: context)
                     }
                 }
 
                 if !notebooks.isEmpty {
                     section("Notebooks") {
                         let previewArtwork = ImportedDocument.stacksByPage(allImportedDocuments)
-                        LazyVGrid(columns: gridColumns, spacing: Space.xl) {
+                        let context = notebookReorder
+                        itemLayout(gridSpacing: Space.xl) {
                             ForEach(notebooks, id: \.id) { notebook in
-                                NavigationLink(value: notebook) {
-                                    NotebookCellView(notebook: notebook, previewArtwork: previewArtwork)
-                                }
-                                .buttonStyle(LibraryCellButtonStyle())
-                                .contextMenu {
-                                    notebookMenu(for: notebook)
-                                } preview: {
-                                    NotebookCoverView(notebook: notebook)
-                                        .frame(width: 200)
-                                        .padding(Space.l)
-                                }
+                                notebookItem(notebook, previewArtwork: previewArtwork, context: context)
                             }
                         }
+                        .libraryReorderContainer(enabled: arrangeActive, context: context)
                     }
                 }
 
@@ -285,6 +353,9 @@ struct LibraryView: View {
             .padding(.bottom, Space.xxl)
         }
         .navigationTitle(parentFolder?.name ?? "My Library")
+        .onChange(of: sortKeyRaw) { _, newValue in
+            if newValue != LibrarySortKey.custom.rawValue { endArranging() }
+        }
         .toolbar {
             if parentFolder == nil {
                 ToolbarItem(placement: .automatic) {
@@ -297,6 +368,28 @@ struct LibraryView: View {
                     .buttonStyle(.bordered)
                     .accessibilityHint("Shows how your notebooks link to each other")
                 }
+            }
+            ToolbarItem(placement: .automatic) {
+                sortMenu
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    viewMode = isList ? "grid" : "list"
+                } label: {
+                    Image(systemName: isList ? "square.grid.2x2" : "list.bullet")
+                }
+                .accessibilityLabel(isList ? "Show as Grid" : "Show as List")
+            }
+            if isCustom && !(folders.isEmpty && notebooks.isEmpty) {
+                ToolbarItem(placement: .automatic) {
+                    Button(isArranging ? "Done" : "Arrange") {
+                        if isArranging { endArranging() } else { isArranging = true }
+                    }
+                    .fontWeight(isArranging ? .semibold : .regular)
+                    .accessibilityHint(isArranging ? "Stops rearranging" : "Lets you drag notebooks and folders into your own order")
+                }
+            }
+            if parentFolder == nil {
                 ToolbarItem(placement: .automatic) {
                     Button {
                         showingSettings = true
@@ -374,6 +467,198 @@ struct LibraryView: View {
                 applyMove(to: destination)
             }
         }
+    }
+
+    // MARK: Sort menu and item layout
+
+    private func ascendingLabel(descending: Bool) -> String {
+        switch sortOrder.key {
+        case .title: return descending ? "Z to A" : "A to Z"
+        case .created, .modified: return descending ? "Newest First" : "Oldest First"
+        case .custom: return ""
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort By", selection: Binding(get: { sortOrder.key }, set: { selectSortKey($0) })) {
+                ForEach(LibrarySortKey.allCases) { key in
+                    Label(key.label, systemImage: key.systemImage).tag(key)
+                }
+            }
+            // Custom is always the user's own order: no direction.
+            if !isCustom {
+                Picker("Order", selection: $sortAscending) {
+                    Text(ascendingLabel(descending: false)).tag(true)
+                    Text(ascendingLabel(descending: true)).tag(false)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("Sort")
+        .accessibilityValue(isCustom ? sortOrder.key.label
+                            : "\(sortOrder.key.label), \(ascendingLabel(descending: !sortOrder.ascending))")
+    }
+
+    /// A grid of covers, or a stack of compact rows.
+    @ViewBuilder
+    private func itemLayout<Content: View>(gridSpacing: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        if isList {
+            LazyVStack(spacing: Space.s) { content() }
+        } else {
+            LazyVGrid(columns: gridColumns, spacing: gridSpacing) { content() }
+        }
+    }
+
+    /// One folder. Arranging: no navigation, no context menu, draggable.
+    /// Otherwise as always, so a long press keeps meaning "context menu".
+    /// (Whether a drag and a context menu can share one long press on the
+    /// iPad is not verified, which is why dragging is a mode.)
+    @ViewBuilder
+    private func folderItem(_ folder: Folder, context: LibraryReorderContext) -> some View {
+        if arrangeActive {
+            folderCell(folder, showsGrip: true)
+                .libraryReorderable(id: folder.id, context: context)
+                .libraryMoveActions(enabled: true, earlier: { moveFolder(folder, by: -1) }, later: { moveFolder(folder, by: 1) })
+        } else {
+            NavigationLink(value: folder) {
+                folderCell(folder, showsGrip: false)
+            }
+            .buttonStyle(LibraryCellButtonStyle())
+            .contextMenu { folderMenu(for: folder) }
+            .libraryMoveActions(enabled: isCustom, earlier: { moveFolder(folder, by: -1) }, later: { moveFolder(folder, by: 1) })
+        }
+    }
+
+    @ViewBuilder
+    private func folderCell(_ folder: Folder, showsGrip: Bool) -> some View {
+        if isList {
+            FolderRowView(folder: folder, showsGrip: showsGrip)
+        } else {
+            FolderCellView(folder: folder, showsGrip: showsGrip)
+        }
+    }
+
+    @ViewBuilder
+    private func notebookItem(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
+                              context: LibraryReorderContext) -> some View {
+        if arrangeActive {
+            notebookCell(notebook, previewArtwork: previewArtwork, showsGrip: true)
+                .libraryReorderable(id: notebook.id, context: context)
+                .libraryMoveActions(enabled: true, earlier: { moveNotebook(notebook, by: -1) }, later: { moveNotebook(notebook, by: 1) })
+        } else {
+            NavigationLink(value: notebook) {
+                notebookCell(notebook, previewArtwork: previewArtwork, showsGrip: false)
+            }
+            .buttonStyle(LibraryCellButtonStyle())
+            .contextMenu {
+                notebookMenu(for: notebook)
+            } preview: {
+                NotebookCoverView(notebook: notebook)
+                    .frame(width: 200)
+                    .padding(Space.l)
+            }
+            .libraryMoveActions(enabled: isCustom, earlier: { moveNotebook(notebook, by: -1) }, later: { moveNotebook(notebook, by: 1) })
+        }
+    }
+
+    @ViewBuilder
+    private func notebookCell(_ notebook: Notebook, previewArtwork: [UUID: [ImportedDocument]],
+                              showsGrip: Bool) -> some View {
+        if isList {
+            NotebookRowView(notebook: notebook, showsGrip: showsGrip)
+        } else {
+            NotebookCellView(notebook: notebook, previewArtwork: previewArtwork, showsGrip: showsGrip)
+        }
+    }
+
+    // MARK: Custom order
+
+    private var notebookReorder: LibraryReorderContext {
+        LibraryReorderContext(baseOrder: notebooks.map { $0.id },
+                              draggingID: $draggingNotebookID, liveOrder: $liveNotebookOrder,
+                              commit: { ids, moved in commitNotebookOrder(ids, moved: moved) })
+    }
+
+    private var folderReorder: LibraryReorderContext {
+        LibraryReorderContext(baseOrder: folders.map { $0.id },
+                              draggingID: $draggingFolderID, liveOrder: $liveFolderOrder,
+                              commit: { ids, moved in commitFolderOrder(ids, moved: moved) })
+    }
+
+    private func endArranging() {
+        isArranging = false
+        draggingNotebookID = nil
+        liveNotebookOrder = nil
+        draggingFolderID = nil
+        liveFolderOrder = nil
+    }
+
+    /// Picks a sort key. The first switch to Custom numbers this level in
+    /// the order on screen, so the arrangement starts as the user last saw it.
+    private func selectSortKey(_ key: LibrarySortKey) {
+        if key == .custom && !isCustom { seedCustomOrder() }
+        sortKeyRaw = key.rawValue
+    }
+
+    private func seedCustomOrder() {
+        let visibleNotebooks = notebooks
+        if !visibleNotebooks.isEmpty, visibleNotebooks.allSatisfy({ $0.manualOrder == nil }) {
+            applyNotebookOrders(LibrarySort.seed(visibleOrder: visibleNotebooks.map { $0.id }))
+        }
+        let visibleFolders = folders
+        let positions = AppSettings.decodeFolderOrder(folderOrderData)
+        if !visibleFolders.isEmpty, visibleFolders.allSatisfy({ positions[$0.id] == nil }) {
+            applyFolderOrders(LibrarySort.seed(visibleOrder: visibleFolders.map { $0.id }))
+        }
+    }
+
+    private func commitNotebookOrder(_ ids: [UUID], moved: UUID) {
+        var orders: [UUID: Double] = [:]
+        for notebook in levelNotebooks {
+            if let value = notebook.manualOrder { orders[notebook.id] = value }
+        }
+        applyNotebookOrders(LibrarySort.assignments(finalOrder: ids, moved: moved, orders: orders))
+    }
+
+    private func commitFolderOrder(_ ids: [UUID], moved: UUID) {
+        let positions = AppSettings.decodeFolderOrder(folderOrderData)
+        applyFolderOrders(LibrarySort.assignments(finalOrder: ids, moved: moved, orders: positions))
+    }
+
+    /// A position is a notebook setting: on the settings clock, but not an
+    /// edit, so `modifiedAt` (Recent, "Edited ...") stays where it was.
+    private func applyNotebookOrders(_ assigned: [UUID: Double]) {
+        guard !assigned.isEmpty else { return }
+        let now = Date()
+        for notebook in levelNotebooks {
+            guard let value = assigned[notebook.id] else { continue }
+            notebook.manualOrder = value
+            notebook.markSettingsModified(at: now, liftModifiedAt: false)
+        }
+        save()
+    }
+
+    private func applyFolderOrders(_ assigned: [UUID: Double]) {
+        guard !assigned.isEmpty else { return }
+        var positions = AppSettings.decodeFolderOrder(folderOrderData)
+        for (id, value) in assigned { positions[id] = value }
+        // Forget folders that no longer exist.
+        let existing = Set(allFolders.map { $0.id })
+        positions = positions.filter { existing.contains($0.key) }
+        folderOrderData = AppSettings.encodeFolderOrder(positions)
+    }
+
+    /// VoiceOver's Move Earlier / Move Later.
+    private func moveNotebook(_ notebook: Notebook, by delta: Int) {
+        guard let ids = LibrarySort.shifted(notebooks.map { $0.id }, moving: notebook.id, by: delta) else { return }
+        commitNotebookOrder(ids, moved: notebook.id)
+    }
+
+    private func moveFolder(_ folder: Folder, by delta: Int) {
+        guard let ids = LibrarySort.shifted(folders.map { $0.id }, moving: folder.id, by: delta) else { return }
+        commitFolderOrder(ids, moved: folder.id)
     }
 
     private var renameAlertBinding: Binding<Bool> {

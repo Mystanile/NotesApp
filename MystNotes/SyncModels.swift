@@ -38,6 +38,10 @@ import CryptoKit
 /// `Notebook.role` (marks the templates notebook). A format-4 build would
 /// strip titles and roles on its next write, show transclusions as plain
 /// anchors and delete nodes as unfinished links, so it must refuse.
+/// Also in 5: `Notebook.manualOrder` (the library's Custom sort position).
+/// No device runs format 5 yet, so this stays one version. Folders have no
+/// settings clock (flat upsert), so their custom order is per device in
+/// `AppSettings`, not here.
 let librarySnapshotFormatVersion = 5
 
 /// Snapshot dates carry milliseconds. Whole-second ISO-8601 (the default
@@ -143,6 +147,8 @@ nonisolated struct NotebookIndexEntry: Codable {
     var graphLayout: String?
     /// Format 5. See `Notebook.role`.
     var role: String?
+    /// Format 5. See `Notebook.manualOrder`.
+    var manualOrder: Double?
     /// See `NotebookDTO.contentSignature`.
     var contentSignature: String
 
@@ -158,6 +164,7 @@ nonisolated struct NotebookIndexEntry: Codable {
         isLocked = notebook.isLocked
         graphLayout = notebook.graphLayout
         role = notebook.role
+        manualOrder = notebook.manualOrder
         contentSignature = notebook.contentSignature
     }
 }
@@ -293,6 +300,8 @@ nonisolated struct NotebookDTO: Codable {
     var graphLayout: String? = nil
     /// Format 5: see `Notebook.role`. Merges with the other settings.
     var role: String? = nil
+    /// Format 5: see `Notebook.manualOrder`. Merges with the other settings.
+    var manualOrder: Double? = nil
     var pages: [PageDTO]
     var links: [LinkDTO]
 
