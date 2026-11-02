@@ -109,6 +109,27 @@ struct ConnectionsPanel: View {
     var nodes: [NodeEntry] = []
     var onSelectPage: (UUID) -> Void
     var onOpenPageMap: () -> Void
+    /// The open page, the notebook it is in (for labels) and the callback
+    /// that makes an explicit link to a similar page. A nil page id turns
+    /// "Similar pages" off.
+    var pageID: UUID? = nil
+    var notebookID: UUID? = nil
+    var onLinkSimilar: (UUID) -> Void = { _ in }
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var similar: [Entry] = []
+
+    /// Recomputed when the card opens, the page changes, or its links do.
+    private var similarKey: SimilarKey {
+        SimilarKey(pageID: pageID, expanded: expanded.wrappedValue,
+                   linked: Set(linkedFrom.map(\.id)).union(linksTo.map(\.id)))
+    }
+
+    private struct SimilarKey: Equatable {
+        let pageID: UUID?
+        let expanded: Bool
+        let linked: Set<UUID>
+    }
 
     var body: some View {
         if count > 0 {
@@ -134,6 +155,32 @@ struct ConnectionsPanel: View {
                             }
                         }
                     }
+                    if !similar.isEmpty {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            SectionLabel("Similar pages")
+                            ForEach(similar) { entry in
+                                HStack(spacing: Space.s) {
+                                    Button { onSelectPage(entry.id) } label: {
+                                        Text(entry.label)
+                                            .font(Typography.caption)
+                                            .lineLimit(1)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.vertical, Space.xs)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    Button("Link") {
+                                        onLinkSimilar(entry.id)
+                                        similar.removeAll { $0.id == entry.id }
+                                    }
+                                    .font(Typography.caption.weight(.semibold))
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .accessibilityLabel("Link to \(entry.label)")
+                                }
+                            }
+                        }
+                    }
                     Button(action: onOpenPageMap) {
                         Label("Open Page Map", systemImage: "point.3.connected.trianglepath.dotted")
                             .font(Typography.label)
@@ -151,7 +198,19 @@ struct ConnectionsPanel: View {
             .surfaceCard()
             .padding(Space.m)
             .animation(Motion.snappy, value: expanded.wrappedValue)
+            .task(id: similarKey) { await refreshSimilar() }
         }
+    }
+
+    /// Top five by cosine between page vectors, minus this page and the pages
+    /// already linked either way. The scoring runs off the main actor.
+    private func refreshSimilar() async {
+        guard expanded.wrappedValue, let pageID else { similar = []; return }
+        let excluded = Set(linkedFrom.map(\.id)).union(linksTo.map(\.id)).union([pageID])
+        let hits = await SemanticSearch.similarDetached(to: pageID, limit: 12, excluding: excluded).value
+        guard !Task.isCancelled else { return }
+        let pages = SemanticResolver.pages(for: hits, in: modelContext).prefix(5)
+        similar = pages.map { .init(id: $0.id, label: LinkedFromStrip.label(for: $0, currentNotebookID: notebookID)) }
     }
 
     private var header: some View {

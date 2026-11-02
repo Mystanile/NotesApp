@@ -252,6 +252,43 @@ final class SearchIndexer {
             }
         }
         if isCurrent(mine) { pendingCount = 0 }
+
+        // Last, the semantic vectors, once OCR and photo text are in.
+        await runEmbeddingPhase(mine, container: container)
+    }
+
+    /// Embeds each page whose text changed since its vectors were made, one
+    /// page per step under the same pause rules. The text is read on the main
+    /// actor (the blob is memoized); hashing, the staleness check and the
+    /// embedding run off it (`SemanticSearch.indexDetached`).
+    private func runEmbeddingPhase(_ mine: Int, container: ModelContainer) async {
+        guard isCurrent(mine), await SemanticSearch.availabilityDetached().value else { return }
+        let context = container.mainContext
+        var idDescriptor = FetchDescriptor<Page>()
+        idDescriptor.propertiesToFetch = [\Page.id]
+        let pageIDs = ((try? context.fetch(idDescriptor)) ?? []).map(\.id)
+        let docsByPage = ImportedDocument.stacksByPage((try? context.fetch(FetchDescriptor<ImportedDocument>())) ?? [])
+
+        var computed = 0
+        for id in pageIDs {
+            guard isCurrent(mine) else { break }
+            if openNotebookCount > 0 || Self.isInkActive {
+                guard await waitUntilQuiet(mine) else { break }
+            }
+            var descriptor = FetchDescriptor<Page>(predicate: #Predicate<Page> { $0.id == id })
+            descriptor.fetchLimit = 1
+            guard let page = (try? context.fetch(descriptor))?.first,
+                  let notebook = page.notebook, NotebookLock.shared.isOpen(notebook) else { continue }
+            let text = SearchIndex.cachedSearchableText(for: page, importedDocuments: docsByPage[id] ?? [])
+            guard !text.isEmpty else { continue }
+            let wrote = await SemanticSearch.indexDetached(pageID: id, text: text).value
+            guard isCurrent(mine) else { break }
+            if wrote {
+                computed += 1
+                try? await Task.sleep(for: Self.pageGap)
+            }
+        }
+        if computed > 0, isCurrent(mine) { completedCount += computed }
     }
 
     nonisolated static let saveBatch = 10

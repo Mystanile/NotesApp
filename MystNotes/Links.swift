@@ -328,4 +328,23 @@ enum Links {
         let pages = (try? context.fetch(FetchDescriptor<Page>())) ?? []
         for page in pages where ids.contains(page.id) { page.markModified(at: now) }
     }
+
+    /// A plain page-to-page link with no anchor to draw (the anchor is a
+    /// zero-origin default), for "link these two pages" offers. Does nothing
+    /// and returns nil when `from` already links to `to` or they are the
+    /// same page. Marks the source page and saves.
+    @discardableResult
+    static func addPageLink(from source: UUID, to destination: UUID, in context: ModelContext,
+                            now: Date = Date()) -> Link? {
+        guard source != destination else { return nil }
+        let existing = (try? context.fetch(FetchDescriptor<Link>(predicate: #Predicate<Link> {
+            $0.sourcePageID == source && $0.destinationPageID == destination
+        }))) ?? []
+        if existing.contains(where: { $0.kind == nil && $0.destinationKind == nil }) { return nil }
+        let link = Link(sourcePageID: source, destinationPageID: destination)
+        context.insert(link)
+        markSources([source], in: context, now: now)
+        try? context.save()
+        return link
+    }
 }

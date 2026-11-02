@@ -36,10 +36,22 @@ struct SearchResultsView: View {
 
     @State private var results: [SearchResult] = []
     @State private var recomputeTask: Task<Void, Never>?
+    /// Semantically similar pages (M4), best first, resolved and not yet
+    /// filtered against the exact results. Empty when the embedding is
+    /// unavailable or nothing passed the threshold.
+    @State private var relatedResults: [SearchResult] = []
+    @State private var relatedTask: Task<Void, Never>?
+    private static let relatedLimit = 8
     private let indexer = SearchIndexer.shared
 
     private var allPages: [Page] {
         PageTemplates.libraryNotebooks(allNotebooks).flatMap { $0.pages ?? [] }
+    }
+
+    /// Related pages that are not already exact matches.
+    private var visibleRelated: [SearchResult] {
+        let exact = Set(results.map(\.pageID))
+        return Array(relatedResults.filter { !exact.contains($0.pageID) }.prefix(Self.relatedLimit))
     }
 
     var body: some View {
@@ -49,7 +61,7 @@ struct SearchResultsView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             Group {
-                if results.isEmpty {
+                if results.isEmpty && visibleRelated.isEmpty {
                     ContentUnavailableView(
                         "No results for \u{201C}\(query)\u{201D}",
                         systemImage: "magnifyingglass",
@@ -58,9 +70,23 @@ struct SearchResultsView: View {
                                           : "Try a different word, or check the spelling.")
                     )
                 } else {
-                    List(results, id: \.self) { result in
-                        NavigationLink(value: result) {
-                            row(for: result)
+                    List {
+                        ForEach(results, id: \.self) { result in
+                            NavigationLink(value: result) {
+                                row(for: result)
+                            }
+                        }
+                        let related = visibleRelated
+                        if !related.isEmpty {
+                            Section {
+                                ForEach(related, id: \.self) { result in
+                                    NavigationLink(value: result) {
+                                        row(for: result, related: true)
+                                    }
+                                }
+                            } header: {
+                                Text("Related")
+                            }
                         }
                     }
                     .listStyle(.plain)
@@ -70,13 +96,23 @@ struct SearchResultsView: View {
         .animation(Motion.quick, value: indexer.pendingCount > 0)
         .task {
             computeResults()
+            scheduleRelated()
             indexer.requestRun()
         }
-        .onChange(of: query) { _, _ in computeResults() }
+        .onChange(of: query) { _, _ in
+            computeResults()
+            scheduleRelated()
+        }
         // A page finished indexing: it may now match.
         // Coalesced: a pass can finish pages in bursts.
-        .onChange(of: indexer.completedCount) { _, _ in scheduleRecompute() }
-        .onDisappear { recomputeTask?.cancel() }
+        .onChange(of: indexer.completedCount) { _, _ in
+            scheduleRecompute()
+            scheduleRelated()
+        }
+        .onDisappear {
+            recomputeTask?.cancel()
+            relatedTask?.cancel()
+        }
         // A sync pull or a delete while the list is open.
         .onChange(of: allPages.count) { _, _ in computeResults() }
     }
@@ -99,7 +135,7 @@ struct SearchResultsView: View {
     }
 
     @ViewBuilder
-    private func row(for result: SearchResult) -> some View {
+    private func row(for result: SearchResult, related: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(result.notebook.title)
                 .font(.headline)
@@ -110,6 +146,11 @@ struct SearchResultsView: View {
                 Text("Page \(result.pageNumber)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if related {
+                    Text("related")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             if !result.snippet.isEmpty {
                 Text(result.snippet)
@@ -129,6 +170,38 @@ struct SearchResultsView: View {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             computeResults()
+        }
+    }
+
+    /// Debounced 300 ms; the embedding and the scoring run off the main
+    /// actor (`SemanticSearch`), only the lookup of the hits' pages is here.
+    private func scheduleRelated() {
+        relatedTask?.cancel()
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { relatedResults = []; return }
+        relatedTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            // Room for the hits that turn out to be exact matches.
+            let hits = await SemanticSearch.searchDetached(query: text, limit: Self.relatedLimit * 3).value
+            guard !Task.isCancelled else { return }
+            relatedResults = resolveRelated(hits)
+        }
+    }
+
+    private func resolveRelated(_ hits: [SemanticHit]) -> [SearchResult] {
+        guard !hits.isEmpty else { return [] }
+        let docsByPageID = ImportedDocument.stacksByPage(allImportedDocuments)
+        var located: [UUID: (Notebook, Int, Page)] = [:]
+        for notebook in allNotebooks where NotebookLock.shared.isOpen(notebook) {
+            let pages = (notebook.pages ?? []).sorted { $0.index < $1.index }
+            for (index, page) in pages.enumerated() { located[page.id] = (notebook, index + 1, page) }
+        }
+        return hits.compactMap { hit in
+            guard let (notebook, number, page) = located[hit.pageID] else { return nil }
+            let blob = SearchIndex.cachedSearchableText(for: page, importedDocuments: docsByPageID[page.id] ?? [])
+            return SearchResult(notebook: notebook, pageID: page.id, pageNumber: number,
+                                snippet: String(blob.prefix(80)).replacingOccurrences(of: "\n", with: " "))
         }
     }
 
@@ -153,7 +226,8 @@ struct SearchResultsView: View {
                     pageID: page.id,
                     pageNumber: index + 1,
                     snippet: SearchIndex.labeledSnippet(snippet(in: blob, needles: needles),
-                                                     label: SearchIndex.photoSnippetLabel(for: page, importedDocuments: docsByPageID[page.id] ?? [], needles: needles)),
+                                                     label: SearchIndex.photoSnippetLabel(for: page, importedDocuments: docsByPageID[page.id] ?? [], needles: needles)
+                                                         ?? SearchIndex.recordingSnippetLabel(for: page, importedDocuments: docsByPageID[page.id] ?? [], needles: needles)),
                     query: query.trimmingCharacters(in: .whitespacesAndNewlines),
                     matchRect: typedTextRect(in: page, needles: needles)
                 ))

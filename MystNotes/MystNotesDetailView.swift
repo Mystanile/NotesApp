@@ -1165,7 +1165,14 @@ struct NotebookDetailView: View {
                 linksTo: connections.linksTo,
                 nodes: connections.nodes.map { .init(id: $0.id, title: $0.title, isGone: goneNodeIDs.contains($0.id)) },
                 onSelectPage: { jumpToPage(withID: $0) },
-                onOpenPageMap: { showingPageMap = true })
+                onOpenPageMap: { showingPageMap = true },
+                pageID: currentPage?.id,
+                notebookID: notebook.id,
+                onLinkSimilar: { destination in
+                    guard let source = currentPage?.id else { return }
+                    Links.addPageLink(from: source, to: destination, in: modelContext)
+                    refreshConnections()
+                })
                 .onChange(of: connectionsKey, initial: true) { refreshConnections() }
         }
     }
