@@ -36,6 +36,9 @@ nonisolated enum AppSettings {
         static let installID = "installID"
         static let lastPushSignature = "syncLastPushSignature"
         static let syncTombstones = "syncTombstones"
+        static let aiEnabled = "aiEnabled"
+        static let aiModel = "aiModel"
+        static let elevenVoiceID = "elevenVoiceID"
     }
 
     // MARK: Account (Sign in with Apple)
@@ -225,6 +228,23 @@ nonisolated enum AppSettings {
     static var pageSidebarWidth: Double {
         get { defaults.object(forKey: Keys.pageSidebarWidth) as? Double ?? PageSidebarMetrics.defaultWidth }
         set { defaults.set(newValue, forKey: Keys.pageSidebarWidth) }
+    }
+
+    // MARK: AI Study Helper (opt-in; API keys live in the Keychain, never here)
+
+    static var aiEnabled: Bool {
+        get { defaults.bool(forKey: Keys.aiEnabled) }
+        set { defaults.set(newValue, forKey: Keys.aiEnabled) }
+    }
+
+    static var aiModel: String {
+        get { defaults.string(forKey: Keys.aiModel) ?? AIClient.defaultModel }
+        set { defaults.set(newValue, forKey: Keys.aiModel) }
+    }
+
+    static var elevenVoiceID: String {
+        get { defaults.string(forKey: Keys.elevenVoiceID) ?? SpeechClient.defaultVoiceID }
+        set { defaults.set(newValue, forKey: Keys.elevenVoiceID) }
     }
 
     // MARK: Appearance

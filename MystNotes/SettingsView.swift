@@ -238,6 +238,16 @@ struct SettingsView: View {
                 Text("Account")
             }
 
+            Section {
+                NavigationLink {
+                    AISettingsView()
+                } label: {
+                    Label("AI Study Helper", systemImage: "sparkles")
+                }
+            } footer: {
+                Text("Optional and off by default. Nothing is sent unless you ask.")
+            }
+
             Section("About") {
                 LabeledContent("Version", value: versionString)
             }
