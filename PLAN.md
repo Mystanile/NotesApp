@@ -130,6 +130,7 @@ All of these are still owed on the iPad. On Oct 24 the simulator probes (`MystNo
 - [x] Notebook covers with a spine, a title label and page edges (`c60306c`). [tests only], light mode only
 - [x] A photo button on the drawing toolbar (`8e5c0bc`). [tests only]: it opens the Photos picker, and is off on a whiteboard (`SimProbeSystemTests`, Oct 24)
 - [x] Smart folders: + menu, New Smart Folder. A folder with a saved search shows every matching page (typed text, handwriting, PDF text, now tags). The search syncs. Edit Search in the folder's menu (Oct 22). [tests only] for sync.
+- The plan for the rest of M2 is `Docs/M2_REMAINING_PLAN.md` (Oct 25). Its 16 numbered tasks run in order.
 - [ ] A lasso action that turns ink into a node.
 - [ ] Ink transclusion. It is not started on purpose.
 

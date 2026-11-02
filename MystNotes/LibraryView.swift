@@ -15,7 +15,6 @@ struct LibraryView: View {
     // more reliable, and plenty fast at personal-library scale.
     @Query(sort: \Folder.name) private var allFolders: [Folder]
     @Query(sort: \Notebook.title) private var allNotebooks: [Notebook]
-    @Query private var allLinks: [Link]
     @Query private var allImportedDocuments: [ImportedDocument]
 
     @State private var showingNewFolderAlert = false
@@ -715,10 +714,7 @@ struct LibraryView: View {
     /// automatically — we clean them up manually here to avoid leaving
     /// dangling references behind.
     private func cleanUpLinks(forPageIDs pageIDs: Set<UUID>) {
-        guard !pageIDs.isEmpty else { return }
-        for link in allLinks where pageIDs.contains(link.sourcePageID) || pageIDs.contains(link.destinationPageID) {
-            modelContext.delete(link)
-        }
+        Links.removeAll(touching: pageIDs, in: modelContext)
     }
 
     private func allPageIDs(in folder: Folder) -> Set<UUID> {

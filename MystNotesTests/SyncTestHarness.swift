@@ -259,6 +259,7 @@ final class SyncTestDevice {
 
     /// Mirrors `LibraryView.deleteNotebook`.
     func deleteNotebook(_ notebook: Notebook) throws {
+        Links.removeAll(touching: Set((notebook.pages ?? []).map(\.id)), in: context, now: clock.now)
         SyncTombstones.merge([Tombstone(kind: .notebook, id: notebook.id, deletedAt: clock.now)], into: state)
         context.delete(notebook)
         try context.save()

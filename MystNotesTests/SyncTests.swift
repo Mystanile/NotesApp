@@ -1610,4 +1610,56 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(macNotebook.graphPositions[pages[0].id], CGPoint(x: 0.25, y: 0.75))
         XCTAssertEqual(ipad.ink(forPageID: pages[0].id), ink, "the Mac's ink reached the iPad")
     }
+
+    /// M2 task 1. Links in other notebooks that point INTO a deleted notebook
+    /// live on pages that did not change, so they must be marked modified
+    /// (via `Links.removeAll`, which the harness's `deleteNotebook` mirrors
+    /// from `LibraryView`), or the other device keeps the dangling link.
+    func testDeletingANotebook_removesIncomingLinksFromOtherNotebooks_onTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let keep = try ipad.createNotebook(title: "Keep", pageCount: 1)
+        let doomed = try ipad.createNotebook(title: "Doomed", pageCount: 1)
+        let keepPage = try XCTUnwrap(try ipad.pages(ofNotebook: keep.id)?.first)
+        let doomedPage = try XCTUnwrap(try ipad.pages(ofNotebook: doomed.id)?.first)
+        harness.clock.advance()
+        let link = try ipad.addLink(from: keepPage, to: doomedPage)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+        XCTAssertTrue(try mac.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id })
+
+        harness.clock.advance()
+        try ipad.deleteNotebook(doomed)
+        XCTAssertFalse(try ipad.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id },
+                       "the deleting device still holds the incoming link")
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        XCTAssertNotNil(try mac.notebook(id: keep.id), "the surviving notebook stays")
+        XCTAssertFalse(try mac.context.fetch(FetchDescriptor<Link>()).contains { $0.id == link.id },
+                       "the Mac still links into a deleted notebook")
+    }
+
+    /// M2 task 1. The picker's callback used to set `destinationPageID` and
+    /// save without touching the source page, so after a push the new
+    /// destination never synced. `Links.setDestination` marks the source.
+    func testLinkDestinationPickedAfterAPush_reachesTheOtherDevice() throws {
+        let ipad = try harness.makeDevice("iPad")
+        let mac = try harness.makeDevice("Mac")
+        let notebook = try ipad.createNotebook(title: "Picker", pageCount: 3)
+        let pages = try XCTUnwrap(try ipad.pages(ofNotebook: notebook.id))
+        harness.clock.advance()
+        // The unfinished link, as "Link This To..." creates it: self-link.
+        let link = try ipad.addLink(from: pages[0], to: pages[0])
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        harness.clock.advance()
+        Links.setDestination(link, toPage: pages[2].id, in: ipad.context, now: harness.clock.now)
+        harness.clock.advance(); try ipad.sync()
+        harness.clock.advance(); try mac.sync()
+
+        let arrived = try XCTUnwrap(try mac.context.fetch(FetchDescriptor<Link>()).first { $0.id == link.id })
+        XCTAssertEqual(arrived.destinationPageID, pages[2].id, "the picked destination never reached the Mac")
+    }
 }

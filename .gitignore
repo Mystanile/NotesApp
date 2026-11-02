@@ -2,3 +2,4 @@
 .claude/diag-*
 .claude/dd-*
 .claude/*.log
+graphify-out/

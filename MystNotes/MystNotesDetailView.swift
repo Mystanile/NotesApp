@@ -443,8 +443,7 @@ struct NotebookDetailView: View {
         .sheet(item: $linkNeedingDestination, onDismiss: removeUnfinishedLinks) { link in
             LinkDestinationPickerView(pages: sortedPages, documentsByPageID: documentsByPageID,
                                       notebooks: allNotebooks, currentNotebookID: notebook.id) { destinationID in
-                link.destinationPageID = destinationID
-                saveCurrentPage()
+                Links.setDestination(link, toPage: destinationID, in: modelContext)
             }
         }
         // The only `.fileImporter` on this view - see `showingFileImporter`.
